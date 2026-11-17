@@ -10,13 +10,15 @@
 #elif defined(__linux__)
 #include "egl/egl_backend.hpp"
 #include "x11/glx_backend.hpp"
+#elif defined(__APPLE__)
+#include "cgl/cgl_backend.hpp"
 #endif
 
 namespace tessera {
 namespace {
 
 /*
- * TESSERA_BACKEND=<name>[,<name>...] restricts and orders the backends (names: wgl, glx, egl). Without it the
+ * TESSERA_BACKEND=<name>[,<name>...] restricts and orders the backends (names: wgl, glx, egl, cgl). Without it the
  * platform default order applies and the first backend able to serve a request wins; one that cannot serve it at
  * all reports UNSUPPORTED and the next is tried.
  */
@@ -50,6 +52,8 @@ void registerBuiltinBackends(std::vector<std::shared_ptr<Backend>>& out) {
 #elif defined(__linux__)
     out.push_back(x11::makeGlxBackend());
     out.push_back(egl::makeEglBackend());
+#elif defined(__APPLE__)
+    out.push_back(cgl::makeCglBackend());
 #endif
     applyBackendSelection(out);
 }

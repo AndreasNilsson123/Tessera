@@ -64,4 +64,30 @@ if(UNIX AND NOT APPLE AND TESSERA_BUILD_SHARED)
     set_tests_properties(egl PROPERTIES LABELS "gpu" TIMEOUT 180 SKIP_RETURN_CODE 77)
 endif()
 
+# macOS backend logic, run against a fake OpenGL.framework (tests/fake_cgl.cpp) on any POSIX platform. Verifies the
+# backend's own behaviour, not Apple's: real-hardware behaviour needs a Mac.
+if(UNIX)
+    add_library(fake_cgl SHARED fake_cgl.cpp)
+    tessera_apply_options(fake_cgl)
+
+    add_executable(test_cgl_fake test_cgl_fake.cpp $<TARGET_OBJECTS:tessera_core> $<TARGET_OBJECTS:tessera_cgl>)
+    add_dependencies(test_cgl_fake fake_cgl)
+    target_include_directories(test_cgl_fake PRIVATE ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/include)
+    target_compile_definitions(test_cgl_fake PRIVATE TESSERA_STATIC FAKE_CGL_PATH=\"$<TARGET_FILE:fake_cgl>\")
+    target_link_libraries(test_cgl_fake PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+    tessera_apply_options(test_cgl_fake)
+    add_test(NAME cgl_fake COMMAND test_cgl_fake)
+    set_tests_properties(cgl_fake PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+endif()
+
+# Real OpenGL.framework smoke test (macOS only; never run so far - see the header of test_cgl.cpp).
+if(APPLE AND TESSERA_BUILD_SHARED)
+    add_executable(test_cgl test_cgl.cpp)
+    target_include_directories(test_cgl PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    target_link_libraries(test_cgl PRIVATE Tessera::tessera Threads::Threads ${CMAKE_DL_LIBS})
+    tessera_apply_options(test_cgl)
+    add_test(NAME cgl COMMAND test_cgl)
+    set_tests_properties(cgl PROPERTIES LABELS "gpu" TIMEOUT 120 SKIP_RETURN_CODE 77)
+endif()
+
 set_tests_properties(abi core header_c PROPERTIES TIMEOUT 60)

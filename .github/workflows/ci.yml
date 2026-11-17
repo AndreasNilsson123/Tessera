@@ -103,6 +103,21 @@ jobs:
       - name: Run GLX and EGL integration tests
         run: xvfb-run -a -s "-screen 0 1280x1024x24" ctest --test-dir build/ci -L gpu --output-on-failure
 
+  # The real-framework CGL smoke test. Written without access to a Mac and never run: informational until it has
+  # passed once. Hosted macOS runners are GPU-less VMs, so a core profile may legitimately be unavailable there.
+  cgl-macos:
+    name: cgl real-framework test (macOS, informational)
+    runs-on: macos-14
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure and build
+        run: |
+          cmake --preset ci -DCMAKE_BUILD_TYPE=Debug
+          cmake --build --preset ci --parallel
+      - name: Run the CGL test against OpenGL.framework
+        run: ctest --test-dir build/ci -L gpu --output-on-failure
+
   # Style and static analysis. Informational for now: the existing code predates the formatter settings, so
   # making these blocking needs a one-time reformat commit first.
   lint:

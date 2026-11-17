@@ -80,10 +80,30 @@ if(TESSERA_CLANG_TIDY)
     set_target_properties(tessera_core PROPERTIES CXX_CLANG_TIDY "${TESSERA_CLANG_TIDY_EXE}")
 endif()
 
+# macOS backend (CGL). It uses only plain C++ and dlopen, no Apple headers, so it is compiled on every platform to
+# keep it under the same warnings-as-errors rules everywhere and to let tests run it against a fake library; it is only
+# linked into (and registered by) the library on Apple platforms.
+add_library(tessera_cgl OBJECT
+    src/platform/cgl/cgl_api.cpp
+    src/platform/cgl/cgl_backend.cpp)
+target_include_directories(tessera_cgl
+    PUBLIC  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    PRIVATE src)
+target_compile_definitions(tessera_cgl PRIVATE TESSERA_BUILDING)
+if(NOT TESSERA_BUILD_SHARED)
+    target_compile_definitions(tessera_cgl PUBLIC TESSERA_STATIC)
+endif()
+tessera_apply_options(tessera_cgl)
+
+set(TESSERA_PLATFORM_OBJECTS "")
+if(APPLE)
+    set(TESSERA_PLATFORM_OBJECTS $<TARGET_OBJECTS:tessera_cgl>)
+endif()
+
 if(TESSERA_BUILD_SHARED)
-    add_library(tessera SHARED $<TARGET_OBJECTS:tessera_core>)
+    add_library(tessera SHARED $<TARGET_OBJECTS:tessera_core> ${TESSERA_PLATFORM_OBJECTS})
 else()
-    add_library(tessera STATIC $<TARGET_OBJECTS:tessera_core>)
+    add_library(tessera STATIC $<TARGET_OBJECTS:tessera_core> ${TESSERA_PLATFORM_OBJECTS})
     target_compile_definitions(tessera PUBLIC TESSERA_STATIC)
 endif()
 add_library(Tessera::tessera ALIAS tessera)

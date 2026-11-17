@@ -26,10 +26,11 @@ void copyString(char* dst, std::size_t cap, const char* src) noexcept;
  * Describes the context that is current on the calling thread: api, version, profile, context flags
  * (debug/forward-compatible/robust/no-error/reset-notification) and the vendor/renderer/version strings.
  * Zeroes `info` first. Platform code adds the drawable's pixel-format fields afterwards.
- * `requested` is consulted only for flags that cannot be read back (release-flush).
+ * Everything reported is read back from the driver, never copied from the request: a flag the driver quietly dropped
+ * (best-effort mode) must not show up as granted.
  * Returns false if the driver gave no usable version string.
  */
-bool queryContextInfo(const GlQueryFns& gl, const TesseraContextConfig& requested, TesseraContextInfo& info);
+bool queryContextInfo(const GlQueryFns& gl, TesseraContextInfo& info);
 
 /* Strict-mode check: does `info` (including its pixel-format fields) honour everything in `requested`? */
 bool contextSatisfies(const TesseraContextConfig& requested, const TesseraContextInfo& info) noexcept;

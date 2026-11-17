@@ -9,6 +9,8 @@ namespace {
 constexpr unsigned kGlVendor = 0x1F00, kGlRenderer = 0x1F01, kGlVersion = 0x1F02;
 constexpr unsigned kGlContextFlags = 0x821E, kGlProfileMask = 0x9126, kGlResetStrategy = 0x8256;
 constexpr int kLoseContextOnReset = 0x8252;
+constexpr unsigned kGlContextReleaseBehavior = 0x82FB;
+constexpr int kGlReleaseBehaviorFlush = 0x82FC;
 
 bool parseVersion(const char* text, bool& isEs, int& major, int& minor) {
     if (!text) return false;
@@ -41,7 +43,7 @@ void copyString(char* dst, std::size_t cap, const char* src) noexcept {
     dst[i] = '\0';
 }
 
-bool queryContextInfo(const GlQueryFns& gl, const TesseraContextConfig& requested, TesseraContextInfo& info) {
+bool queryContextInfo(const GlQueryFns& gl, TesseraContextInfo& info) {
     if (!gl.getString || !gl.getIntegerv || !gl.getError) return false;
 
     std::memset(&info, 0, sizeof info);
@@ -96,7 +98,12 @@ bool queryContextInfo(const GlQueryFns& gl, const TesseraContextConfig& requeste
         if (f & 0x8) flags |= TESSERA_FLAG_NO_ERROR;
         while (gl.getError() != 0) {}
     }
-    if (requested.flags & TESSERA_FLAG_RELEASE_FLUSH) flags |= TESSERA_FLAG_RELEASE_FLUSH;
+    // Release behaviour (GL 4.5 / KHR_context_flush_control). Left at -1 where the query does not exist, in which
+    // case nothing is claimed.
+    int release = -1;
+    gl.getIntegerv(kGlContextReleaseBehavior, &release);
+    if (release == kGlReleaseBehaviorFlush) flags |= TESSERA_FLAG_RELEASE_FLUSH;
+    while (gl.getError() != 0) {}
     info.flags = flags;
     return true;
 }

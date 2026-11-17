@@ -391,14 +391,14 @@ TesseraResult createNativeContext(EglShared& sh, EglContext& ctx, const TesseraC
 // ---- reporting what we actually got -------------------------------------------------------------
 
 /* Requires the context to be current on the calling thread. */
-bool queryInfo(const EglShared& sh, const EglContext& ctx, const TesseraContextConfig& c, bool wantSrgb,
+bool queryInfo(const EglShared& sh, const EglContext& ctx, bool wantSrgb,
                TesseraContextInfo& info) {
     const EglFns& f = sh.api->fn;
     GlQueryFns gl;
     gl.getString = reinterpret_cast<decltype(gl.getString)>(f.eglGetProcAddress("glGetString"));
     gl.getIntegerv = reinterpret_cast<decltype(gl.getIntegerv)>(f.eglGetProcAddress("glGetIntegerv"));
     gl.getError = reinterpret_cast<decltype(gl.getError)>(f.eglGetProcAddress("glGetError"));
-    if (!queryContextInfo(gl, c, info)) return false;
+    if (!queryContextInfo(gl, info)) return false;
 
     auto attr = [&](EGLint key) {
         EGLint value = 0;
@@ -489,7 +489,7 @@ class EglBackend final : public Backend {
 
         if (!f.eglMakeCurrent(sh->dpy, ctx->surface, ctx->surface, ctx->ctx))
             return fail(TESSERA_ERROR_PLATFORM, eglErrorText("eglMakeCurrent failed on the new context", f.eglGetError()));
-        const bool ok = queryInfo(*sh, *ctx, c, plan.srgb, ctx->info);
+        const bool ok = queryInfo(*sh, *ctx, plan.srgb, ctx->info);
         // `guard` releases the context again and restores the caller's state; it must not be left to us.
         if (!ok) return fail(TESSERA_ERROR_PLATFORM, "could not query the new context (glGetString failed)");
 

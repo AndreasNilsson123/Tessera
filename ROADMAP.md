@@ -143,13 +143,26 @@ JavaFX on Linux uses the `es2` pipeline (GLX-based) so **real conflicts are poss
 
 JavaFX on macOS uses Metal (recent) or ES2/NSGL (older); AppKit threading rules apply.
 
-- [ ] CGL-only path (no AppKit) for offscreen/headless contexts: `CGLChoosePixelFormat`, `CGLCreateContext`; works from any thread, avoids all main-thread requirements.
-- [ ] NSOpenGLContext path for on-screen when required, with explicit "must be created on main thread" enforcement (dispatch helper, never block the main thread from the main thread).
-- [ ] Core 3.2/4.1 profile only (macOS limitation), GLES via ANGLE-backed EGL; clear errors for unsupported requests.
-- [ ] Deprecation hygiene: isolate all deprecated API usage; Metal-backed ANGLE as the forward path.
-- [ ] No `NSApplication` creation or run-loop interference; Tessera must work when AWT/JavaFX already owns the app.
+> **Verification status: unlike every earlier phase, none of this has run against Apple's OpenGL.** There is no Mac in the
+> development environment. What *was* verified: the backend compiles warning-free under MSVC and gcc (it uses no Apple
+> headers), and its whole control flow passes against a fake `OpenGL.framework` (`tests/fake_cgl.cpp`, run under ASan/UBSan
+> and TSan, both clean). What was *not*: that Apple's CGL accepts these constants and attribute lists, how it ranks pixel
+> formats, the colour-size convention, and what a hosted macOS VM offers. `tests/test_cgl.cpp` is written to settle exactly
+> that on the first run on a Mac; treat the backend as unverified until it passes.
 
-**Exit:** headless CGL tests on CI runners; manual coexistence matrix with JavaFX on macOS.
+- [~] CGL-only path (no AppKit) for offscreen/headless contexts: `CGLChoosePixelFormat`, `CGLCreateContext`, drawable-less (render to FBOs), any thread, no main-thread requirement. Implemented through `dlopen`ed `OpenGL.framework` with hand-declared types (ADR 0007). Passes against the fake only.
+- [ ] NSOpenGLContext path for on-screen: **not implemented, deliberately**: Tessera creates no windows or views anywhere, and a windowed path would pull in AppKit threading rules for a feature nothing here needs.
+- [~] Core 3.2/4.1 and legacy 2.1 only, with clear refusals: ES -> `UNSUPPORTED` (left to an ANGLE/EGL backend), compatibility above 2.1, versions above 4.1, and the debug / robust / no-error / flush-control / sRGB-default-framebuffer requests -> `NO_MATCHING_CONFIG` in strict mode, dropped and reported absent in best-effort mode. Core requests try the 4.1 profile first, then 3.2. A format that exists only on an offline GPU is tried last (it can wake a discrete GPU).
+- [ ] Deprecation hygiene / Metal-backed ANGLE: CGL is deprecated since macOS 10.14 but is plain C with no compile-time deprecation warnings under `dlopen`; ANGLE (the forward path) is not implemented.
+- [x] No `NSApplication` creation, no run loop, no AppKit calls at all: nothing to interfere with AWT/JavaFX. (By construction; not tested alongside JavaFX.)
+- [x] (Found by the fake-driver test) `queryContextInfo` no longer copies `RELEASE_FLUSH` from the request; every reported flag is read back from the driver, so a dropped request is never claimed as granted (affected all backends).
+- [x] (Added) `TESSERA_CGL_LIBRARY` overrides the library to load; `cgl` joins the `TESSERA_BACKEND` names.
+
+**Status notes (Phase 5):**
+- Biggest risks, in order: (1) the numeric constants in `cgl_types.hpp` were written from memory; (2) `CGLDescribePixelFormat(kCGLPFAColorSize)` may or may not include alpha (a heuristic decides the reported per-channel bits); (3) whether `GL_CONTEXT_FLAGS` reports the forward-compatible bit for core contexts; (4) hosted macOS CI is a GPU-less VM, so core-profile and hardware paths may be unavailable there.
+- The `cgl_fake` test runs wherever the library builds (Linux, macOS, any POSIX), so the backend's logic is regression-tested on every CI platform; only the real-framework behaviour is open.
+
+**Exit:** headless CGL tests on CI runners; manual coexistence matrix with JavaFX on macOS. (`test_cgl` + an informational macOS job exist and have never run; the JavaFX matrix is untouched.)
 
 ## Phase 6 — Context feature completeness & robustness
 

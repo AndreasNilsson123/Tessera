@@ -382,7 +382,7 @@ bool queryInfo(const WglShared& sh, HDC dc, int pf, const TesseraContextConfig& 
     gl.getString = reinterpret_cast<decltype(gl.getString)>(api.lib.symbol("glGetString"));
     gl.getIntegerv = reinterpret_cast<decltype(gl.getIntegerv)>(api.lib.symbol("glGetIntegerv"));
     gl.getError = reinterpret_cast<decltype(gl.getError)>(api.lib.symbol("glGetError"));
-    if (!queryContextInfo(gl, c, info)) return false;
+    if (!queryContextInfo(gl, info)) return false;
 
     uint32_t flags = info.flags;
 

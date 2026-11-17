@@ -270,7 +270,7 @@ bool queryInfo(const GlxShared& sh, GLXFBConfig fb, const TesseraContextConfig& 
     gl.getString = reinterpret_cast<decltype(gl.getString)>(sh.proc("glGetString"));
     gl.getIntegerv = reinterpret_cast<decltype(gl.getIntegerv)>(sh.proc("glGetIntegerv"));
     gl.getError = reinterpret_cast<decltype(gl.getError)>(sh.proc("glGetError"));
-    if (!queryContextInfo(gl, c, info)) return false;
+    if (!queryContextInfo(gl, info)) return false;
 
     uint32_t flags = info.flags;
     info.redBits = attrib(sh, fb, kGlxRedSize);
