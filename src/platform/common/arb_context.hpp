@@ -30,6 +30,13 @@ struct ArbContextPlan {
 using HasExtension = std::function<bool(const char*)>;
 
 /*
+ * Versions to try for a request, newest first when the caller did not name one: {0,0} = omit the version,
+ * ES defaults to 2.0, core/compatibility without a version walks 4.6 down to 3.2. Shared with the EGL backend,
+ * whose attribute encoding differs but whose negotiation policy is the same.
+ */
+std::vector<std::pair<int, int>> contextVersionLadder(const TesseraContextConfig& config);
+
+/*
  * Decides how to create `config`. `prefix` is "WGL_" or "GLX_"; `haveCreateAttribs` says whether the
  * create-with-attributes entry point was resolved. Strict configs fail when a requested extension is
  * missing; best-effort drops the request and logs it. Failure codes follow the Backend contract:

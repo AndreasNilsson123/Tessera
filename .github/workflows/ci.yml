@@ -82,10 +82,10 @@ jobs:
       - name: Run WGL integration test
         run: ctest --test-dir build/ci -C Debug -L gpu --output-on-failure
 
-  # The GLX integration test against a virtual X server with Mesa's software renderer (no GPU needed). Informational
+  # The GLX and EGL integration tests against a virtual X server with Mesa's software renderer (no GPU needed). Informational
   # until it has run green once on a hosted runner; then drop continue-on-error.
-  glx-xvfb:
-    name: glx-integration (Xvfb + Mesa llvmpipe, informational)
+  gl-linux-software:
+    name: glx + egl integration (Xvfb + Mesa llvmpipe, informational)
     runs-on: ubuntu-24.04
     continue-on-error: true
     env:
@@ -95,12 +95,12 @@ jobs:
       - name: Install X server and Mesa
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb libgl1 libgl1-mesa-dri libglx-mesa0
+          sudo apt-get install -y xvfb libgl1 libgl1-mesa-dri libglx-mesa0 libegl1 libegl-mesa0 libgles2
       - name: Configure and build
         run: |
           cmake --preset ci -DCMAKE_BUILD_TYPE=Debug
           cmake --build --preset ci --parallel
-      - name: Run GLX integration test
+      - name: Run GLX and EGL integration tests
         run: xvfb-run -a -s "-screen 0 1280x1024x24" ctest --test-dir build/ci -L gpu --output-on-failure
 
   # Style and static analysis. Informational for now: the existing code predates the formatter settings, so

@@ -121,15 +121,23 @@ JavaFX on Linux uses the `es2` pipeline (GLX-based) so **real conflicts are poss
 
 ## Phase 4 — EGL backend (Wayland, headless, GBM, ANGLE, GLES)
 
-- [ ] Platform selection via `EGL_EXT_platform_base` (`eglGetPlatformDisplayEXT`): X11, Wayland, GBM, device (`EGL_EXT_platform_device`), surfaceless, ANGLE.
-- [ ] Own `EGLDisplay` / `wl_display` connection; reference-counted `eglInitialize`/`eglTerminate` safe even if another component initialized the same `EGLDisplay` (EGL initialization is refcount-less: **never call `eglTerminate` on a display we did not create/own**; prefer a private `wl_display`/`EGLDevice` display).
-- [ ] Per-thread EGL state handling: save/restore `eglGetCurrentContext/Surface(READ/DRAW)/Display` and `eglBindAPI` (the bound API is per-thread state!).
-- [ ] Contexts: desktop GL and GLES 2/3.x, robustness, protected content, priority, `EGL_KHR_create_context_no_error`.
-- [ ] Surfaceless (`EGL_KHR_surfaceless_context`), pbuffer, and `EGL_MESA_platform_surfaceless` headless rendering; device enumeration for headless GPUs (`EGL_EXT_device_enumeration`/`_query`).
-- [ ] Fence sync (`EGL_KHR_fence_sync`) + `EGL_ANDROID_native_fence_sync` / dma-buf export (`EGL_MESA_image_dma_buf_export`) for later interop (Phase 8).
-- [ ] ANGLE and Mesa llvmpipe validated as first-class targets.
+- [~] Platform selection via `EGL_EXT_platform_base`: **surfaceless** (`EGL_MESA_platform_surfaceless`), **device** (`EGL_EXT_platform_device` with `eglQueryDevicesEXT`, pick a GPU with `TESSERA_EGL_DEVICE`) and the **default display** are implemented, in that order (override with `TESSERA_EGL_PLATFORM`). Only the surfaceless platform has been exercised. Native X11 / Wayland / GBM platforms are **not** implemented: Tessera renders to pbuffers or nothing, so it never needs a window, and a native display adds a connection to the host's windowing system for no benefit. ANGLE: not done (see below).
+- [x] Display ownership, decided differently from the plan (ADR 0006): EGL hands the same `EGLDisplay` to everyone who asks for the same platform, and `eglInitialize`/`eglTerminate` are not reference counted, so Tessera **never calls `eglTerminate`**. Displays are initialised once and stay initialised; only contexts and surfaces Tessera created are destroyed. Tested: a foreign context on the very same display survives `tesseraTerminate`.
+- [x] Per-thread EGL state: the current context/display/draw/read surface of **each** client API plus the bound API (`eglBindAPI`) are saved and restored around every operation; the bound API is also restored after make-current/release/destroy. Tested against GLES and desktop GL foreign contexts. Not preservable: the thread's last-error code (`eglGetError` clears it).
+- [~] Contexts: desktop GL (core/compat/flags/version ladder) and GLES 2/3.x done and tested; robustness, no-error, flush control implemented (robustness succeeded on Mesa, the others not exercised). Protected content and priority: not implemented.
+- [x] Surfaceless (`EGL_KHR_surfaceless_context`), pbuffer, and Mesa's surfaceless platform; `SURFACE_NONE` is a genuinely drawable-less context here (unlike WGL/GLX). Default/hidden-window requests are served by a pbuffer and reported as such. Double buffering and stereo cannot exist on these drawables: strict mode refuses with a clear message, best effort drops them.
+- [ ] Fence sync + dma-buf export for interop: deferred to Phase 8 (nothing consumes it yet).
+- [~] Mesa validated (llvmpipe/swrast under CI is configured but unrun; D3D12-over-WSL run locally). ANGLE: **not done**: the Windows loader is restricted to System32 by design, and loading an ANGLE build from an application directory needs `LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR` handling and a way to test it; `TESSERA_EGL_LIBRARY` exists on all platforms but the EGL backend is only built on Linux so far.
+- [x] (Added) Backend selection: `TESSERA_BACKEND=glx,egl` orders/restricts backends; by default GLX is tried first and a request it cannot serve at all (no display) falls through to EGL. Tested headless.
+- [x] (Added) Switching between two of our contexts on one thread now releases the previous one explicitly (EGL keeps per-API current contexts).
+- [x] (Added) Hardening found by TSan: Tessera's own threads no longer call `glGetString` concurrently (Mesa's software driver formats the result into a global buffer; concurrent callers could read a torn string).
 
-**Exit:** same conformance suite runs on EGL (Mesa surfaceless) in CI headless.
+**Status notes (Phase 4):**
+- Tested on Ubuntu 22.04 / WSLg: EGL 1.5, Mesa 23.2 (D3D12 on the RTX 3060) via the surfaceless platform; gcc 11 `-Werror`; ASan/UBSan clean; TSan reports only races inside NVIDIA's WSL driver, none with Tessera code on the accessing side.
+- Mesa keeps **one** current context per thread (not one per API as the spec says): making a Tessera context current displaces the host's, even across APIs. That is what `tesseraMakeCurrent` documents; create/destroy/failed-create paths still restore everything.
+- Not tested: NVIDIA/AMD proprietary EGL, the device platform, the default-display fallback on a real desktop, Wayland, ANGLE, robustness/no-error/flush-control behaviour beyond "creation succeeded", clang.
+
+**Exit:** same conformance suite runs on EGL (Mesa surfaceless) in CI headless. (`test_egl` is the EGL equivalent; CI job configured, never run.)
 
 ## Phase 5 — macOS backend (CGL / NSGL)
 

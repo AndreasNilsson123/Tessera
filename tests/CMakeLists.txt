@@ -53,4 +53,15 @@ if(UNIX AND NOT APPLE AND TESSERA_BUILD_SHARED)
     set_tests_properties(glx PROPERTIES LABELS "gpu" TIMEOUT 180 SKIP_RETURN_CODE 77)
 endif()
 
+# EGL integration test: public API only (backend forced to EGL), with raw EGL contexts as the "other library".
+# Needs an EGL implementation with a headless platform (Mesa surfaceless); exits 77 = skipped without one.
+if(UNIX AND NOT APPLE AND TESSERA_BUILD_SHARED)
+    add_executable(test_egl test_egl.cpp)
+    target_include_directories(test_egl PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    target_link_libraries(test_egl PRIVATE Tessera::tessera Threads::Threads ${CMAKE_DL_LIBS})
+    tessera_apply_options(test_egl)
+    add_test(NAME egl COMMAND test_egl)
+    set_tests_properties(egl PROPERTIES LABELS "gpu" TIMEOUT 180 SKIP_RETURN_CODE 77)
+endif()
+
 set_tests_properties(abi core header_c PROPERTIES TIMEOUT 60)

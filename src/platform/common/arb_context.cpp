@@ -47,6 +47,10 @@ std::vector<std::pair<int, int>> versionLadder(const TesseraContextConfig& c) {
 
 } // namespace
 
+std::vector<std::pair<int, int>> contextVersionLadder(const TesseraContextConfig& c) {
+    return versionLadder(c);
+}
+
 std::vector<int> ArbContextPlan::attribs(std::pair<int, int> version) const {
     std::vector<int> a;
     if (version.first != 0) {
@@ -116,7 +120,7 @@ TesseraResult planArbContext(const TesseraContextConfig& c, const char* prefix, 
         if (ok) plan.extra.insert(plan.extra.end(), {kCtxReleaseBehavior, kCtxReleaseFlush});
     }
 
-    plan.versions = versionLadder(c);
+    plan.versions = contextVersionLadder(c);
     return TESSERA_SUCCESS;
 }
 

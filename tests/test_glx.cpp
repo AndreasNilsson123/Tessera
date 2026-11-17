@@ -4,8 +4,9 @@
 // disturb. Exits 77 (ctest: skipped) when no display/GLX is available.
 #include <tessera/tessera.h>
 
-#include <dlfcn.h>
 #include <dirent.h>
+#include <dlfcn.h>
+#include <stdlib.h>
 
 #include <atomic>
 #include <cstdio>
@@ -482,6 +483,7 @@ int main() {
         std::fprintf(stderr, "test_glx: libX11/libGL not available, skipping\n");
         return 77;
     }
+    setenv("TESSERA_BACKEND", "glx", 1); // with EGL registered too, a missing display would fall through to it
     // What GLFW, SDL, GTK and AWT all do before touching Xlib; the "other library" owns its connection.
     g_x.XInitThreads();
 

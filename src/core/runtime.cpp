@@ -185,9 +185,13 @@ TesseraResult Runtime::makeCurrent(TesseraContext handle) {
         return r;
     }
 
-    // Binding replaced the thread's previous context at the driver; drop our claim on it.
+    // Switching away from another of our contexts: WGL/GLX replace it at the driver, but EGL keeps one current
+    // context per client API, so release it explicitly (a no-op where the driver already did).
     if (t_current != TESSERA_NULL_HANDLE && t_current != handle) {
-        if (auto prev = contexts_.get(t_current)) prev->affinity.release(me);
+        if (auto prev = contexts_.get(t_current)) {
+            if (prev->affinity.ownedBy(me)) prev->unbindCurrent();
+            prev->affinity.release(me);
+        }
     }
     t_current = handle;
     t_exitGuard.token = me; // arms the release-at-thread-exit above

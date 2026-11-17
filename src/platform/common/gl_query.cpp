@@ -1,6 +1,7 @@
 #include "gl_query.hpp"
 
 #include <cstring>
+#include <mutex>
 
 namespace tessera {
 namespace {
@@ -46,14 +47,23 @@ bool queryContextInfo(const GlQueryFns& gl, const TesseraContextConfig& requeste
     std::memset(&info, 0, sizeof info);
     info.structSize = sizeof info;
 
-    const char* version = reinterpret_cast<const char*>(gl.getString(kGlVersion));
-    copyString(info.version, sizeof info.version, version);
-    copyString(info.vendor, sizeof info.vendor, reinterpret_cast<const char*>(gl.getString(kGlVendor)));
-    copyString(info.renderer, sizeof info.renderer, reinterpret_cast<const char*>(gl.getString(kGlRenderer)));
+    // glGetString hands back a pointer into driver-owned memory. Some drivers (Mesa's software rasteriser formats the
+    // result into one global buffer) are not safe when several threads ask at once, and the pointer may be rewritten
+    // while we copy from it. Tessera can at least keep its own threads from doing that to each other: query and copy
+    // under one process-wide lock. (Other libraries' threads are beyond our control.)
+    static std::mutex* const stringLock = new std::mutex(); // leaked on purpose: usable during static destruction
+    char versionText[sizeof info.version];
+    {
+        std::lock_guard<std::mutex> lock(*stringLock);
+        copyString(versionText, sizeof versionText, reinterpret_cast<const char*>(gl.getString(kGlVersion)));
+        copyString(info.vendor, sizeof info.vendor, reinterpret_cast<const char*>(gl.getString(kGlVendor)));
+        copyString(info.renderer, sizeof info.renderer, reinterpret_cast<const char*>(gl.getString(kGlRenderer)));
+    }
+    copyString(info.version, sizeof info.version, versionText);
 
     bool isEs = false;
     int major = 0, minor = 0;
-    if (!parseVersion(version, isEs, major, minor)) return false;
+    if (!parseVersion(versionText, isEs, major, minor)) return false;
     info.api = isEs ? TESSERA_API_OPENGL_ES : TESSERA_API_OPENGL;
     info.versionMajor = major;
     info.versionMinor = minor;

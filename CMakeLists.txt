@@ -40,6 +40,7 @@ include(cmake/TesseraOptions.cmake)
 set(TESSERA_CORE_SOURCES
     src/core/api.cpp
     src/core/config.cpp
+    src/core/env.cpp
     src/core/error.cpp
     src/core/library.cpp
     src/core/log.cpp
@@ -58,7 +59,9 @@ endif()
 if(UNIX AND NOT APPLE)
     list(APPEND TESSERA_CORE_SOURCES
         src/platform/x11/glx_api.cpp
-        src/platform/x11/glx_backend.cpp)
+        src/platform/x11/glx_backend.cpp
+        src/platform/egl/egl_api.cpp
+        src/platform/egl/egl_backend.cpp)
 endif()
 
 # Compiled once, shared by the public library and the white-box unit tests (which need internals that
