@@ -28,7 +28,7 @@ extern "C" {
 /* ---------------------------------------------------------------- version */
 
 #define TESSERA_VERSION_MAJOR 0
-#define TESSERA_VERSION_MINOR 2
+#define TESSERA_VERSION_MINOR 3
 #define TESSERA_VERSION_PATCH 0
 
 /* Incremented on every incompatible change to the C ABI, independent of the semantic version. */
@@ -132,7 +132,7 @@ typedef uint32_t TesseraEnum;
 #define TESSERA_SURFACE_DEFAULT 0x0000u     /* backend picks the safest available */
 #define TESSERA_SURFACE_HIDDEN_WINDOW 0x0001u
 #define TESSERA_SURFACE_PBUFFER 0x0002u
-#define TESSERA_SURFACE_NONE 0x0003u        /* surfaceless / FBO-only */
+#define TESSERA_SURFACE_NONE 0x0003u        /* no drawable exposed; render to FBOs (WGL still uses an internal one) */
 
 /* TesseraContextConfig::fallback */
 #define TESSERA_FALLBACK_STRICT 0x0000u     /* fail unless every requested attribute is met */
@@ -189,6 +189,41 @@ TESSERA_API TesseraResult TESSERA_CALL tesseraCreateContext(const TesseraContext
 TESSERA_API TesseraResult TESSERA_CALL tesseraDestroyContext(TesseraContext context);
 TESSERA_API TesseraResult TESSERA_CALL tesseraGetContextInfo(TesseraContext context,
                                                              TesseraContextInfo* outInfo);
+
+/*
+ * Thread rules (enforced, not just documented):
+ *  - A context is current on at most one thread at a time. Making a context current on a second thread
+ *    while the first still holds it fails with TESSERA_ERROR_WRONG_THREAD. If the owning thread has
+ *    exited, ownership is reclaimed automatically.
+ *  - tesseraDestroyContext on a context that is current on a *different live* thread fails with
+ *    WRONG_THREAD and leaves the context valid; release it on its thread first. Destroying a context
+ *    that is current on the calling thread releases it first.
+ *  - Contexts may be created and destroyed from any thread.
+ */
+
+/*
+ * Makes `context` current on the calling thread, replacing whatever was current there (including a
+ * context created by another library; Tessera does not remember or restore it).
+ * TESSERA_NULL_HANDLE releases the Tessera context this thread made current; if the thread's current
+ * context is not Tessera's, it is left untouched.
+ */
+TESSERA_API TesseraResult TESSERA_CALL tesseraMakeCurrent(TesseraContext context);
+
+/* The Tessera context made current on the calling thread by tesseraMakeCurrent, or NULL handle. */
+TESSERA_API TesseraContext TESSERA_CALL tesseraGetCurrentContext(void);
+
+/*
+ * Resolves an OpenGL function by name for LWJGL-style loaders. Extension and post-1.1 functions are only
+ * returned while a context is current on the calling thread (a platform limitation). Returns NULL if not
+ * found; never returns the placeholder values some drivers use (1, 2, 3, -1).
+ */
+TESSERA_API void* TESSERA_CALL tesseraGetProcAddress(const char* name);
+
+/* Presents the back buffer (a no-op for single-buffered or pbuffer surfaces). Any thread. */
+TESSERA_API TesseraResult TESSERA_CALL tesseraSwapBuffers(TesseraContext context);
+
+/* 0 = no vsync, 1 = vsync, -1 = adaptive (if supported). `context` must be current on the calling thread. */
+TESSERA_API TesseraResult TESSERA_CALL tesseraSetSwapInterval(TesseraContext context, int32_t interval);
 
 #ifdef __cplusplus
 } /* extern "C" */

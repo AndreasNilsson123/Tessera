@@ -75,17 +75,25 @@ Key decisions to make in Phase 0 (recorded as ADRs in `docs/adr/`):
 
 JavaFX on Windows uses D3D (Prism d3d) by default, so WGL conflicts are less likely but LWJGL/AWT/other libs may be present.
 
-- [ ] Bootstrap dummy window + legacy context to resolve `wglCreateContextAttribsARB` / `wglChoosePixelFormatARB`; destroy it afterwards; keep the saved/restored foreign context discipline throughout.
-- [ ] Own window class with per-module unique name (`Tessera_<hmodule>_<n>`), unregistered on terminate; hidden, tool-window, never activated, `WS_EX_NOACTIVATE`, no taskbar entry.
-- [ ] Dedicated message-pump strategy: windows are created on the thread that will pump them (document and enforce); optional internal "GL host thread" mode.
-- [ ] Pixel-format negotiation via `WGL_ARB_pixel_format`; fallback ladder to legacy `ChoosePixelFormat`; MSAA, sRGB (`WGL_ARB_framebuffer_sRGB`), float (`WGL_ARB_pixel_format_float`).
-- [ ] Context creation: core/compat/ES profile, debug, forward-compat, robust-access + reset notification, no-error (`KHR_no_error`), release behavior, context priority.
-- [ ] Shared contexts (`wglShareLists` / attribs-share) with creation-order validation.
-- [ ] Offscreen: hidden-window path, `WGL_ARB_pbuffer` path, and surfaceless/FBO-only mode (`make current` with no drawable where supported).
-- [ ] Swap interval (`WGL_EXT_swap_control` / `_tear`), `SwapBuffers`, DWM-composition quirks.
+- [x] Bootstrap dummy window + legacy context to resolve `wglCreateContextAttribsARB` / `wglChoosePixelFormatARB`; destroy it afterwards; keep the saved/restored foreign context discipline throughout.
+- [x] Own window class with per-module unique name (`Tessera_<hmodule>_<n>`), unregistered on terminate; hidden, tool-window, never activated, `WS_EX_NOACTIVATE`, no taskbar entry.
+- [x] Dedicated message-pump strategy: windows are created on the thread that will pump them (document and enforce); optional internal "GL host thread" mode.
+- [x] Pixel-format negotiation via `WGL_ARB_pixel_format`; fallback ladder to legacy `ChoosePixelFormat`; MSAA, sRGB (`WGL_ARB_framebuffer_sRGB`), float (`WGL_ARB_pixel_format_float`).
+- [~] Context creation: core/compat/ES profile, debug, forward-compat, robust-access + reset notification, no-error (`KHR_no_error`), release behavior, context priority.
+- [~] Shared contexts (`wglShareLists` / attribs-share) with creation-order validation.
+- [x] Offscreen: hidden-window path, `WGL_ARB_pbuffer` path, and surfaceless/FBO-only mode (`make current` with no drawable where supported).
+- [~] Swap interval (`WGL_EXT_swap_control` / `_tear`), `SwapBuffers`, DWM-composition quirks.
 - [ ] Multi-GPU: enumerate adapters; choose via `WGL_NV_gpu_affinity`, `WGL_AMD_gpu_association`, or DXGI preference; document that exporting `NvOptimusEnablement` must be done by the host EXE and is outside a DLL's control.
-- [ ] DPI: **never** call `SetProcessDPIAware`/`SetProcessDpiAwareness...` (process-global; would break JavaFX scaling). Report DPI, don't change it.
+- [x] DPI: **never** call `SetProcessDPIAware`/`SetProcessDpiAwareness...` (process-global; would break JavaFX scaling). Report DPI, don't change it.
 - [ ] ANGLE / Mesa-on-Windows (`libEGL.dll`) detection through the EGL backend (Phase 4).
+
+**Status notes (Phase 2):**
+- Windows live on one private, message-pumping host thread (ADR 0004), so contexts can be created/destroyed from any thread. This replaces the "optional host thread mode" idea: it is always on.
+- Done and tested on NVIDIA (RTX 3060, driver 546.30): core/compat/ES contexts, debug/forward-compat flags, MSAA best-effort degradation, sRGB/float formats (code paths), pbuffer, surfaceless-style `SURFACE_NONE` (an internal 1x1 window is still used), sharing, thread-ownership rules, foreign-context preservation, leak check (300 cycles, flat GDI/USER counts).
+- `[~]` items: robust access / reset notification / no-error / release-flush are implemented but untested (the test GPU path was not exercised for them); share-order validation and context priority are not implemented; DWM swap quirks untested.
+- Not done: multi-GPU selection (`WGL_NV_gpu_affinity`, `WGL_AMD_gpu_association`, DXGI) and ANGLE detection (Phase 4). Only one GPU vendor and driver tested so far.
+- Context creation is ~29 ms on the test machine (mostly driver cost, not profiled); pooling is in Phase 8.
+- Exit criteria still open: a 10k-cycle soak (300 done) and the JavaFX coexistence run (needs the Phase 7 Java bindings).
 
 **Exit:** create/destroy 10k contexts in a loop with no handle/GDI leaks (verified with GDI/USER object counters); coexistence test with a running JavaFX app (D3D pipeline and `-Dprism.order=sw`) shows no interference.
 

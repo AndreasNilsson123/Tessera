@@ -52,4 +52,32 @@ TESSERA_API TesseraResult TESSERA_CALL tesseraGetContextInfo(TesseraContext cont
     });
 }
 
+TESSERA_API TesseraResult TESSERA_CALL tesseraMakeCurrent(TesseraContext context) {
+    return guarded([&] { return Runtime::instance().makeCurrent(context); });
+}
+
+TESSERA_API TesseraContext TESSERA_CALL tesseraGetCurrentContext(void) {
+    try {
+        return Runtime::instance().currentContext();
+    } catch (...) {
+        return TESSERA_NULL_HANDLE;
+    }
+}
+
+TESSERA_API void* TESSERA_CALL tesseraGetProcAddress(const char* name) {
+    try {
+        return Runtime::instance().getProcAddress(name);
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+TESSERA_API TesseraResult TESSERA_CALL tesseraSwapBuffers(TesseraContext context) {
+    return guarded([&] { return Runtime::instance().swapBuffers(context); });
+}
+
+TESSERA_API TesseraResult TESSERA_CALL tesseraSetSwapInterval(TesseraContext context, int32_t interval) {
+    return guarded([&] { return Runtime::instance().setSwapInterval(context, interval); });
+}
+
 } // extern "C"

@@ -18,6 +18,7 @@
 #include "core/handle_table.hpp"
 #include "core/library.hpp"
 #include "core/runtime.hpp"
+#include "core/thread_affinity.hpp"
 
 static int g_failures = 0;
 #define CHECK(cond)                                                                                      \
@@ -409,12 +410,66 @@ static void testRuntime() {
     CHECK(Runtime::instance().refCount() == 0);
 }
 
+// Thread-ownership rules live in the core, independent of any native backend.
+static void testAffinity() {
+    CHECK(tesseraInit() == TESSERA_SUCCESS);
+    Runtime::instance().registerBackend(std::make_shared<FakeBackend>("fake", TESSERA_API_OPENGL));
+
+    TesseraContextConfig cfg = TESSERA_CONTEXT_CONFIG_INIT;
+    cfg.api = TESSERA_API_OPENGL;
+    TesseraContext ctx = 0;
+    CHECK(tesseraCreateContext(&cfg, &ctx) == TESSERA_SUCCESS);
+
+    // The fake backend does not implement native binding, so core-level claims are exercised via UNSUPPORTED
+    // being reported without leaving a stale claim behind.
+    CHECK(tesseraMakeCurrent(ctx) == TESSERA_ERROR_UNSUPPORTED);
+    CHECK(tesseraGetCurrentContext() == TESSERA_NULL_HANDLE);
+    std::thread([&] { CHECK(tesseraMakeCurrent(ctx) == TESSERA_ERROR_UNSUPPORTED); }).join(); // no stuck owner
+    CHECK(tesseraSetSwapInterval(ctx, 1) == TESSERA_ERROR_WRONG_THREAD);
+    CHECK(tesseraMakeCurrent(TESSERA_NULL_HANDLE) == TESSERA_SUCCESS);
+    CHECK(tesseraGetProcAddress("glGetString") == nullptr);
+    CHECK(tesseraGetProcAddress(nullptr) == nullptr);
+
+    // ContextAffinity directly: live owner blocks others, a dead owner is reclaimed.
+    ContextAffinity aff;
+    const auto me = currentThreadToken();
+    CHECK(aff.tryAcquire(me));
+    std::shared_ptr<ThreadToken> other;
+    std::thread([&] { other = currentThreadToken(); }).join(); // thread has exited => token dead
+    CHECK(!other->alive.load());
+    CHECK(aff.ownedBy(me) && !aff.busyElsewhere(me));
+    aff.release(me);
+    CHECK(aff.tryAcquire(other)); // claim it as a thread that is already dead...
+    CHECK(!aff.busyElsewhere(me)); // ...which does not count as busy
+    CHECK(aff.tryAcquire(me));    // and can be taken over
+    CHECK(aff.ownedBy(me));
+    std::shared_ptr<ThreadToken> live;
+    std::atomic<bool> release{false};
+    std::thread holder([&] {
+        live = currentThreadToken();
+        while (!release.load()) std::this_thread::yield();
+    });
+    while (!live) std::this_thread::yield();
+    aff.release(me);
+    CHECK(aff.tryAcquire(live));
+    CHECK(aff.busyElsewhere(me));
+    CHECK(!aff.tryAcquire(me)); // a live thread's claim is respected
+    release = true;
+    holder.join();
+    CHECK(aff.tryAcquire(me)); // ...until that thread exits
+
+    CHECK(tesseraDestroyContext(ctx) == TESSERA_SUCCESS);
+    CHECK(tesseraTerminate() == TESSERA_SUCCESS);
+}
+
 int main() {
+    Runtime::disableBuiltinBackendsForTesting(); // inject fakes only; real backends have their own tests
     testHandleTable();
     testConfig();
     testForeignGuard();
     testLibrary();
     testRuntime();
+    testAffinity();
     if (g_failures == 0) std::puts("test_core: OK");
     return g_failures == 0 ? 0 : 1;
 }

@@ -30,6 +30,14 @@ class Runtime {
     TesseraResult createContext(const TesseraContextConfig& config, TesseraContext& out);
     TesseraResult destroyContext(TesseraContext handle);
     TesseraResult describeContext(TesseraContext handle, TesseraContextInfo& out);
+    TesseraResult makeCurrent(TesseraContext handle);
+    TesseraContext currentContext();
+    TesseraResult swapBuffers(TesseraContext handle);
+    TesseraResult setSwapInterval(TesseraContext handle, int32_t interval);
+    void* getProcAddress(const char* name);
+
+    /* Test hook: init() will not register the platform backends (so tests can inject fakes). */
+    static void disableBuiltinBackendsForTesting() noexcept;
 
     int refCount() const;
     std::size_t liveContexts() const { return contexts_.size(); }

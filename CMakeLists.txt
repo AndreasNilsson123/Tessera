@@ -43,8 +43,15 @@ set(TESSERA_CORE_SOURCES
     src/core/library.cpp
     src/core/log.cpp
     src/core/runtime.cpp
+    src/core/thread_affinity.cpp
     src/core/version.cpp
     src/platform/builtin.cpp)
+if(WIN32)
+    list(APPEND TESSERA_CORE_SOURCES
+        src/platform/win32/window_host.cpp
+        src/platform/win32/wgl_api.cpp
+        src/platform/win32/wgl_backend.cpp)
+endif()
 
 # Compiled once, shared by the public library and the white-box unit tests (which need internals that
 # the shared library deliberately does not export).
@@ -68,6 +75,9 @@ add_library(Tessera::tessera ALIAS tessera)
 
 find_package(Threads REQUIRED)
 target_link_libraries(tessera PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+if(WIN32)
+    target_link_libraries(tessera PRIVATE gdi32 user32)
+endif()
 target_include_directories(tessera
     PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
            $<INSTALL_INTERFACE:include>)
