@@ -8,6 +8,8 @@
 #include <utility>
 #include <vector>
 
+#include "platform/common/arb_context.hpp"
+#include "platform/common/gl_query.hpp"
 #include "core/boundary.hpp"
 #include "core/library.hpp"
 #include "core/log.hpp"
@@ -17,7 +19,7 @@
 namespace tessera::win32 {
 namespace {
 
-// ---- WGL / GL constants (kept local; we do not depend on wglext.h) ---------------------------------
+// ---- WGL pixel-format constants (kept local; we do not depend on wglext.h) -------------------------
 constexpr int kWglDrawToWindow = 0x2001;
 constexpr int kWglSupportOpenGL = 0x2010;
 constexpr int kWglDoubleBuffer = 0x2011;
@@ -36,26 +38,6 @@ constexpr int kWglSampleBuffers = 0x2041;
 constexpr int kWglSamples = 0x2042;
 constexpr int kWglFramebufferSrgb = 0x20A9;
 
-constexpr int kCtxMajor = 0x2091;
-constexpr int kCtxMinor = 0x2092;
-constexpr int kCtxFlags = 0x2094;
-constexpr int kCtxProfileMask = 0x9126;
-constexpr int kCtxNoError = 0x31B3;
-constexpr int kCtxResetStrategy = 0x8256;
-constexpr int kCtxLoseOnReset = 0x8252;
-constexpr int kCtxReleaseBehavior = 0x2097;
-constexpr int kCtxReleaseFlush = 0x2098;
-
-constexpr int kProfileCore = 0x1;
-constexpr int kProfileCompat = 0x2;
-constexpr int kProfileEs2 = 0x4;
-constexpr int kFlagDebug = 0x1;
-constexpr int kFlagForward = 0x2;
-constexpr int kFlagRobust = 0x4;
-
-constexpr unsigned kGlVersion = 0x1F02, kGlVendor = 0x1F00, kGlRenderer = 0x1F01;
-constexpr unsigned kGlContextFlags = 0x821E, kGlProfileMask = 0x9126, kGlResetStrategy = 0x8256;
-
 using PfnCreateContextAttribs = HGLRC(WINAPI*)(HDC, HGLRC, const int*);
 using PfnChoosePixelFormat = BOOL(WINAPI*)(HDC, const int*, const FLOAT*, UINT, int*, UINT*);
 using PfnGetPixelFormatAttribiv = BOOL(WINAPI*)(HDC, int, int, UINT, const int*, int*);
@@ -65,10 +47,6 @@ using PfnCreatePbuffer = HANDLE(WINAPI*)(HDC, int, int, int, const int*);
 using PfnGetPbufferDC = HDC(WINAPI*)(HANDLE);
 using PfnReleasePbufferDC = int(WINAPI*)(HANDLE, HDC);
 using PfnDestroyPbuffer = BOOL(WINAPI*)(HANDLE);
-
-using PfnGlGetString = const unsigned char*(WINAPI*)(unsigned);
-using PfnGlGetIntegerv = void(WINAPI*)(unsigned, int*);
-using PfnGlGetError = unsigned(WINAPI*)();
 
 struct ExtFns {
     PfnCreateContextAttribs createContextAttribs = nullptr;
@@ -81,13 +59,6 @@ struct ExtFns {
     PfnReleasePbufferDC releasePbufferDC = nullptr;
     PfnDestroyPbuffer destroyPbuffer = nullptr;
 };
-
-inline void copyString(char* dst, std::size_t cap, const char* src) noexcept {
-    std::size_t i = 0;
-    if (src)
-        for (; i + 1 < cap && src[i] != '\0'; ++i) dst[i] = src[i];
-    dst[i] = '\0';
-}
 
 // ---- state shared by the backend and all of its contexts ------------------------------------------
 
@@ -255,13 +226,7 @@ class WglContext final : public ContextObject {
 
 // ---- pixel format negotiation ---------------------------------------------------------------------
 
-struct Attempt {
-    int samples;
-    bool srgb;
-    bool relaxDepth;
-};
-
-std::vector<int> pixelFormatAttribs(const TesseraContextConfig& c, const Attempt& a, bool pbuffer) {
+std::vector<int> pixelFormatAttribs(const TesseraContextConfig& c, const FormatAttempt& a, bool pbuffer) {
     std::vector<int> v;
     auto add = [&v](int key, int value) {
         v.push_back(key);
@@ -326,33 +291,17 @@ TesseraResult negotiatePixelFormat(const WglShared& sh, HDC dc, const TesseraCon
     const bool haveArb = sh.fn.choosePixelFormat != nullptr && sh.has("WGL_ARB_pixel_format");
 
     // Features that need extensions: strict mode refuses, best effort drops them.
-    int samples = c.samples;
-    bool srgb = (c.flags & TESSERA_FLAG_SRGB) != 0;
+    FormatRequest request;
+    if (TesseraResult r = gateFormatFeatures(c, "WGL_", [&sh](const char* e) { return sh.has(e); }, request);
+        r != TESSERA_SUCCESS)
+        return r;
+    const int samples = request.samples;
+    const bool srgb = request.srgb;
     const bool wantFloat = (c.flags & TESSERA_FLAG_FLOAT_COLOR) != 0;
-    const bool haveMs = sh.has("WGL_ARB_multisample");
-    const bool haveSrgb = sh.has("WGL_ARB_framebuffer_sRGB") || sh.has("WGL_EXT_framebuffer_sRGB");
-    const bool haveFloat = sh.has("WGL_ARB_pixel_format_float");
-    if (samples > 0 && !haveMs) {
-        if (strict) return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, "multisampling (WGL_ARB_multisample) is not available");
-        samples = 0;
-    }
-    if (srgb && !haveSrgb) {
-        if (strict) return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, "sRGB framebuffers are not available");
-        srgb = false;
-    }
-    if (wantFloat && !haveFloat) return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, "float color buffers are not available");
 
     if (haveArb) {
-        std::vector<Attempt> attempts;
-        for (int s = samples;; s = s > 1 ? s / 2 : 0) {
-            attempts.push_back({s, srgb, false});
-            if (!strict) {
-                if (srgb) attempts.push_back({s, false, false});
-                attempts.push_back({s, false, true});
-            }
-            if (strict || s == 0) break;
-        }
-        for (const Attempt& a : attempts) {
+        const std::vector<FormatAttempt> attempts = formatAttempts(samples, srgb, strict);
+        for (const FormatAttempt& a : attempts) {
             const std::vector<int> attribs = pixelFormatAttribs(c, a, pbuffer);
             int pf = 0;
             UINT count = 0;
@@ -382,49 +331,17 @@ TesseraResult negotiatePixelFormat(const WglShared& sh, HDC dc, const TesseraCon
     return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, "no pixel format matches the requested configuration");
 }
 
-// ---- context attribute negotiation ------------------------------------------------------------------
-
-/* True when plain wglCreateContext gives exactly what was asked for (no version/profile/flags). */
-bool legacyContextSuffices(const TesseraContextConfig& c) {
-    constexpr uint32_t kContextFlags = TESSERA_FLAG_DEBUG | TESSERA_FLAG_FORWARD_COMPATIBLE | TESSERA_FLAG_ROBUST_ACCESS |
-                                       TESSERA_FLAG_RESET_NOTIFICATION | TESSERA_FLAG_NO_ERROR |
-                                       TESSERA_FLAG_RELEASE_FLUSH;
-    return c.api == TESSERA_API_OPENGL && c.profile == TESSERA_PROFILE_ANY && c.versionMajor <= 2 &&
-           (c.flags & kContextFlags) == 0;
-}
-
-std::vector<std::pair<int, int>> versionLadder(const TesseraContextConfig& c) {
-    if (c.api == TESSERA_API_OPENGL_ES) {
-        if (c.versionMajor == 0) return {{2, 0}};
-        return {{c.versionMajor, c.versionMinor}};
-    }
-    if (c.versionMajor != 0) return {{c.versionMajor, c.versionMinor}};
-    if (c.profile != TESSERA_PROFILE_ANY)
-        return {{4, 6}, {4, 5}, {4, 4}, {4, 3}, {4, 2}, {4, 1}, {4, 0}, {3, 3}, {3, 2}};
-    return {{0, 0}}; // no version attributes: whatever the driver considers its default
-}
-
-/* Appends `key,value` unless the extension is missing: strict fails, best effort logs and drops it. */
-bool addIfSupported(const WglShared& sh, const char* extension, bool strict, std::vector<int>& attribs, int key, int value,
-                    std::string& error) {
-    if (sh.has(extension)) {
-        attribs.push_back(key);
-        attribs.push_back(value);
-        return true;
-    }
-    if (strict) {
-        error = std::string("required extension missing: ") + extension;
-        return false;
-    }
-    logf(TESSERA_LOG_INFO, "WGL: %s missing, request dropped", extension);
-    return true;
-}
+// ---- native context creation ------------------------------------------------------------------------
 
 TesseraResult createNativeContext(WglShared& sh, HDC dc, const TesseraContextConfig& c, HGLRC shareRc, HGLRC& rcOut) {
     const WglApi& api = *sh.api;
-    const bool strict = c.fallback == TESSERA_FALLBACK_STRICT;
 
-    if (legacyContextSuffices(c)) {
+    ArbContextPlan plan;
+    const TesseraResult planned = planArbContext(
+        c, "WGL_", sh.fn.createContextAttribs != nullptr, [&sh](const char* e) { return sh.has(e); }, plan);
+    if (planned != TESSERA_SUCCESS) return planned;
+
+    if (plan.legacy) {
         HGLRC rc = api.createContext(dc);
         if (!rc) return fail(TESSERA_ERROR_PLATFORM, describeWin32Error("wglCreateContext failed", GetLastError()));
         if (shareRc && !api.shareLists(shareRc, rc)) {
@@ -436,65 +353,9 @@ TesseraResult createNativeContext(WglShared& sh, HDC dc, const TesseraContextCon
         return TESSERA_SUCCESS;
     }
 
-    if (!sh.fn.createContextAttribs || !sh.has("WGL_ARB_create_context"))
-        return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, "the driver lacks WGL_ARB_create_context (needed for this request)");
-
-    int profileBit = 0;
-    if (c.api == TESSERA_API_OPENGL_ES) {
-        if (!sh.has("WGL_EXT_create_context_es2_profile") && !sh.has("WGL_EXT_create_context_es_profile"))
-            return fail(TESSERA_ERROR_UNSUPPORTED, "OpenGL ES contexts are not available through WGL on this driver");
-        profileBit = kProfileEs2;
-    } else if (c.profile != TESSERA_PROFILE_ANY) {
-        if (!sh.has("WGL_ARB_create_context_profile"))
-            return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, "the driver lacks WGL_ARB_create_context_profile");
-        profileBit = c.profile == TESSERA_PROFILE_CORE ? kProfileCore : kProfileCompat;
-    }
-
-    std::string error;
-    int ctxFlags = 0;
-    std::vector<int> common;
-    if (c.flags & TESSERA_FLAG_DEBUG) ctxFlags |= kFlagDebug;
-    if (c.flags & TESSERA_FLAG_FORWARD_COMPATIBLE) ctxFlags |= kFlagForward;
-    if (c.flags & TESSERA_FLAG_ROBUST_ACCESS) {
-        if (sh.has("WGL_ARB_create_context_robustness")) {
-            ctxFlags |= kFlagRobust;
-            if (c.flags & TESSERA_FLAG_RESET_NOTIFICATION) {
-                common.push_back(kCtxResetStrategy);
-                common.push_back(kCtxLoseOnReset);
-            }
-        } else if (strict) {
-            return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, "required extension missing: WGL_ARB_create_context_robustness");
-        } else {
-            logf(TESSERA_LOG_INFO, "WGL: robustness unavailable, request dropped");
-        }
-    }
-    if ((c.flags & TESSERA_FLAG_NO_ERROR) &&
-        !addIfSupported(sh, "WGL_ARB_create_context_no_error", strict, common, kCtxNoError, 1, error))
-        return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, error);
-    if ((c.flags & TESSERA_FLAG_RELEASE_FLUSH) &&
-        !addIfSupported(sh, "WGL_ARB_context_flush_control", strict, common, kCtxReleaseBehavior, kCtxReleaseFlush, error))
-        return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, error);
-
     DWORD lastError = 0;
-    for (const auto& version : versionLadder(c)) {
-        std::vector<int> attribs;
-        if (version.first != 0) {
-            attribs.push_back(kCtxMajor);
-            attribs.push_back(version.first);
-            attribs.push_back(kCtxMinor);
-            attribs.push_back(version.second);
-        }
-        if (profileBit) {
-            attribs.push_back(kCtxProfileMask);
-            attribs.push_back(profileBit);
-        }
-        if (ctxFlags) {
-            attribs.push_back(kCtxFlags);
-            attribs.push_back(ctxFlags);
-        }
-        attribs.insert(attribs.end(), common.begin(), common.end());
-        attribs.push_back(0);
-
+    for (const auto& version : plan.versions) {
+        const std::vector<int> attribs = plan.attribs(version);
         SetLastError(0);
         HGLRC rc = sh.fn.createContextAttribs(dc, shareRc, attribs.data());
         if (rc) {
@@ -513,82 +374,17 @@ TesseraResult createNativeContext(WglShared& sh, HDC dc, const TesseraContextCon
 
 // ---- reporting what we actually got -------------------------------------------------------------
 
-bool parseVersion(const char* text, bool& isEs, int& major, int& minor) {
-    if (!text) return false;
-    isEs = std::strncmp(text, "OpenGL ES", 9) == 0;
-    const char* p = text;
-    if (isEs) {
-        p += 9;
-        if (std::strncmp(p, "-CM", 3) == 0 || std::strncmp(p, "-CL", 3) == 0) p += 3;
-        while (*p == ' ') ++p;
-    }
-    // "<major>.<minor>..." - parsed by hand (locale-independent, no CRT scanf).
-    auto number = [&p](int& out) {
-        if (*p < '0' || *p > '9') return false;
-        int v = 0;
-        for (; *p >= '0' && *p <= '9'; ++p) v = v * 10 + (*p - '0');
-        out = v;
-        return true;
-    };
-    if (!number(major) || *p != '.') return false;
-    ++p;
-    return number(minor);
-}
-
 /* Requires the context to be current on the calling thread. */
 bool queryInfo(const WglShared& sh, HDC dc, int pf, const TesseraContextConfig& c, bool pbuffer,
                TesseraContextInfo& info) {
     const WglApi& api = *sh.api;
-    PfnGlGetString glGetString = nullptr;
-    PfnGlGetIntegerv glGetIntegerv = nullptr;
-    PfnGlGetError glGetError = nullptr;
-    glGetString = reinterpret_cast<PfnGlGetString>(api.lib.symbol("glGetString"));
-    glGetIntegerv = reinterpret_cast<PfnGlGetIntegerv>(api.lib.symbol("glGetIntegerv"));
-    glGetError = reinterpret_cast<PfnGlGetError>(api.lib.symbol("glGetError"));
-    if (!glGetString || !glGetIntegerv || !glGetError) return false;
+    GlQueryFns gl;
+    gl.getString = reinterpret_cast<decltype(gl.getString)>(api.lib.symbol("glGetString"));
+    gl.getIntegerv = reinterpret_cast<decltype(gl.getIntegerv)>(api.lib.symbol("glGetIntegerv"));
+    gl.getError = reinterpret_cast<decltype(gl.getError)>(api.lib.symbol("glGetError"));
+    if (!queryContextInfo(gl, c, info)) return false;
 
-    std::memset(&info, 0, sizeof info);
-    info.structSize = sizeof info;
-
-    const char* version = reinterpret_cast<const char*>(glGetString(kGlVersion));
-    copyString(info.version, sizeof info.version, version);
-    copyString(info.vendor, sizeof info.vendor, reinterpret_cast<const char*>(glGetString(kGlVendor)));
-    copyString(info.renderer, sizeof info.renderer, reinterpret_cast<const char*>(glGetString(kGlRenderer)));
-
-    bool isEs = false;
-    int major = 0, minor = 0;
-    if (!parseVersion(version, isEs, major, minor)) return false;
-    info.api = isEs ? TESSERA_API_OPENGL_ES : TESSERA_API_OPENGL;
-    info.versionMajor = major;
-    info.versionMinor = minor;
-
-    while (glGetError() != 0) {} // drain anything pending from before us
-    uint32_t flags = 0;
-    if (isEs) {
-        info.profile = TESSERA_PROFILE_ANY;
-    } else if (major > 3 || (major == 3 && minor >= 2)) {
-        int mask = 0;
-        glGetIntegerv(kGlProfileMask, &mask);
-        // A context created without a profile mask reports 0 on some drivers; it is a compatibility context.
-        info.profile = (mask & 1) ? TESSERA_PROFILE_CORE : TESSERA_PROFILE_COMPATIBILITY;
-    } else {
-        info.profile = TESSERA_PROFILE_COMPATIBILITY;
-    }
-    if (major >= 3) {
-        int f = 0;
-        glGetIntegerv(kGlContextFlags, &f);
-        if (f & 0x1) flags |= TESSERA_FLAG_FORWARD_COMPATIBLE;
-        if (f & 0x2) flags |= TESSERA_FLAG_DEBUG;
-        if (f & 0x4) {
-            flags |= TESSERA_FLAG_ROBUST_ACCESS;
-            int strategy = 0;
-            glGetIntegerv(kGlResetStrategy, &strategy);
-            if (strategy == kCtxLoseOnReset) flags |= TESSERA_FLAG_RESET_NOTIFICATION;
-        }
-        if (f & 0x8) flags |= TESSERA_FLAG_NO_ERROR;
-        while (glGetError() != 0) {}
-    }
-    if (c.flags & TESSERA_FLAG_RELEASE_FLUSH) flags |= TESSERA_FLAG_RELEASE_FLUSH;
+    uint32_t flags = info.flags;
 
     // Pixel format: prefer the ARB query (also valid for ARB-only formats), fall back to GDI.
     bool queried = false;
@@ -689,20 +485,8 @@ class WglBackend final : public Backend {
         if (!ok) return fail(TESSERA_ERROR_PLATFORM, "could not query the new context (glGetString failed)");
 
         // Strict mode promises exactly what was asked for: verify the parts the driver may have loosened.
-        if (c.fallback == TESSERA_FALLBACK_STRICT) {
-            const TesseraContextInfo& i = ctx->info;
-            const bool versionOk = c.versionMajor == 0 || i.versionMajor > c.versionMajor ||
-                                   (i.versionMajor == c.versionMajor && i.versionMinor >= c.versionMinor);
-            const bool apiOk = i.api == c.api;
-            const bool profileOk = c.profile == TESSERA_PROFILE_ANY || i.profile == c.profile;
-            const bool samplesOk = i.samples >= c.samples;
-            const uint32_t missing = c.flags & ~i.flags &
-                                     (TESSERA_FLAG_DEBUG | TESSERA_FLAG_FORWARD_COMPATIBLE | TESSERA_FLAG_ROBUST_ACCESS |
-                                      TESSERA_FLAG_NO_ERROR | TESSERA_FLAG_SRGB | TESSERA_FLAG_FLOAT_COLOR |
-                                      TESSERA_FLAG_DOUBLE_BUFFER | TESSERA_FLAG_STEREO);
-            if (!versionOk || !apiOk || !profileOk || !samplesOk || missing)
-                return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, "the created context does not satisfy the strict request");
-        }
+        if (c.fallback == TESSERA_FALLBACK_STRICT && !contextSatisfies(c, ctx->info))
+            return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, "the created context does not satisfy the strict request");
 
         out = std::move(ctx);
         return TESSERA_SUCCESS;

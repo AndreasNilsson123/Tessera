@@ -101,13 +101,21 @@ JavaFX on Windows uses D3D (Prism d3d) by default, so WGL conflicts are less lik
 
 JavaFX on Linux uses the `es2` pipeline (GLX-based) so **real conflicts are possible here**.
 
-- [ ] **Own `Display*` connection** (`XOpenDisplay`) per Tessera instance; never reuse AWT/JavaFX's. Close only ours.
-- [ ] Xlib threading: do not require `XInitThreads` ourselves from a library constructor; detect whether it was called (best effort) and prefer an XCB-based or per-thread connection model so we are safe either way. Install no global `XSetErrorHandler` permanently — scope a handler around calls that can raise `BadMatch`/`GLXBadFBConfig`, chained to the previous handler, thread-guarded (X error handler is process-global, so use a mutex and restore).
-- [ ] FBConfig selection via `glXChooseFBConfig`, visual matching, `GLX_ARB_create_context(_profile)`, `_robustness`, `_no_error`, `_es2_profile`.
-- [ ] Offscreen: pbuffer, hidden unmapped window with colormap of our own, and drawable-less `glXMakeContextCurrent(None, None, ctx)` where supported.
-- [ ] Swap control (`GLX_EXT/MESA/SGI_swap_control`), `glXSwapBuffers`.
-- [ ] GLVND vs legacy `libGL.so` handling; `libGLX.so.0` preferred.
-- [ ] Context sharing correctness across displays (shared contexts must share a server); document and validate.
+- [x] **Own `Display*` connection** (`XOpenDisplay`) per Tessera instance (one shared by all its contexts, because GLX share groups only work within one connection); never reuses AWT/JavaFX's. Closed with the backend.
+- [~] Xlib threading: **decision changed from the original plan** (ADR 0005). Tessera calls `XInitThreads()` once, before opening its own connection, unless `TESSERA_NO_XINITTHREADS=1`: a single shared connection is used from many threads, which Xlib only allows after that call, and every GL toolkit does the same. The per-thread-connection/XCB alternatives were rejected. Not done: detecting whether the host already called it.
+- [x] Scoped `XSetErrorHandler`: installed only around calls that can raise X errors, serialised on a global mutex, chained to the host's handler for errors on other displays, restored exactly (tested). Also protects the restore of the host's context against a host drawable that has since died.
+- [~] FBConfig selection via `glXChooseFBConfig`, visual matching, `GLX_ARB_create_context(_profile)`, `_es2_profile` done and tested (core/compat/ES/MSAA degradation/sharing). `_robustness` and `_no_error` are implemented but untested: the test server does not advertise robustness, and no-error was not exercised.
+- [~] Offscreen: pbuffer and hidden never-mapped window with our own colormap done and tested. Drawable-less `glXMakeContextCurrent(None, None, ctx)` is **not** implemented: `SURFACE_NONE` still uses an internal window, as on WGL.
+- [~] Swap control (`GLX_EXT/MESA/SGI_swap_control`) implemented; the test server advertises none of them (WSLg/Mesa D3D12), so it is untested and correctly reports `UNSUPPORTED`. `glXSwapBuffers` done.
+- [~] GLVND vs legacy `libGL.so`: loads `libGL.so.1`, falls back to `libGLX.so.0`; proc addresses are filtered to `gl*` names. Not tested against a legacy (non-GLVND) libGL.
+- [x] Context sharing: validated through the single shared connection (texture visible across a share group; parent destroyed first).
+- [x] (Added) A context left current on an exiting thread is released by Tessera on that thread's exit. GLX leaves it permanently busy otherwise (`BadAccess`); found by the integration test.
+- [x] (Added) `tesseraSwapBuffers` now requires the context to be current on the calling thread, on every platform (EGL requires it; GLX behaviour is driver-defined otherwise).
+- [x] (Refactor) WGL and GLX share `ARB_create_context` negotiation, GL info queries, the strict-mode check and the pixel-format relaxation ladder (`src/platform/common/`).
+
+**Status notes (Phase 3):**
+- Tested on Ubuntu 22.04 under WSL2/WSLg (Mesa 23.2 D3D12 on the RTX 3060), gcc 11 `-Werror`, plus ASan/UBSan. TSan reports races only inside NVIDIA's uninstrumented WSL driver (concurrent swaps on different contexts through the shared connection); none are attributable to Tessera code, but that is unproven. ASan leak reports are one-time driver allocations (no Tessera frames; fd count flat).
+- Not tested: a real Xorg/NVIDIA or AMD/Intel Mesa stack, Xvfb with llvmpipe (CI job added, never run), clang, 32-bit, non-GLVND libGL.
 
 **Exit:** coexistence test with a JavaFX es2 pipeline window + Tessera worker contexts running for hours (Xvfb + real X, with `XSetErrorHandler` interference tests).
 

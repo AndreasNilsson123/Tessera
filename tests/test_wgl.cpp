@@ -139,7 +139,7 @@ static void testForeignContextUntouched() {
     EXPECT(tesseraCreateContext(&absurd, &none), TESSERA_ERROR_NO_MATCHING_CONFIG);
     CHECK(foreign.isCurrent()); // failing create
 
-    EXPECT(tesseraSwapBuffers(ctx), TESSERA_SUCCESS);
+    EXPECT(tesseraSwapBuffers(ctx), TESSERA_ERROR_WRONG_THREAD); // not current: refused, foreign untouched
     CHECK(foreign.isCurrent());
 
     EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
@@ -211,7 +211,7 @@ static void testThreadRules() {
         EXPECT(tesseraMakeCurrent(ctx), TESSERA_ERROR_WRONG_THREAD);
         EXPECT(tesseraDestroyContext(ctx), TESSERA_ERROR_WRONG_THREAD);
         EXPECT(tesseraSetSwapInterval(ctx, 1), TESSERA_ERROR_WRONG_THREAD);
-        EXPECT(tesseraSwapBuffers(ctx), TESSERA_SUCCESS); // presenting does not need ownership
+        EXPECT(tesseraSwapBuffers(ctx), TESSERA_ERROR_WRONG_THREAD);
     }).join();
 
     EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS);

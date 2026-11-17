@@ -36,6 +36,9 @@ class Runtime {
     TesseraResult setSwapInterval(TesseraContext handle, int32_t interval);
     void* getProcAddress(const char* name);
 
+    /* Called from a thread_local destructor on an exiting thread; see ThreadExitGuard. */
+    void releaseAtThreadExit(TesseraContext handle, const std::shared_ptr<ThreadToken>& thread) noexcept;
+
     /* Test hook: init() will not register the platform backends (so tests can inject fakes). */
     static void disableBuiltinBackendsForTesting() noexcept;
 

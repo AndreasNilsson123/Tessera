@@ -8,9 +8,10 @@ configure the project identically.
 | `build` | MSVC (Debug+Release), gcc (Debug+Release), clang, macOS arm64: build with warnings as errors, run all tests that need no GPU (`abi`, `header_c`, `core`) | yes |
 | `sanitizers` | clang ASan+UBSan and TSan over the same tests | yes |
 | `wgl-integration` | the WGL test against the hosted runner's software OpenGL | no (informational) |
+| `glx-integration` | the GLX test under Xvfb with Mesa llvmpipe (software GL, no GPU) | no (informational until first green run) |
 | `lint` | clang-format check, clang-tidy build | no (informational) |
 
-Tests labelled `gpu` (currently `wgl`) need a real OpenGL driver and are excluded from the default `ci` test preset.
+Tests labelled `gpu` (`wgl` on Windows, `glx` on Linux) need a real OpenGL driver and a display and are excluded from the default `ci` test preset.
 
 ## Running locally
 
@@ -31,8 +32,9 @@ CI job lowers `vm.mmap_rnd_bits`.
 
 ## Status and known gaps
 
-- Verified locally: the `ci` preset on Windows/MSVC, and `ci`, `asan-ubsan`, `tsan` on Ubuntu 22.04/gcc 11 (WSL).
-- Never run yet: the workflow itself (no remote exists), clang builds, macOS, the `lint` job, and the runner image names
+- Verified locally: the `ci` preset on Windows/MSVC (including the real-GPU `wgl` test), and `ci`, `asan-ubsan`, `tsan` on Ubuntu 22.04/gcc 11 (WSL), where the `glx` test also ran against WSLg's X server.
+- The `glx` test under TSan reports races inside NVIDIA's WSL driver (uninstrumented); GPU tests are therefore excluded from the sanitizer presets.
+- Never run yet: the workflow itself (no remote exists), clang builds, macOS, the `lint` and `glx-integration` jobs, and the runner image names
   (`windows-2022`, `ubuntu-24.04`, `macos-14`). Expect to adjust on first push.
 - `lint` is informational because the existing code was not produced by clang-format; blocking it needs a one-time
   reformat commit.

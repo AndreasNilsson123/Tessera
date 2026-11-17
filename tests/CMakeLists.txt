@@ -42,4 +42,15 @@ if(WIN32 AND TESSERA_BUILD_SHARED)
     set_tests_properties(wgl PROPERTIES LABELS "gpu" TIMEOUT 180)
 endif()
 
+# GLX integration test: public API only, against the real shared library, with a raw GLX context on its own X
+# connection as the "other library". Needs an X server (Xvfb is enough); exits 77 = skipped without one.
+if(UNIX AND NOT APPLE AND TESSERA_BUILD_SHARED)
+    add_executable(test_glx test_glx.cpp)
+    target_include_directories(test_glx PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    target_link_libraries(test_glx PRIVATE Tessera::tessera Threads::Threads ${CMAKE_DL_LIBS})
+    tessera_apply_options(test_glx)
+    add_test(NAME glx COMMAND test_glx)
+    set_tests_properties(glx PROPERTIES LABELS "gpu" TIMEOUT 180 SKIP_RETURN_CODE 77)
+endif()
+
 set_tests_properties(abi core header_c PROPERTIES TIMEOUT 60)

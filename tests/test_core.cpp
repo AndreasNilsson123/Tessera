@@ -426,6 +426,7 @@ static void testAffinity() {
     CHECK(tesseraGetCurrentContext() == TESSERA_NULL_HANDLE);
     std::thread([&] { CHECK(tesseraMakeCurrent(ctx) == TESSERA_ERROR_UNSUPPORTED); }).join(); // no stuck owner
     CHECK(tesseraSetSwapInterval(ctx, 1) == TESSERA_ERROR_WRONG_THREAD);
+    CHECK(tesseraSwapBuffers(ctx) == TESSERA_ERROR_WRONG_THREAD);
     CHECK(tesseraMakeCurrent(TESSERA_NULL_HANDLE) == TESSERA_SUCCESS);
     CHECK(tesseraGetProcAddress("glGetString") == nullptr);
     CHECK(tesseraGetProcAddress(nullptr) == nullptr);

@@ -46,12 +46,19 @@ set(TESSERA_CORE_SOURCES
     src/core/runtime.cpp
     src/core/thread_affinity.cpp
     src/core/version.cpp
-    src/platform/builtin.cpp)
+    src/platform/builtin.cpp
+    src/platform/common/arb_context.cpp
+    src/platform/common/gl_query.cpp)
 if(WIN32)
     list(APPEND TESSERA_CORE_SOURCES
         src/platform/win32/window_host.cpp
         src/platform/win32/wgl_api.cpp
         src/platform/win32/wgl_backend.cpp)
+endif()
+if(UNIX AND NOT APPLE)
+    list(APPEND TESSERA_CORE_SOURCES
+        src/platform/x11/glx_api.cpp
+        src/platform/x11/glx_backend.cpp)
 endif()
 
 # Compiled once, shared by the public library and the white-box unit tests (which need internals that

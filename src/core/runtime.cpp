@@ -16,7 +16,31 @@ namespace {
 // use, so a destroyed context or a terminated runtime simply reads as "none".
 thread_local TesseraContext t_current = TESSERA_NULL_HANDLE;
 std::atomic<bool> g_builtinDisabled{false};
+
+// Releases the thread's current context when the thread exits. WGL drivers do this themselves, but GLX does
+// not: a context left current on an exited thread stays "busy" and cannot be bound anywhere else (BadAccess).
+// Runs as a thread_local destructor, i.e. on the exiting thread and before the C runtime tears down
+// pthread-key based driver state. It keeps its own token so it never touches other thread_locals.
+struct ThreadExitGuard {
+    std::shared_ptr<ThreadToken> token;
+    ~ThreadExitGuard() {
+        if (token && t_current != TESSERA_NULL_HANDLE) Runtime::instance().releaseAtThreadExit(t_current, token);
+    }
+};
+thread_local ThreadExitGuard t_exitGuard;
 } // namespace
+
+void Runtime::releaseAtThreadExit(TesseraContext handle, const std::shared_ptr<ThreadToken>& me) noexcept {
+    try {
+        if (auto object = contexts_.get(handle)) {
+            if (object->affinity.ownedBy(me)) {
+                object->unbindCurrent();
+                object->affinity.release(me);
+            }
+        }
+    } catch (...) {
+    }
+}
 
 Runtime& Runtime::instance() {
     static Runtime* rt = new Runtime(); // leaked on purpose, see class comment
@@ -166,6 +190,7 @@ TesseraResult Runtime::makeCurrent(TesseraContext handle) {
         if (auto prev = contexts_.get(t_current)) prev->affinity.release(me);
     }
     t_current = handle;
+    t_exitGuard.token = me; // arms the release-at-thread-exit above
     return TESSERA_SUCCESS;
 }
 
@@ -183,6 +208,8 @@ TesseraContext Runtime::currentContext() {
 TesseraResult Runtime::swapBuffers(TesseraContext handle) {
     auto object = contexts_.get(handle);
     if (!object) return fail(TESSERA_ERROR_INVALID_HANDLE, "not a live context handle");
+    if (!object->affinity.ownedBy(currentThreadToken()))
+        return fail(TESSERA_ERROR_WRONG_THREAD, "context is not current on the calling thread");
     return object->swapBuffers();
 }
 

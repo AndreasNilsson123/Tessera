@@ -229,10 +229,14 @@ TESSERA_API TesseraContext TESSERA_CALL tesseraGetCurrentContext(void);
  * Resolves an OpenGL function by name for LWJGL-style loaders. Extension and post-1.1 functions are only
  * returned while a context is current on the calling thread (a platform limitation). Returns NULL if not
  * found; never returns the placeholder values some drivers use (1, 2, 3, -1).
+ * Names that do not start with "gl" are always NULL. On X11/GLX a made-up "gl..." name may still resolve to a
+ * harmless stub (the GLX loader contract): learn what is supported from the extension strings, not from
+ * whether a pointer came back.
  */
 TESSERA_API void* TESSERA_CALL tesseraGetProcAddress(const char* name);
 
-/* Presents the back buffer (a no-op for single-buffered or pbuffer surfaces). Any thread. */
+/* Presents the back buffer (a no-op for pbuffer surfaces). Like tesseraSetSwapInterval, `context` must be
+ * current on the calling thread: that is the one rule every platform (WGL, GLX, EGL) agrees on. */
 TESSERA_API TesseraResult TESSERA_CALL tesseraSwapBuffers(TesseraContext context);
 
 /* 0 = no vsync, 1 = vsync, -1 = adaptive (if supported). `context` must be current on the calling thread. */
