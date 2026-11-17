@@ -1,6 +1,7 @@
 #include "egl_backend.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -72,6 +73,51 @@ bool contains(const std::vector<std::string>& v, const char* word) {
  * here (surfaceless, a device, or the default display) are therefore initialised and then left initialised for
  * the life of the process; only contexts and surfaces that Tessera created are destroyed.
  */
+// ---- choosing a GPU -------------------------------------------------------------------------------
+
+/*
+ * TESSERA_EGL_DEVICE names the GPU for the `device` platform. Accepted forms:
+ *   <n>                       index in eglQueryDevicesEXT order (unstable across drivers/boots)
+ *   /dev/dri/renderD128       a DRM render node (matched by EGL_EXT_device_drm_render_node)
+ *   0000:01:00.0              a PCI address, resolved through /dev/dri/by-path/pci-<address>-render
+ * An explicit choice is never silently replaced by another GPU: if nothing matches, opening the display fails.
+ */
+constexpr EGLint kDrmRenderNodeFile = 0x3377; // EGL_DRM_RENDER_NODE_FILE_EXT
+
+std::string canonicalPath(const std::string& p) {
+#if defined(__unix__) || defined(__APPLE__)
+    char buf[4096];
+    if (::realpath(p.c_str(), buf)) return buf;
+#endif
+    return p;
+}
+
+bool looksLikePciAddress(const std::string& s) {
+    // domain:bus:device.function, e.g. 0000:01:00.0
+    return s.size() >= 12 && s[4] == ':' && s[7] == ':' && s[10] == '.';
+}
+
+/* The device in `devices` that `selector` names, or -1. */
+int findDevice(const EglFns& f, void* const* devices, EGLint count, const std::string& selector) {
+    if (!selector.empty() && selector.find_first_not_of("0123456789") == std::string::npos) {
+        const int i = std::atoi(selector.c_str());
+        return i < count ? i : -1;
+    }
+    std::string node = selector;
+    if (looksLikePciAddress(selector)) {
+        std::string lower = selector;
+        for (char& ch : lower) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        node = "/dev/dri/by-path/pci-" + lower + "-render";
+    }
+    if (!f.eglQueryDeviceStringEXT) return -1;
+    const std::string wanted = canonicalPath(node);
+    for (EGLint i = 0; i < count; ++i) {
+        const char* file = f.eglQueryDeviceStringEXT(devices[i], kDrmRenderNodeFile);
+        if (file && canonicalPath(file) == wanted) return i;
+    }
+    return -1;
+}
+
 class EglShared {
   public:
     const EglApi* api = nullptr;
@@ -99,6 +145,14 @@ class EglShared {
         const std::string want = wanted ? wanted : "";
         std::string tried;
 
+        // An explicit GPU choice only makes sense on the device platform; the others pick for themselves.
+        const char* selectorEnv = std::getenv("TESSERA_EGL_DEVICE");
+        const std::string selector = selectorEnv ? selectorEnv : "";
+        if (!selector.empty() && want != "device" && !want.empty()) {
+            error = "TESSERA_EGL_DEVICE needs TESSERA_EGL_PLATFORM=device (or unset)";
+            return false;
+        }
+
         auto attempt = [&](const char* name, EGLDisplay d) {
             if (!d) return false;
             EGLint maj = 0, min = 0;
@@ -125,7 +179,7 @@ class EglShared {
             return true;
         };
 
-        if ((want.empty() || want == "surfaceless") && platformBase && contains(client, "EGL_MESA_platform_surfaceless") &&
+        if (selector.empty() && (want.empty() || want == "surfaceless") && platformBase && contains(client, "EGL_MESA_platform_surfaceless") &&
             attempt("surfaceless", f.eglGetPlatformDisplayEXT(kPlatformSurfaceless, nullptr, nullptr)))
             return finish();
 
@@ -134,14 +188,27 @@ class EglShared {
             void* devices[16] = {};
             EGLint count = 0;
             if (f.eglQueryDevicesEXT(16, devices, &count) && count > 0) {
-                // TESSERA_EGL_DEVICE=<index> picks a specific GPU on multi-GPU systems.
-                const char* idx = std::getenv("TESSERA_EGL_DEVICE");
-                const int only = idx ? std::atoi(idx) : -1;
+                if (!selector.empty()) {
+                    const int i = findDevice(f, devices, count, selector);
+                    if (i < 0) {
+                        error = "TESSERA_EGL_DEVICE=" + selector + " matches none of the " + std::to_string(count) +
+                                " EGL device(s) (render node / PCI matching needs EGL_EXT_device_drm_render_node)";
+                        return false;
+                    }
+                    if (attempt("device", f.eglGetPlatformDisplayEXT(kPlatformDevice, devices[i], nullptr))) return finish();
+                    error = "the EGL device selected by TESSERA_EGL_DEVICE=" + selector + " could not be opened (tried:" + tried + ")";
+                    return false;
+                }
                 for (EGLint i = 0; i < count; ++i) {
-                    if (only >= 0 && i != only) continue;
                     if (attempt("device", f.eglGetPlatformDisplayEXT(kPlatformDevice, devices[i], nullptr))) return finish();
                 }
+            } else if (!selector.empty()) {
+                error = "TESSERA_EGL_DEVICE is set but no EGL devices are available";
+                return false;
             }
+        } else if (!selector.empty()) {
+            error = "TESSERA_EGL_DEVICE is set but EGL_EXT_platform_device is not available";
+            return false;
         }
 
         if (want.empty() || want == "default") {
@@ -194,6 +261,16 @@ class EglContext final : public ContextObject {
 
     // Pbuffers and surfaceless contexts have nothing to present.
     TesseraResult swapBuffers() noexcept override { return TESSERA_SUCCESS; }
+
+    TesseraResult nativeHandles(TesseraNativeHandles& out) const noexcept override {
+        out.kind = TESSERA_NATIVE_EGL;
+        out.handles[0] = static_cast<uint64_t>(reinterpret_cast<std::uintptr_t>(shared_->dpy));
+        out.handles[1] = static_cast<uint64_t>(reinterpret_cast<std::uintptr_t>(ctx));
+        out.handles[2] = static_cast<uint64_t>(reinterpret_cast<std::uintptr_t>(surface));
+        out.handles[3] = static_cast<uint64_t>(reinterpret_cast<std::uintptr_t>(config));
+        out.handles[4] = static_cast<uint64_t>(apiEnum);
+        return TESSERA_SUCCESS;
+    }
 
     TesseraResult setSwapInterval(int32_t) noexcept override {
         return fail(TESSERA_ERROR_UNSUPPORTED, "swap interval does not apply to EGL pbuffer/surfaceless drawables");

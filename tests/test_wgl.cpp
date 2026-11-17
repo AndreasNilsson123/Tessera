@@ -35,6 +35,7 @@ static int g_failures = 0;
     } while (0)
 
 #include "robustness_common.hpp"
+#include "interop_common.hpp"
 
 using GlGetString = const unsigned char*(WINAPI*)(unsigned);
 using GlGenTextures = void(WINAPI*)(int, unsigned*);
@@ -444,6 +445,184 @@ static void testAttributeMatrix() {
     foreign.destroy();
 }
 
+// ---------------------------------------------------------------- Phase 8
+
+static void testPrewarm() { interop::prewarm(wglHooks()); }
+
+static void testNativeHandles() {
+    interop::HandleExpectations e;
+    e.kind = TESSERA_NATIVE_WGL;
+    e.contextIndex = 0;
+    e.mustBeNonZero = {0, 1, 2, 4}; // HGLRC, HDC, HWND (the hidden window), pixel format
+    e.nativeCurrent = [] { return static_cast<uint64_t>(reinterpret_cast<std::uintptr_t>(wglGetCurrentContext())); };
+    interop::nativeHandles(wglHooks(), e);
+
+    // The native objects are real: the DC and context can be used directly by another library.
+    TesseraContextConfig cfg = baseConfig();
+    TesseraContext ctx = 0;
+    EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_SUCCESS);
+    TesseraNativeHandles nh = tesseraDefaultNativeHandles();
+    EXPECT(tesseraGetNativeHandles(ctx, &nh), TESSERA_SUCCESS);
+    CHECK(GetPixelFormat(reinterpret_cast<HDC>(static_cast<std::uintptr_t>(nh.handles[1]))) == static_cast<int>(nh.handles[4]));
+    CHECK(IsWindow(reinterpret_cast<HWND>(static_cast<std::uintptr_t>(nh.handles[2]))));
+    EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
+
+    // A pbuffer context reports the pbuffer instead of a window.
+    TesseraContextConfig pb = baseConfig();
+    pb.surface = TESSERA_SURFACE_PBUFFER;
+    if (tesseraCreateContext(&pb, &ctx) == TESSERA_SUCCESS) {
+        nh = tesseraDefaultNativeHandles();
+        EXPECT(tesseraGetNativeHandles(ctx, &nh), TESSERA_SUCCESS);
+        CHECK(nh.handles[3] != 0);
+        EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
+    }
+}
+
+static HWND rawWindow(bool withPixelFormat, bool doubleBuffer) {
+    HWND w = CreateWindowExW(0, L"STATIC", L"attach", WS_POPUP, 0, 0, 64, 64, nullptr, nullptr, nullptr, nullptr);
+    if (w && withPixelFormat) {
+        HDC dc = GetDC(w);
+        PIXELFORMATDESCRIPTOR pfd = {};
+        pfd.nSize = sizeof pfd;
+        pfd.nVersion = 1;
+        pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | (doubleBuffer ? PFD_DOUBLEBUFFER : 0);
+        pfd.iPixelType = PFD_TYPE_RGBA;
+        pfd.cColorBits = 32;
+        pfd.cDepthBits = 24;
+        const int pf = ChoosePixelFormat(dc, &pfd);
+        SetPixelFormat(dc, pf, &pfd);
+        ReleaseDC(w, dc);
+    }
+    return w;
+}
+
+static int windowPixelFormat(HWND w) {
+    HDC dc = GetDC(w);
+    const int pf = GetPixelFormat(dc);
+    ReleaseDC(w, dc);
+    return pf;
+}
+
+static uint64_t id(HWND w) { return static_cast<uint64_t>(reinterpret_cast<std::uintptr_t>(w)); }
+
+static void testWindowAttach() {
+    using GlClearColor = void(WINAPI*)(float, float, float, float);
+    using GlClear = void(WINAPI*)(unsigned);
+    using GlReadPixels = void(WINAPI*)(int, int, int, int, unsigned, unsigned, void*);
+    TesseraContextConfig cfg = baseConfig(); // asks for a double-buffered format
+    TesseraContext ctx = 0;
+
+    // A window that has no pixel format: refused unless the caller allows us to give it one, and left exactly as it was.
+    HWND fresh = rawWindow(false, false);
+    CHECK(fresh != nullptr);
+    EXPECT(tesseraCreateContextForWindow(&cfg, id(fresh), 0, &ctx), TESSERA_ERROR_INVALID_ARGUMENT);
+    CHECK(std::strstr(tesseraGetLastErrorMessage(), "does not modify windows it does not own") != nullptr);
+    CHECK(ctx == TESSERA_NULL_HANDLE);
+    CHECK(windowPixelFormat(fresh) == 0);
+
+    // With permission: Tessera sets the pixel format (once, for good) and renders into the window.
+    EXPECT(tesseraCreateContextForWindow(&cfg, id(fresh), TESSERA_ATTACH_ALLOW_PIXEL_FORMAT, &ctx), TESSERA_SUCCESS);
+    if (ctx) {
+        CHECK(windowPixelFormat(fresh) != 0);
+        TesseraContextInfo info = tesseraDefaultContextInfo();
+        EXPECT(tesseraGetContextInfo(ctx, &info), TESSERA_SUCCESS);
+        CHECK(info.surface == TESSERA_SURFACE_WINDOW);
+        CHECK(info.flags & TESSERA_FLAG_DOUBLE_BUFFER);
+        TesseraNativeHandles nh = tesseraDefaultNativeHandles();
+        EXPECT(tesseraGetNativeHandles(ctx, &nh), TESSERA_SUCCESS);
+        CHECK(nh.handles[2] == id(fresh) && nh.handles[3] == 0);
+
+        EXPECT(tesseraMakeCurrent(ctx), TESSERA_SUCCESS);
+        auto clearColor = reinterpret_cast<GlClearColor>(tesseraGetProcAddress("glClearColor"));
+        auto clear = reinterpret_cast<GlClear>(tesseraGetProcAddress("glClear"));
+        auto readPixels = reinterpret_cast<GlReadPixels>(tesseraGetProcAddress("glReadPixels"));
+        CHECK(clearColor && clear && readPixels);
+        if (clearColor && clear && readPixels) {
+            clearColor(1.f, 0.f, 0.f, 1.f);
+            clear(0x4000); // GL_COLOR_BUFFER_BIT
+            unsigned char px[4] = {};
+            readPixels(0, 0, 1, 1, 0x1908, 0x1401, px); // the window's back buffer
+            CHECK(px[0] == 255 && px[1] == 0 && px[2] == 0 && px[3] == 255);
+        }
+        EXPECT(tesseraSwapBuffers(ctx), TESSERA_SUCCESS); // real presentation to the caller's window
+        const TesseraResult si = tesseraSetSwapInterval(ctx, 0);
+        CHECK(si == TESSERA_SUCCESS || si == TESSERA_ERROR_UNSUPPORTED);
+        EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS);
+        EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
+        // Destroying the context never touches the window.
+        CHECK(IsWindow(fresh));
+        CHECK(windowPixelFormat(fresh) != 0);
+
+        // The window now has a format, so it can be attached again without any permission: it is adopted.
+        EXPECT(tesseraCreateContextForWindow(&cfg, id(fresh), 0, &ctx), TESSERA_SUCCESS);
+        if (ctx) EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
+    }
+
+    // A window whose owner already chose a (single-buffered) format: adopted as it is, then checked against the request.
+    HWND owned = rawWindow(true, false);
+    TesseraContextConfig strict = cfg;
+    strict.fallback = TESSERA_FALLBACK_STRICT; // wants double buffering, which this window's format cannot give
+    EXPECT(tesseraCreateContextForWindow(&strict, id(owned), 0, &ctx), TESSERA_ERROR_NO_MATCHING_CONFIG);
+    CHECK(ctx == TESSERA_NULL_HANDLE);
+    TesseraContextConfig relaxed = cfg;
+    relaxed.fallback = TESSERA_FALLBACK_BEST_EFFORT;
+    EXPECT(tesseraCreateContextForWindow(&relaxed, id(owned), TESSERA_ATTACH_ALLOW_PIXEL_FORMAT, &ctx), TESSERA_SUCCESS);
+    if (ctx) {
+        TesseraContextInfo info = tesseraDefaultContextInfo();
+        tesseraGetContextInfo(ctx, &info);
+        CHECK(!(info.flags & TESSERA_FLAG_DOUBLE_BUFFER)); // reported truthfully: the window decided
+        EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
+    }
+
+    // A window destroyed while a context renders into it: errors, never a crash, and the context can still be destroyed.
+    HWND doomed = rawWindow(false, false);
+    EXPECT(tesseraCreateContextForWindow(&relaxed, id(doomed), TESSERA_ATTACH_ALLOW_PIXEL_FORMAT, &ctx), TESSERA_SUCCESS);
+    if (ctx) {
+        EXPECT(tesseraMakeCurrent(ctx), TESSERA_SUCCESS);
+        DestroyWindow(doomed);
+        EXPECT(tesseraSwapBuffers(ctx), TESSERA_ERROR_PLATFORM);
+        CHECK(std::strstr(tesseraGetLastErrorMessage(), "no longer exists") != nullptr);
+        EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS);
+        EXPECT(tesseraMakeCurrent(ctx), TESSERA_ERROR_PLATFORM);
+        EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
+    }
+
+    // Created on another thread than the one that owns the window: windows are thread-affine for messages, not for rendering.
+    HWND crossThread = rawWindow(false, false);
+    std::thread([&] {
+        TesseraContext c = 0;
+        EXPECT(tesseraCreateContextForWindow(&relaxed, id(crossThread), TESSERA_ATTACH_ALLOW_PIXEL_FORMAT, &c), TESSERA_SUCCESS);
+        if (c) {
+            EXPECT(tesseraMakeCurrent(c), TESSERA_SUCCESS);
+            EXPECT(tesseraSwapBuffers(c), TESSERA_SUCCESS);
+            EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS);
+            EXPECT(tesseraDestroyContext(c), TESSERA_SUCCESS);
+        }
+    }).join();
+
+    // Argument handling.
+    TesseraContext none = 0;
+    EXPECT(tesseraCreateContextForWindow(&cfg, 0, 0, &none), TESSERA_ERROR_INVALID_ARGUMENT);
+    EXPECT(tesseraCreateContextForWindow(&cfg, 0x1234, 0, &none), TESSERA_ERROR_INVALID_ARGUMENT); // not a window
+    EXPECT(tesseraCreateContextForWindow(&cfg, id(owned), 0x80, &none), TESSERA_ERROR_INVALID_ARGUMENT); // unknown flag
+    EXPECT(tesseraCreateContextForWindow(nullptr, id(owned), 0, &none), TESSERA_ERROR_INVALID_ARGUMENT);
+    EXPECT(tesseraCreateContextForWindow(&cfg, id(owned), 0, nullptr), TESSERA_ERROR_INVALID_ARGUMENT);
+    TesseraContextConfig wrongSurface = relaxed;
+    wrongSurface.surface = TESSERA_SURFACE_PBUFFER;
+    EXPECT(tesseraCreateContextForWindow(&wrongSurface, id(owned), 0, &none), TESSERA_ERROR_INVALID_ARGUMENT);
+    TesseraContextConfig windowSurface = relaxed;
+    windowSurface.surface = TESSERA_SURFACE_WINDOW; // accepted as an alias of DEFAULT here...
+    EXPECT(tesseraCreateContextForWindow(&windowSurface, id(owned), 0, &none), TESSERA_SUCCESS);
+    if (none) tesseraDestroyContext(none);
+    // ... but not as a request for an ordinary context.
+    TesseraContext ordinary = 0;
+    EXPECT(tesseraCreateContext(&windowSurface, &ordinary), TESSERA_ERROR_INVALID_ARGUMENT);
+
+    DestroyWindow(fresh);
+    DestroyWindow(owned);
+    DestroyWindow(crossThread);
+}
+
 int main() {
     if (tesseraInit() != TESSERA_SUCCESS) {
         std::fprintf(stderr, "tesseraInit failed: %s\n", tesseraGetLastErrorMessage());
@@ -477,6 +656,9 @@ int main() {
         {"reset status / recreate", testResetStatus},
         {"debug message forwarding", testDebugForwarding},
         {"attribute matrix", testAttributeMatrix},
+        {"pre-warmed contexts", testPrewarm},
+        {"native handles", testNativeHandles},
+        {"window attach", testWindowAttach},
         {"terminate / re-init", testTerminateAndReinit},
     };
     for (const Section& sec : sections) {

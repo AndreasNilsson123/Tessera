@@ -56,6 +56,8 @@ const EglApi* loadApi() noexcept {
         f.eglGetPlatformDisplayEXT = reinterpret_cast<decltype(f.eglGetPlatformDisplayEXT)>(
             f.eglGetProcAddress("eglGetPlatformDisplayEXT"));
         f.eglQueryDevicesEXT = reinterpret_cast<decltype(f.eglQueryDevicesEXT)>(f.eglGetProcAddress("eglQueryDevicesEXT"));
+        f.eglQueryDeviceStringEXT =
+            reinterpret_cast<decltype(f.eglQueryDeviceStringEXT)>(f.eglGetProcAddress("eglQueryDeviceStringEXT"));
         return api;
     } catch (...) {
         return nullptr;

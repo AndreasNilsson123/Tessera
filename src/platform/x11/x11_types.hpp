@@ -72,6 +72,10 @@ struct XErrorEvent {
 
 using XErrorHandler = int (*)(Display*, XErrorEvent*);
 
+// XWindowAttributes is only read for its `visual` member (after six ints: x, y, width, height, border_width, depth).
+constexpr std::size_t kWindowAttributesSize = 256; // the real struct is 136 bytes on LP64
+constexpr std::size_t kWindowAttributesVisualOffset = 24;
+
 #if defined(__LP64__)
 static_assert(sizeof(XVisualInfo) == 64, "XVisualInfo layout");
 static_assert(sizeof(XSetWindowAttributes) == 112, "XSetWindowAttributes layout");
@@ -91,6 +95,7 @@ constexpr unsigned long kCWColormap = 1UL << 13;
 constexpr int kBadAlloc = 11;
 
 // ---- GLX constants ------------------------------------------------------------------------------
+constexpr int kGlxVisualId = 0x800B;
 constexpr int kGlxDoubleBuffer = 5;
 constexpr int kGlxStereo = 6;
 constexpr int kGlxRedSize = 8;
@@ -128,6 +133,8 @@ struct X11Fns {
     Window (*XCreateWindow)(Display*, Window, int, int, unsigned, unsigned, unsigned, int, unsigned, Visual*,
                             unsigned long, XSetWindowAttributes*) = nullptr;
     int (*XDestroyWindow)(Display*, Window) = nullptr;
+    int (*XGetWindowAttributes)(Display*, Window, void*) = nullptr; // XWindowAttributes, treated as an opaque buffer
+    unsigned long (*XVisualIDFromVisual)(Visual*) = nullptr;
     int (*XFree)(void*) = nullptr;
     int (*XSync)(Display*, Bool) = nullptr;
     XErrorHandler (*XSetErrorHandler)(XErrorHandler) = nullptr;

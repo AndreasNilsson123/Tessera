@@ -29,7 +29,7 @@ extern "C" {
 /* ---------------------------------------------------------------- version */
 
 #define TESSERA_VERSION_MAJOR 0
-#define TESSERA_VERSION_MINOR 4
+#define TESSERA_VERSION_MINOR 5
 #define TESSERA_VERSION_PATCH 0
 
 /* Incremented on every incompatible change to the C ABI, independent of the semantic version. */
@@ -134,6 +134,7 @@ typedef uint32_t TesseraEnum;
 #define TESSERA_SURFACE_HIDDEN_WINDOW 0x0001u
 #define TESSERA_SURFACE_PBUFFER 0x0002u
 #define TESSERA_SURFACE_NONE 0x0003u        /* no drawable exposed; render to FBOs (WGL still uses an internal one) */
+#define TESSERA_SURFACE_WINDOW 0x0004u      /* reported for contexts made by tesseraCreateContextForWindow; not a request value */
 
 /* TesseraContextConfig::fallback */
 #define TESSERA_FALLBACK_STRICT 0x0000u     /* fail unless every requested attribute is met */
@@ -203,6 +204,82 @@ TESSERA_API TesseraResult TESSERA_CALL tesseraCreateContext(const TesseraContext
 TESSERA_API TesseraResult TESSERA_CALL tesseraDestroyContext(TesseraContext context);
 TESSERA_API TesseraResult TESSERA_CALL tesseraGetContextInfo(TesseraContext context,
                                                              TesseraContextInfo* outInfo);
+
+/* ------------------------------------------------------------------- native handles
+ *
+ * What other libraries need to interoperate with a Tessera context: share a texture with Direct3D
+ * (WGL_NV_DX_interop2), export a buffer as a dma-buf, wrap it for Vulkan or Metal, ... Tessera does not wrap those APIs; it
+ * hands out the native objects (and tesseraGetProcAddress resolves their extension functions, e.g. "wglDXOpenDeviceNV").
+ *
+ * The handles are BORROWED: valid until the context is destroyed, owned by Tessera. Never destroy, close, terminate or
+ * unregister them. In particular a Display / EGLDisplay is shared by every Tessera context of the backend. Calls that need the
+ * context current (most extension functions) are subject to the usual rule: it is current on one thread at a time.
+ */
+#define TESSERA_NATIVE_NONE 0u
+#define TESSERA_NATIVE_WGL 1u
+#define TESSERA_NATIVE_GLX 2u
+#define TESSERA_NATIVE_EGL 3u
+#define TESSERA_NATIVE_CGL 4u
+
+typedef struct TesseraNativeHandles {
+    uint32_t structSize; /* in: sizeof(TesseraNativeHandles) */
+    uint32_t kind;       /* out: TESSERA_NATIVE_*; decides what handles[] mean */
+    /*
+     * WGL: [0] HGLRC  [1] HDC (window or pbuffer)  [2] HWND (0 for a pbuffer)  [3] HPBUFFERARB (0 for a window)  [4] pixel format
+     * GLX: [0] Display*  [1] GLXContext  [2] GLXDrawable  [3] GLXFBConfig  [4] Window (0 for a pbuffer)  [5] screen
+     * EGL: [0] EGLDisplay  [1] EGLContext  [2] EGLSurface (0 if surfaceless)  [3] EGLConfig  [4] client API (EGL_OPENGL_API / _ES_API)
+     * CGL: [0] CGLContextObj
+     * Unused entries are 0. Pointers are stored as integers so the layout is the same on every ABI.
+     */
+    uint64_t handles[6];
+    uint64_t reserved[4];
+} TesseraNativeHandles;
+
+static inline TesseraNativeHandles tesseraDefaultNativeHandles(void) {
+    TesseraNativeHandles h;
+    memset(&h, 0, sizeof h);
+    h.structSize = (uint32_t)sizeof h;
+    return h;
+}
+
+TESSERA_API TesseraResult TESSERA_CALL tesseraGetNativeHandles(TesseraContext context, TesseraNativeHandles* outHandles);
+
+/* ------------------------------------------------------------- pre-warmed contexts
+ *
+ * Creating a context costs tens of milliseconds (a window, a pixel format, a driver context, the driver's own setup), which
+ * matters to programs that start many short-lived contexts. Only contexts that were NEVER used are pooled, so what you get is
+ * indistinguishable from a freshly created one: reusing a used context would carry its GL state and objects over to an
+ * unrelated user, which this library does not do.
+ */
+
+/*
+ * Creates `count` contexts for `config` now and keeps them ready. A later tesseraCreateContext with an identical request
+ * (and shareWith = NULL handle) takes one of them instead of creating a new one. Blocks until all exist; call it from a
+ * background thread. At most 64 contexts are pooled in total. The pool is emptied by tesseraTerminate.
+ */
+TESSERA_API TesseraResult TESSERA_CALL tesseraPrewarmContexts(const TesseraContextConfig* config, int32_t count);
+
+/* Contexts currently waiting in the pool (all configurations). */
+TESSERA_API int32_t TESSERA_CALL tesseraPooledContextCount(void);
+
+/* ----------------------------------------------------------- rendering into a caller's window
+ *
+ * Normally Tessera creates its own hidden drawables and never touches anyone else's windows. This is the one exception, and
+ * it follows strict ownership rules:
+ *  - The window is BORROWED. Tessera never destroys, resizes, shows, hides or subclasses it, and destroying the context
+ *    never destroys it. The window must outlive every use of the context; once it is gone, calls on the context fail.
+ *  - The window's pixel format (Windows) / visual (X11) is decided by whoever created the window. If it already has one,
+ *    Tessera adopts it and checks it against the request (STRICT fails with NO_MATCHING_CONFIG if it does not satisfy it).
+ *  - A Windows window can have its pixel format set only once, ever. Tessera sets one only if the caller says so with
+ *    TESSERA_ATTACH_ALLOW_PIXEL_FORMAT and the window has none yet; otherwise it fails rather than touch the window.
+ *  - Supported on WGL (nativeWindow = HWND) and GLX (nativeWindow = X11 Window id, on the X server of $DISPLAY). Other
+ *    backends return TESSERA_ERROR_UNSUPPORTED.
+ * Presenting uses tesseraSwapBuffers; tesseraSetSwapInterval works as usual. The context reports TESSERA_SURFACE_WINDOW.
+ */
+#define TESSERA_ATTACH_ALLOW_PIXEL_FORMAT 0x1u
+
+TESSERA_API TesseraResult TESSERA_CALL tesseraCreateContextForWindow(const TesseraContextConfig* config, uint64_t nativeWindow,
+                                                                     uint32_t flags, TesseraContext* outContext);
 
 /* ------------------------------------------------- reset notification and context loss
  *

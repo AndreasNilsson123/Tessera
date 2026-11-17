@@ -92,7 +92,7 @@ JavaFX on Windows uses D3D (Prism d3d) by default, so WGL conflicts are less lik
 - Done and tested on NVIDIA (RTX 3060, driver 546.30): core/compat/ES contexts, debug/forward-compat flags, MSAA best-effort degradation, sRGB/float formats (code paths), pbuffer, surfaceless-style `SURFACE_NONE` (an internal 1x1 window is still used), sharing, thread-ownership rules, foreign-context preservation, leak check (300 cycles, flat GDI/USER counts).
 - `[~]` items: robust access / reset notification / no-error / release-flush are implemented but untested (the test GPU path was not exercised for them); share-order validation and context priority are not implemented; DWM swap quirks untested.
 - Not done: multi-GPU selection (`WGL_NV_gpu_affinity`, `WGL_AMD_gpu_association`, DXGI) and ANGLE detection (Phase 4). Only one GPU vendor and driver tested so far.
-- Context creation is ~29 ms on the test machine (mostly driver cost, not profiled); pooling is in Phase 8.
+- Context creation is ~29 ms on the test machine (mostly driver cost, not profiled); pooled creation is in Phase 8 (`tesseraPrewarmContexts`, ~0.01 ms).
 - Exit criteria still open: a 10k-cycle soak (300 done) and the JavaFX coexistence run (needs the Phase 7 Java bindings).
 
 **Exit:** create/destroy 10k contexts in a loop with no handle/GDI leaks (verified with GDI/USER object counters); coexistence test with a running JavaFX app (D3D pipeline and `-Dprism.order=sw`) shows no interference.
@@ -206,11 +206,18 @@ Decision (ADR 0009, resolving the open question about the minimum JDK): **JNI ba
 
 ## Phase 8 — Interop & advanced (optional / post-1.0)
 
-- [ ] Shared-texture export for zero-copy handoff: WGL_NV_DX_interop2, dma-buf (Linux), IOSurface (macOS).
-- [ ] Vulkan interop (`GL_EXT_memory_object`, semaphores).
-- [ ] GLX/EGL "headless render node" selection by PCI bus ID / UUID.
-- [ ] Native-window attach (render into a caller-supplied `HWND`/`Window`/`wl_surface`/`NSView`) with strict ownership rules (we never `SetPixelFormat` a foreign window unless the caller declares it fresh).
-- [ ] Context pooling for apps that create/destroy many short-lived contexts.
+- [~] **Interop primitives instead of an interop API** (ADR 0010). `tesseraGetNativeHandles` returns the real `HGLRC`/`HDC`/`HWND`, `Display*`/`GLXContext`/drawable, `EGLDisplay`/`EGLContext`/`EGLConfig`, `CGLContextObj` (borrowed), and `tesseraGetProcAddress` already resolves extension entry points (`wglDX*NV`, `eglCreateImage`, ...). Verified end to end for **WGL_NV_DX_interop2**: `test_dxinterop` has OpenGL render into a texture that is a Direct3D 11 texture, then reads the same memory back through D3D11 and checks the colour (twice, so the handoff is shown to repeat). Handle identity is tested on WGL, GLX and EGL (the platform reports the same context as current). **Not done:** dma-buf export (needs EGL image + fence code and a consumer to test against), IOSurface (needs a Mac), Vulkan `GL_EXT_memory_object` (needs a Vulkan device and semaphores). No wrapper API was added for any of these: nothing in this repo consumes one yet, and the handles are what a consumer needs. CGL handle code is compiled and unit-tested only through the fake.
+- [x] **Device selection**: `TESSERA_EGL_DEVICE` accepts an index, a DRM render node (`/dev/dri/renderD128`) or a PCI address (`0000:01:00.0`, resolved through `/dev/dri/by-path`). An explicit choice is never silently replaced by another GPU (previously a non-matching index fell through to the default display). Tested: the refusal paths and index 0 under WSLg Mesa. **Untested:** matching by render node / PCI on a machine with several GPUs (this machine exposes one). **Not implemented:** UUID selection. GLX has no equivalent (the X server decides).
+- [~] **Native-window attach**: `tesseraCreateContextForWindow(config, window, flags, &ctx)` on WGL (`HWND`) and GLX (`Window`); `UNSUPPORTED` on EGL/CGL. Ownership rules, tested on the real GPU on Windows: the window is borrowed and never destroyed, resized or shown; an existing pixel format is adopted and checked (strict mode rejects a mismatch); a missing one is set **only** with `TESSERA_ATTACH_ALLOW_PIXEL_FORMAT`, otherwise the call fails and the window is left untouched (mutation-checked: removing the check fails the test); a window destroyed under a live context gives `PLATFORM` errors, not a crash. Rendering and presenting verified by reading back the back buffer on WGL (NVIDIA) and GLX (Mesa/WSLg). **Not done:** `wl_surface` (no Wayland backend), `NSView` (needs a Mac), EGL window surfaces, resize handling (the window owner's job).
+- [x] **Context pooling**: `tesseraPrewarmContexts(config, n)` + `tesseraPooledContextCount()`. Only never-used contexts are pooled, so a pooled context is indistinguishable from a new one; a create with an identical request and no `shareWith` takes one. Measured here: cold create 28 ms (WGL) / 28-32 ms (Mesa), pooled 0.015 / 0.008 ms. At most 64; emptied by `tesseraTerminate`; concurrent takers tested (fake backend under ASan/UBSan/TSan, real drivers on WGL, GLX, EGL). Deliberately **not** done: recycling used contexts (would leak GL state between unrelated users), automatic refill, a Java API.
+- [ ] Vulkan interop (`GL_EXT_memory_object`, semaphores): not started.
+- [ ] Java binding for the Phase 8 calls (`getNativeHandles`, `prewarm`, window attach): not started. The C ABI is now v0.5.0 (additive; nothing existing changed).
+
+**Status notes (Phase 8):**
+- Verified: Windows (RTX 3060, `ci-gpu` 5/5 including `dxinterop`); Ubuntu 22.04 under WSLg (GLX and EGL, Mesa) 8/8; ASan/UBSan and TSan clean (6/6 each, no GPU tests; they cover the pool through the fake backend).
+- Found by the tests: a visual can map to several GLX framebuffer configurations (single- and double-buffered); attach now prefers the one matching the requested buffering instead of the first.
+- GLX attach reads only the `visual` member of an opaque `XWindowAttributes` buffer at a fixed LP64 offset; 32-bit X11 returns `UNSUPPORTED`.
+- CI workflow not updated for `dxinterop` (labelled `gpu`, skips with 77 where unavailable) and, as before, never run.
 
 ## Phase 9 — Hardening & release
 

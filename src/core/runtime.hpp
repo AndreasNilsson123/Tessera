@@ -3,6 +3,7 @@
 #include <tessera/tessera.h>
 
 #include <atomic>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -40,6 +41,10 @@ class Runtime {
     void* getProcAddress(const char* name);
     TesseraResult getResetStatus(TesseraContext handle, int32_t& outStatus);
     TesseraResult recreateContext(TesseraContext handle, TesseraContext& out, uint32_t& outFlags);
+    TesseraResult getNativeHandles(TesseraContext handle, TesseraNativeHandles& out);
+    TesseraResult createContextForWindow(const TesseraContextConfig& config, uint64_t nativeWindow, uint32_t flags, TesseraContext& out);
+    TesseraResult prewarm(const TesseraContextConfig& config, int32_t count);
+    std::size_t pooledContexts() const;
 
     /* Called from a thread_local destructor on an exiting thread; see ThreadExitGuard. */
     void releaseAtThreadExit(TesseraContext handle, const std::shared_ptr<ThreadToken>& thread) noexcept;
@@ -60,6 +65,15 @@ class Runtime {
     std::shared_ptr<ContextObject> lookupAny(TesseraContext handle);
     std::shared_ptr<ContextObject> takeZombie(TesseraContext handle);
 
+    /* The creation path shared by create / create-for-window / recreate: pick a backend that can serve the request, then register. */
+    using Attempt = std::function<TesseraResult(Backend&, const std::shared_ptr<ContextObject>& share, std::shared_ptr<ContextObject>& out)>;
+    TesseraResult createWith(const TesseraContextConfig& config, bool usePool, const Attempt& attempt, TesseraContext& out);
+    TesseraResult createNative(const TesseraContextConfig& config, const std::shared_ptr<ContextObject>& share, const Attempt& attempt,
+                               std::shared_ptr<ContextObject>& created);
+    TesseraResult registerContext(const TesseraContextConfig& config, const std::shared_ptr<ContextObject>& share,
+                                  const std::shared_ptr<ContextObject>& created, TesseraContext& out);
+    std::shared_ptr<ContextObject> takeFromPool(const TesseraContextConfig& config);
+
     void joinGroup(uint64_t group, TesseraHandle handle);
     void leaveGroup(uint64_t group, TesseraHandle handle);
     void markLost(ContextObject& object, int32_t status);
@@ -75,6 +89,13 @@ class Runtime {
     std::mutex groupsMutex_; // never held while calling into contexts_ other than get()
     std::map<uint64_t, std::set<TesseraHandle>> groups_;
     uint64_t nextGroup_ = 1;
+
+    struct PoolEntry {
+        TesseraContextConfig request;
+        std::shared_ptr<ContextObject> context;
+    };
+    mutable std::mutex poolMutex_;
+    std::vector<PoolEntry> pool_; // contexts that have never been used, ready to hand out
 
     mutable std::mutex zombiesMutex_;
     std::map<TesseraHandle, std::shared_ptr<ContextObject>> zombies_;

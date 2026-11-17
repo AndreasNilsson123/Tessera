@@ -38,6 +38,16 @@ if(WIN32 AND TESSERA_BUILD_SHARED)
     add_custom_command(TARGET test_wgl POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:tessera> $<TARGET_FILE_DIR:test_wgl>)
     add_test(NAME wgl COMMAND test_wgl)
+
+    # OpenGL <-> Direct3D 11 shared texture through the native handles and proc addresses (WGL_NV_DX_interop2): proves the
+    # interop primitives without Tessera having an interop API. Skips (77) where the extension or a matching adapter is missing.
+    add_executable(test_dxinterop test_dxinterop.cpp)
+    target_link_libraries(test_dxinterop PRIVATE Tessera::tessera opengl32 d3d11 dxgi)
+    tessera_apply_options(test_dxinterop)
+    add_custom_command(TARGET test_dxinterop POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:tessera> $<TARGET_FILE_DIR:test_dxinterop>)
+    add_test(NAME dxinterop COMMAND test_dxinterop)
+    set_tests_properties(dxinterop PROPERTIES LABELS "gpu" TIMEOUT 120 SKIP_RETURN_CODE 77)
     # Needs a real OpenGL driver: excluded from the default (hosted-runner) test preset.
     set_tests_properties(wgl PROPERTIES LABELS "gpu" TIMEOUT 180)
 endif()

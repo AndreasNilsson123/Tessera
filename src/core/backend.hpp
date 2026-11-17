@@ -30,6 +30,9 @@ class ContextObject {
      * thread. `out` is a TESSERA_RESET_* value. UNSUPPORTED if the context has no reset notification. */
     virtual TesseraResult queryResetStatus(int32_t& /*out*/) noexcept { return TESSERA_ERROR_UNSUPPORTED; }
 
+    /* Fills `out` (kind and handles; structSize is handled by the caller). Borrowed objects, see tessera.h. */
+    virtual TesseraResult nativeHandles(TesseraNativeHandles& /*out*/) const noexcept { return TESSERA_ERROR_UNSUPPORTED; }
+
     ContextAffinity affinity;
 
     // ---- bookkeeping owned by the core (set by Runtime right after creation; backends leave it alone) -------
@@ -53,6 +56,12 @@ class Backend {
     virtual TesseraResult createContext(const TesseraContextConfig& config,
                                         const std::shared_ptr<ContextObject>& shareWith,
                                         std::shared_ptr<ContextObject>& out) = 0;
+    /* Renders into a caller-owned window; see tesseraCreateContextForWindow. UNSUPPORTED by default (without side effects). */
+    virtual TesseraResult createContextForWindow(const TesseraContextConfig& /*config*/, uint64_t /*nativeWindow*/, uint32_t /*flags*/,
+                                                 const std::shared_ptr<ContextObject>& /*shareWith*/,
+                                                 std::shared_ptr<ContextObject>& /*out*/) {
+        return TESSERA_ERROR_UNSUPPORTED;
+    }
     /* Null if unknown. May be called with or without a context current. */
     virtual void* getProcAddress(const char* /*name*/) noexcept { return nullptr; }
 };

@@ -101,4 +101,51 @@ TESSERA_API TesseraResult TESSERA_CALL tesseraRecreateContext(TesseraContext con
     });
 }
 
+TESSERA_API TesseraResult TESSERA_CALL tesseraGetNativeHandles(TesseraContext context, TesseraNativeHandles* outHandles) {
+    return guarded([&]() -> TesseraResult {
+        if (!outHandles) return fail(TESSERA_ERROR_INVALID_ARGUMENT, "outHandles is NULL");
+        const uint32_t callerSize = outHandles->structSize;
+        if (callerSize < sizeof(uint32_t) * 2) return fail(TESSERA_ERROR_INVALID_ARGUMENT, "outHandles->structSize not set");
+        TesseraNativeHandles full = tesseraDefaultNativeHandles();
+        if (TesseraResult r = Runtime::instance().getNativeHandles(context, full); r != TESSERA_SUCCESS) return r;
+        // Write at most what the caller's (possibly older/newer) struct can hold.
+        full.structSize = callerSize < sizeof full ? callerSize : static_cast<uint32_t>(sizeof full);
+        std::memcpy(outHandles, &full, full.structSize);
+        return TESSERA_SUCCESS;
+    });
+}
+
+TESSERA_API TesseraResult TESSERA_CALL tesseraPrewarmContexts(const TesseraContextConfig* config, int32_t count) {
+    return guarded([&]() -> TesseraResult {
+        TesseraContextConfig normalized;
+        if (TesseraResult r = normalizeConfig(config, normalized); r != TESSERA_SUCCESS) return r;
+        return Runtime::instance().prewarm(normalized, count);
+    });
+}
+
+TESSERA_API int32_t TESSERA_CALL tesseraPooledContextCount(void) {
+    try {
+        return static_cast<int32_t>(Runtime::instance().pooledContexts());
+    } catch (...) {
+        return 0;
+    }
+}
+
+TESSERA_API TesseraResult TESSERA_CALL tesseraCreateContextForWindow(const TesseraContextConfig* config, uint64_t nativeWindow,
+                                                                     uint32_t flags, TesseraContext* outContext) {
+    return guarded([&]() -> TesseraResult {
+        if (!outContext) return fail(TESSERA_ERROR_INVALID_ARGUMENT, "outContext is NULL");
+        *outContext = TESSERA_NULL_HANDLE;
+        if (!config) return fail(TESSERA_ERROR_INVALID_ARGUMENT, "config is NULL");
+        // The surface of an attached context is the window; accept DEFAULT or WINDOW and validate the rest as usual.
+        TesseraContextConfig copy = *config;
+        if (copy.structSize >= sizeof(TesseraContextConfig) && (copy.surface == TESSERA_SURFACE_WINDOW)) copy.surface = TESSERA_SURFACE_DEFAULT;
+        else if (copy.structSize >= sizeof(TesseraContextConfig) && copy.surface != TESSERA_SURFACE_DEFAULT)
+            return fail(TESSERA_ERROR_INVALID_ARGUMENT, "the surface of a context for a window must be TESSERA_SURFACE_DEFAULT or TESSERA_SURFACE_WINDOW");
+        TesseraContextConfig normalized;
+        if (TesseraResult r = normalizeConfig(&copy, normalized); r != TESSERA_SUCCESS) return r;
+        return Runtime::instance().createContextForWindow(normalized, nativeWindow, flags, *outContext);
+    });
+}
+
 } // extern "C"

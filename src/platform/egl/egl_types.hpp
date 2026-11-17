@@ -70,6 +70,7 @@ struct EglFns {
     // Resolved through eglGetProcAddress; may be null.
     EGLDisplay (*eglGetPlatformDisplayEXT)(EGLenum, void*, const EGLint*) = nullptr;
     EGLBoolean (*eglQueryDevicesEXT)(EGLint, void**, EGLint*) = nullptr;
+    const char* (*eglQueryDeviceStringEXT)(void*, EGLint) = nullptr;
 };
 
 } // namespace tessera::egl

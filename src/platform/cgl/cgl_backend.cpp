@@ -60,6 +60,12 @@ class CglContext final : public ContextObject {
     // There is no drawable, hence nothing to present; render to framebuffer objects.
     TesseraResult swapBuffers() noexcept override { return TESSERA_SUCCESS; }
 
+    TesseraResult nativeHandles(TesseraNativeHandles& out) const noexcept override {
+        out.kind = TESSERA_NATIVE_CGL;
+        out.handles[0] = static_cast<uint64_t>(reinterpret_cast<std::uintptr_t>(ctx));
+        return TESSERA_SUCCESS;
+    }
+
     TesseraResult setSwapInterval(int32_t) noexcept override {
         return fail(TESSERA_ERROR_UNSUPPORTED, "swap interval does not apply to drawable-less CGL contexts");
     }

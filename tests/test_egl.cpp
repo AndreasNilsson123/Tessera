@@ -39,6 +39,7 @@ static int g_failures = 0;
     } while (0)
 
 #include "robustness_common.hpp"
+#include "interop_common.hpp"
 
 using GlGetString = const unsigned char* (*)(unsigned);
 using GlGenTextures = void (*)(int, unsigned*);
@@ -587,6 +588,50 @@ static void testTerminateKeepsSharedDisplayAlive() {
     foreign.destroy();
 }
 
+static void testDeviceSelection() {
+    // An explicit GPU choice is honoured or refused, never silently replaced by a different GPU.
+    EXPECT(tesseraTerminate(), TESSERA_SUCCESS);
+    const char* oldPlatform = getenv("TESSERA_EGL_PLATFORM");
+    const char* oldDevice = getenv("TESSERA_EGL_DEVICE");
+    const std::string savedPlatform = oldPlatform ? oldPlatform : "";
+    const std::string savedDevice = oldDevice ? oldDevice : "";
+
+    const auto tryWith = [&](const char* platform, const char* device, TesseraResult want, const char* messagePart) {
+        EXPECT(tesseraInit(), TESSERA_SUCCESS);
+        if (platform) setenv("TESSERA_EGL_PLATFORM", platform, 1); else unsetenv("TESSERA_EGL_PLATFORM");
+        if (device) setenv("TESSERA_EGL_DEVICE", device, 1); else unsetenv("TESSERA_EGL_DEVICE");
+        EXPECT(tesseraTerminate(), TESSERA_SUCCESS); // the backend re-reads the environment when it is rebuilt
+        EXPECT(tesseraInit(), TESSERA_SUCCESS);
+        TesseraContextConfig cfg = baseConfig();
+        TesseraContext ctx = 0;
+        const TesseraResult r = tesseraCreateContext(&cfg, &ctx);
+        if (want == TESSERA_SUCCESS && r == TESSERA_ERROR_UNSUPPORTED) {
+            std::printf("  (%s / %s: not available here: %s)\n", platform ? platform : "-", device ? device : "-",
+                        tesseraGetLastErrorMessage());
+        } else {
+            EXPECT(r, want);
+            if (messagePart) CHECK(std::strstr(tesseraGetLastErrorMessage(), messagePart) != nullptr);
+        }
+        if (ctx) EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
+        EXPECT(tesseraTerminate(), TESSERA_SUCCESS);
+    };
+
+    // Things that match nothing are refused with a message that names the setting.
+    tryWith("device", "99", TESSERA_ERROR_UNSUPPORTED, "TESSERA_EGL_DEVICE=99");
+    tryWith("device", "/dev/dri/renderD999", TESSERA_ERROR_UNSUPPORTED, "TESSERA_EGL_DEVICE=/dev/dri/renderD999");
+    tryWith("device", "0000:ff:1f.7", TESSERA_ERROR_UNSUPPORTED, "TESSERA_EGL_DEVICE=0000:ff:1f.7");
+    // A choice combined with a platform that cannot honour it.
+    tryWith("surfaceless", "0", TESSERA_ERROR_UNSUPPORTED, "needs TESSERA_EGL_PLATFORM=device");
+    // Index 0 works wherever the device platform exists at all.
+    tryWith("device", "0", TESSERA_SUCCESS, nullptr);
+    // With no platform forced, a choice implies the device platform instead of being ignored by surfaceless.
+    tryWith(nullptr, "0", TESSERA_SUCCESS, nullptr);
+
+    if (oldPlatform) setenv("TESSERA_EGL_PLATFORM", savedPlatform.c_str(), 1); else unsetenv("TESSERA_EGL_PLATFORM");
+    if (oldDevice) setenv("TESSERA_EGL_DEVICE", savedDevice.c_str(), 1); else unsetenv("TESSERA_EGL_DEVICE");
+    EXPECT(tesseraInit(), TESSERA_SUCCESS);
+}
+
 static void testHeadlessFallthrough() {
     // The default backend order (GLX first, then EGL) on a machine with no X display: GLX reports UNSUPPORTED and the
     // request is served by EGL's headless platform instead of failing.
@@ -641,6 +686,42 @@ static void testAttributeMatrix() {
     foreign.destroy();
 }
 
+// ---------------------------------------------------------------- Phase 8
+
+static void testPrewarm() { interop::prewarm(eglHooks()); }
+
+static void testNativeHandles() {
+    interop::HandleExpectations e;
+    e.kind = TESSERA_NATIVE_EGL;
+    e.contextIndex = 1;
+    e.mustBeNonZero = {0, 1, 3, 4}; // EGLDisplay, EGLContext, EGLConfig, API (the surface is 0 when surfaceless)
+    e.nativeCurrent = {};           // eglGetCurrentContext is per bound API; the handle identity checks below are enough
+    interop::nativeHandles(eglHooks(), e);
+
+    // The EGLDisplay is the process's shared one, usable by other libraries (e.g. for EGL_EXT_image_dma_buf_import).
+    TesseraContextConfig cfg = baseConfig();
+    TesseraContext ctx = 0;
+    EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_SUCCESS);
+    if (ctx) {
+        TesseraNativeHandles nh = tesseraDefaultNativeHandles();
+        EXPECT(tesseraGetNativeHandles(ctx, &nh), TESSERA_SUCCESS);
+        EXPECT(tesseraMakeCurrent(ctx), TESSERA_SUCCESS);
+        using EglGetCurrentContext = void* (*)();
+        using EglGetCurrentDisplay = void* (*)();
+        auto cur = reinterpret_cast<EglGetCurrentContext>(tesseraGetProcAddress("eglGetCurrentContext"));
+        auto dpy = reinterpret_cast<EglGetCurrentDisplay>(tesseraGetProcAddress("eglGetCurrentDisplay"));
+        if (cur && dpy) {
+            CHECK(static_cast<uint64_t>(reinterpret_cast<std::uintptr_t>(cur())) == nh.handles[1]);
+            CHECK(static_cast<uint64_t>(reinterpret_cast<std::uintptr_t>(dpy())) == nh.handles[0]);
+        }
+        EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS);
+        EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
+    }
+    // Window attach is not offered on EGL.
+    TesseraContext none = 0;
+    EXPECT(tesseraCreateContextForWindow(&cfg, 0x1234, 0, &none), TESSERA_ERROR_UNSUPPORTED);
+}
+
 int main() {
     if (!loadRaw()) {
         std::fprintf(stderr, "test_egl: libEGL not available, skipping\n");
@@ -682,7 +763,10 @@ int main() {
         {"reset status / recreate", testResetStatus},
         {"debug message forwarding", testDebugForwarding},
         {"attribute matrix", testAttributeMatrix},
+        {"pre-warmed contexts", testPrewarm},
+        {"native handles", testNativeHandles},
         {"terminate leaves the shared display alive", testTerminateKeepsSharedDisplayAlive},
+        {"device selection", testDeviceSelection},
         {"headless fallthrough (no DISPLAY, default order)", testHeadlessFallthrough},
     };
     for (const Section& sec : sections) {

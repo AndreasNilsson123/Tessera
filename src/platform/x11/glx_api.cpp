@@ -36,6 +36,8 @@ const LinuxApi* loadApi() noexcept {
                          load(api->x11, "XFreeColormap", x.XFreeColormap) &&
                          load(api->x11, "XCreateWindow", x.XCreateWindow) &&
                          load(api->x11, "XDestroyWindow", x.XDestroyWindow) &&
+                         load(api->x11, "XGetWindowAttributes", x.XGetWindowAttributes) &&
+                         load(api->x11, "XVisualIDFromVisual", x.XVisualIDFromVisual) &&
                          load(api->x11, "XFree", x.XFree) && load(api->x11, "XSync", x.XSync) &&
                          load(api->x11, "XSetErrorHandler", x.XSetErrorHandler);
         GlxFns& g = api->glx;

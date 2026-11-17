@@ -1,6 +1,7 @@
 // White-box tests for the Phase 1 core. Links the core objects directly (internals are not exported by
 // the shared library). A fake backend exercises the full create/describe/destroy/terminate flow without
 // needing a GPU or window system.
+#include <algorithm>
 #include <tessera/tessera.h>
 
 #include <atomic>
@@ -815,6 +816,77 @@ static void testResourceWarnings() {
     CHECK(g_liveRobust == 0);
 }
 
+static void testPoolAndNativeApi() {
+    TesseraContextConfig cfg = tesseraDefaultContextConfig();
+    cfg.api = TESSERA_API_OPENGL;
+    CHECK(tesseraPooledContextCount() == 0);
+
+    // Pre-warmed contexts are real, counted, and handed out only for an identical request.
+    EXPECT(tesseraPrewarmContexts(&cfg, 4), TESSERA_SUCCESS);
+    CHECK(tesseraPooledContextCount() == 4);
+    CHECK(g_liveRobust == 4);
+    TesseraContext a = 0;
+    EXPECT(tesseraCreateContext(&cfg, &a), TESSERA_SUCCESS);
+    CHECK(tesseraPooledContextCount() == 3 && g_liveRobust == 4); // taken, not created
+    TesseraContextConfig other = cfg;
+    other.depthBits = 16;
+    TesseraContext b = 0;
+    EXPECT(tesseraCreateContext(&other, &b), TESSERA_SUCCESS);
+    CHECK(tesseraPooledContextCount() == 3 && g_liveRobust == 5);
+    TesseraContextConfig sharing = cfg;
+    sharing.shareWith = a;
+    TesseraContext c = 0;
+    EXPECT(tesseraCreateContext(&sharing, &c), TESSERA_SUCCESS);
+    CHECK(tesseraPooledContextCount() == 3 && g_liveRobust == 6); // sharing never takes a pooled context
+
+    // Limits and misuse.
+    EXPECT(tesseraPrewarmContexts(&cfg, 62), TESSERA_ERROR_INVALID_ARGUMENT); // 3 pooled + 62 > 64: refused up front
+    CHECK(tesseraPooledContextCount() == 3);
+    EXPECT(tesseraPrewarmContexts(&cfg, 61), TESSERA_SUCCESS); // exactly 64 in total
+    CHECK(tesseraPooledContextCount() == 64);
+    EXPECT(tesseraPrewarmContexts(&cfg, 1), TESSERA_ERROR_INVALID_ARGUMENT);
+    EXPECT(tesseraPrewarmContexts(&sharing, 1), TESSERA_ERROR_INVALID_ARGUMENT);
+    EXPECT(tesseraPrewarmContexts(&cfg, -1), TESSERA_ERROR_INVALID_ARGUMENT);
+
+    // Many threads taking at once: each gets its own context, none twice, the count stays exact.
+    std::vector<TesseraContext> taken(16, 0);
+    std::vector<std::thread> threads;
+    for (std::size_t i = 0; i < taken.size(); ++i)
+        threads.emplace_back([&, i] { EXPECT(tesseraCreateContext(&cfg, &taken[i]), TESSERA_SUCCESS); });
+    for (auto& th : threads) th.join();
+    std::sort(taken.begin(), taken.end());
+    CHECK(std::adjacent_find(taken.begin(), taken.end()) == taken.end());
+    CHECK(tesseraPooledContextCount() == 64 - 16);
+
+    // A failing request pools nothing and leaves nothing behind.
+    TesseraContextConfig impossible = cfg;
+    impossible.samples = 99; // fails validation (a backend failure is covered by the real-driver tests)
+    const int32_t before = tesseraPooledContextCount();
+    EXPECT(tesseraPrewarmContexts(&impossible, 3), TESSERA_ERROR_INVALID_ARGUMENT);
+    CHECK(tesseraPooledContextCount() == before);
+
+    // Terminate empties the pool and destroys every pooled native context.
+    for (TesseraContext h : taken) EXPECT(tesseraDestroyContext(h), TESSERA_SUCCESS);
+    for (TesseraContext h : {a, b, c}) EXPECT(tesseraDestroyContext(h), TESSERA_SUCCESS);
+    CHECK(tesseraPooledContextCount() > 0);
+    EXPECT(tesseraTerminate(), TESSERA_SUCCESS);
+    CHECK(tesseraPooledContextCount() == 0);
+    CHECK(g_liveRobust == 0);
+    EXPECT(tesseraInit(), TESSERA_SUCCESS);
+    tessera::Runtime::instance().registerBackend(std::make_shared<RobustFakeBackend>());
+
+    // Backends that offer neither native handles nor window attach say so, without side effects.
+    TesseraContext ctx = makeRobust(cfg);
+    TesseraNativeHandles nh = tesseraDefaultNativeHandles();
+    EXPECT(tesseraGetNativeHandles(ctx, &nh), TESSERA_ERROR_UNSUPPORTED);
+    TesseraContext none = 0;
+    EXPECT(tesseraCreateContextForWindow(&cfg, 0x1234, 0, &none), TESSERA_ERROR_UNSUPPORTED);
+    CHECK(none == TESSERA_NULL_HANDLE && g_liveRobust == 1);
+    EXPECT(tesseraCreateContextForWindow(&cfg, 0, 0, &none), TESSERA_ERROR_INVALID_ARGUMENT);
+    EXPECT(tesseraCreateContextForWindow(&cfg, 0x1234, 0x80, &none), TESSERA_ERROR_INVALID_ARGUMENT);
+    EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
+}
+
 static void testLifecycleRobustness() {
     CHECK(tesseraInit() == TESSERA_SUCCESS);
     tessera::Runtime::instance().registerBackend(std::make_shared<RobustFakeBackend>());
@@ -822,6 +894,7 @@ static void testLifecycleRobustness() {
     testRecreateAndShareGroups();
     testDeferredDestruction();
     testResourceWarnings();
+    testPoolAndNativeApi();
     CHECK(tesseraTerminate() == TESSERA_SUCCESS);
 }
 

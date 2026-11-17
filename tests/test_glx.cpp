@@ -38,6 +38,7 @@ static int g_failures = 0;
     } while (0)
 
 #include "robustness_common.hpp"
+#include "interop_common.hpp"
 
 using GlGetString = const unsigned char* (*)(unsigned);
 using GlGenTextures = void (*)(int, unsigned*);
@@ -499,6 +500,93 @@ static void testAttributeMatrix() {
     foreign.destroy();
 }
 
+// ---------------------------------------------------------------- Phase 8
+
+static void testPrewarm() { interop::prewarm(glxHooks()); }
+
+static void testNativeHandles() {
+    interop::HandleExpectations e;
+    e.kind = TESSERA_NATIVE_GLX;
+    e.contextIndex = 1;
+    e.mustBeNonZero = {0, 1, 2, 3, 4}; // Display*, GLXContext, drawable, FBConfig, hidden window
+    e.nativeCurrent = [] { return static_cast<uint64_t>(reinterpret_cast<std::uintptr_t>(g_g.glXGetCurrentContext())); };
+    interop::nativeHandles(glxHooks(), e);
+}
+
+static void testWindowAttach() {
+    ForeignContext owner; // supplies a real, mapped-or-not X window with a GLX-capable visual that is NOT ours
+    if (!owner.create()) {
+        std::printf("  (no GLX-capable window available, skipped)\n");
+        return;
+    }
+    TesseraContextConfig cfg = baseConfig();
+    cfg.fallback = TESSERA_FALLBACK_BEST_EFFORT;
+    TesseraContext ctx = 0;
+    EXPECT(tesseraCreateContextForWindow(&cfg, static_cast<uint64_t>(owner.win), 0, &ctx), TESSERA_SUCCESS);
+    if (ctx) {
+        TesseraContextInfo info = tesseraDefaultContextInfo();
+        EXPECT(tesseraGetContextInfo(ctx, &info), TESSERA_SUCCESS);
+        CHECK(info.surface == TESSERA_SURFACE_WINDOW);
+        CHECK(info.flags & TESSERA_FLAG_DOUBLE_BUFFER);
+        TesseraNativeHandles nh = tesseraDefaultNativeHandles();
+        EXPECT(tesseraGetNativeHandles(ctx, &nh), TESSERA_SUCCESS);
+        CHECK(nh.handles[2] == static_cast<uint64_t>(owner.win) && nh.handles[4] == static_cast<uint64_t>(owner.win));
+
+        EXPECT(tesseraMakeCurrent(ctx), TESSERA_SUCCESS);
+        CHECK(g_g.glXGetCurrentDrawable() == owner.win);
+        using GlClearColor = void (*)(float, float, float, float);
+        using GlClear = void (*)(unsigned);
+        using GlReadPixels = void (*)(int, int, int, int, unsigned, unsigned, void*);
+        auto clearColor = reinterpret_cast<GlClearColor>(tesseraGetProcAddress("glClearColor"));
+        auto clear = reinterpret_cast<GlClear>(tesseraGetProcAddress("glClear"));
+        auto readPixels = reinterpret_cast<GlReadPixels>(tesseraGetProcAddress("glReadPixels"));
+        if (clearColor && clear && readPixels) {
+            clearColor(0.f, 1.f, 0.f, 1.f);
+            clear(0x4000);
+            unsigned char px[4] = {};
+            readPixels(0, 0, 1, 1, 0x1908, 0x1401, px);
+            CHECK(px[0] == 0 && px[1] == 255 && px[2] == 0);
+        }
+        EXPECT(tesseraSwapBuffers(ctx), TESSERA_SUCCESS);
+        EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS);
+        EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
+
+        // The window is the caller's: it must survive the context, and the caller's own context must still work on it.
+        owner.makeCurrent();
+        CHECK(owner.isCurrent());
+        g_g.glXMakeContextCurrent(owner.dpy, 0, 0, nullptr);
+    }
+
+    // A window that does not exist.
+    TesseraContext none = 0;
+    EXPECT(tesseraCreateContextForWindow(&cfg, 0x7fffffffu, 0, &none), TESSERA_ERROR_INVALID_ARGUMENT);
+    CHECK(none == TESSERA_NULL_HANDLE);
+
+    // A window destroyed while a context renders into it: an error, not the process being terminated by Xlib.
+    ForeignContext doomed;
+    if (doomed.create()) {
+        TesseraContext c = 0;
+        EXPECT(tesseraCreateContextForWindow(&cfg, static_cast<uint64_t>(doomed.win), 0, &c), TESSERA_SUCCESS);
+        if (c) {
+            EXPECT(tesseraMakeCurrent(c), TESSERA_SUCCESS);
+            g_g.glXMakeContextCurrent(doomed.dpy, 0, 0, nullptr); // (this also unbinds ours: same thread, one current context)
+            g_x.XDestroyWindow(doomed.dpy, doomed.win);
+            g_x.XSync(doomed.dpy, 0);
+            doomed.win = 0;
+            const TesseraResult swap = tesseraSwapBuffers(c);
+            CHECK(swap == TESSERA_ERROR_PLATFORM || swap == TESSERA_ERROR_WRONG_THREAD);
+            tesseraMakeCurrent(TESSERA_NULL_HANDLE);
+            EXPECT(tesseraDestroyContext(c), TESSERA_SUCCESS);
+        }
+        doomed.destroy();
+    }
+
+    // Argument handling and unsupported flags.
+    EXPECT(tesseraCreateContextForWindow(&cfg, 0, 0, &none), TESSERA_ERROR_INVALID_ARGUMENT);
+    EXPECT(tesseraCreateContextForWindow(&cfg, static_cast<uint64_t>(owner.win), 0x80, &none), TESSERA_ERROR_INVALID_ARGUMENT);
+    owner.destroy();
+}
+
 int main() {
     if (!loadRaw()) {
         std::fprintf(stderr, "test_glx: libX11/libGL not available, skipping\n");
@@ -542,6 +630,9 @@ int main() {
         {"reset status / recreate", testResetStatus},
         {"debug message forwarding", testDebugForwarding},
         {"attribute matrix", testAttributeMatrix},
+        {"pre-warmed contexts", testPrewarm},
+        {"native handles", testNativeHandles},
+        {"window attach", testWindowAttach},
         {"terminate / re-init", testTerminateAndReinit},
     };
     for (const Section& sec : sections) {

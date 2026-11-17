@@ -136,6 +136,12 @@ TesseraResult Runtime::terminate() {
         std::lock_guard<std::mutex> lock(groupsMutex_);
         groups_.clear();
     }
+    std::vector<PoolEntry> pooled;
+    {
+        std::lock_guard<std::mutex> lock(poolMutex_);
+        pooled.swap(pool_);
+    }
+    if (!pooled.empty()) logf(TESSERA_LOG_DEBUG, "tesseraTerminate: releasing %zu pre-warmed context(s)", pooled.size());
     // Destroy outside the lock: native destructors may call into drivers (and log callbacks).
     if (!leftover.empty())
         logf(TESSERA_LOG_WARN, "tesseraTerminate: destroying %zu context(s) that were never destroyed",
@@ -154,6 +160,7 @@ TesseraResult Runtime::terminate() {
     }
     leftover.clear();
     pending.clear();
+    pooled.clear();
     backends.clear();
     t_current = TESSERA_NULL_HANDLE;
     return TESSERA_SUCCESS;
@@ -166,18 +173,9 @@ void Runtime::registerBackend(std::shared_ptr<Backend> backend) {
 
 // ---- contexts ---------------------------------------------------------------------------------------
 
-TesseraResult Runtime::createContext(const TesseraContextConfig& config, TesseraContext& out) {
-    out = TESSERA_NULL_HANDLE;
-    if (!contexts_.isOpen()) return fail(TESSERA_ERROR_NOT_INITIALIZED, "tesseraInit has not been called");
-
-    std::shared_ptr<ContextObject> share;
-    if (config.shareWith != TESSERA_NULL_HANDLE) {
-        share = contexts_.get(config.shareWith);
-        if (!share) return fail(TESSERA_ERROR_INVALID_HANDLE, "shareWith is not a live context");
-        if (share->lost.load())
-            return fail(TESSERA_ERROR_CONTEXT_LOST, "shareWith is a lost context; share with a surviving member instead");
-    }
-
+TesseraResult Runtime::createNative(const TesseraContextConfig& config, const std::shared_ptr<ContextObject>& share,
+                                    const Attempt& attempt, std::shared_ptr<ContextObject>& created) {
+    (void)config;
     std::vector<std::shared_ptr<Backend>> backends;
     {
         std::lock_guard<std::mutex> lock(lifecycle_);
@@ -185,16 +183,20 @@ TesseraResult Runtime::createContext(const TesseraContextConfig& config, Tessera
     }
 
     TesseraResult result = TESSERA_ERROR_UNSUPPORTED;
-    std::shared_ptr<ContextObject> created;
+    created.reset();
     for (const auto& backend : backends) {
-        result = backend->createContext(config, share, created);
+        result = attempt(*backend, share, created);
         if (result != TESSERA_ERROR_UNSUPPORTED) break;
     }
     if (result == TESSERA_ERROR_UNSUPPORTED && backends.empty())
         return fail(TESSERA_ERROR_UNSUPPORTED, "no OpenGL backend is available in this build/platform");
     if (result != TESSERA_SUCCESS) return result;
     if (!created) return fail(TESSERA_ERROR_UNKNOWN, "backend reported success without a context");
+    return TESSERA_SUCCESS;
+}
 
+TesseraResult Runtime::registerContext(const TesseraContextConfig& config, const std::shared_ptr<ContextObject>& share,
+                                       const std::shared_ptr<ContextObject>& created, TesseraContext& out) {
     // Core bookkeeping, set before the object becomes visible to other threads through the table.
     created->request = config;
     {
@@ -204,7 +206,7 @@ TesseraResult Runtime::createContext(const TesseraContextConfig& config, Tessera
 
     const TesseraHandle handle = contexts_.insert(created);
     if (handle == TESSERA_NULL_HANDLE) {
-        // Closed by a concurrent terminate, or table full. `created` is released on return.
+        // Closed by a concurrent terminate, or table full. `created` is released by the caller.
         return contexts_.isOpen() ? fail(TESSERA_ERROR_OUT_OF_MEMORY, "too many contexts")
                                   : fail(TESSERA_ERROR_NOT_INITIALIZED, "tesseraTerminate raced with create");
     }
@@ -220,6 +222,108 @@ TesseraResult Runtime::createContext(const TesseraContextConfig& config, Tessera
 
     out = handle;
     return TESSERA_SUCCESS;
+}
+
+namespace {
+/* Two requests are interchangeable for pooling when every field that shapes the context is equal. */
+bool sameRequest(const TesseraContextConfig& a, const TesseraContextConfig& b) {
+    return a.api == b.api && a.versionMajor == b.versionMajor && a.versionMinor == b.versionMinor && a.profile == b.profile &&
+           a.flags == b.flags && a.surface == b.surface && a.fallback == b.fallback && a.redBits == b.redBits &&
+           a.greenBits == b.greenBits && a.blueBits == b.blueBits && a.alphaBits == b.alphaBits && a.depthBits == b.depthBits &&
+           a.stencilBits == b.stencilBits && a.samples == b.samples;
+}
+constexpr std::size_t kMaxPooled = 64;
+} // namespace
+
+std::shared_ptr<ContextObject> Runtime::takeFromPool(const TesseraContextConfig& config) {
+    std::lock_guard<std::mutex> lock(poolMutex_);
+    for (auto it = pool_.begin(); it != pool_.end(); ++it) {
+        if (sameRequest(it->request, config)) {
+            std::shared_ptr<ContextObject> taken = std::move(it->context);
+            pool_.erase(it);
+            return taken;
+        }
+    }
+    return nullptr;
+}
+
+std::size_t Runtime::pooledContexts() const {
+    std::lock_guard<std::mutex> lock(poolMutex_);
+    return pool_.size();
+}
+
+TesseraResult Runtime::createWith(const TesseraContextConfig& config, bool usePool, const Attempt& attempt, TesseraContext& out) {
+    out = TESSERA_NULL_HANDLE;
+    if (!contexts_.isOpen()) return fail(TESSERA_ERROR_NOT_INITIALIZED, "tesseraInit has not been called");
+
+    std::shared_ptr<ContextObject> share;
+    if (config.shareWith != TESSERA_NULL_HANDLE) {
+        share = contexts_.get(config.shareWith);
+        if (!share) return fail(TESSERA_ERROR_INVALID_HANDLE, "shareWith is not a live context");
+        if (share->lost.load())
+            return fail(TESSERA_ERROR_CONTEXT_LOST, "shareWith is a lost context; share with a surviving member instead");
+    }
+
+    std::shared_ptr<ContextObject> created;
+    // A pre-warmed context is a never-used one built from the identical request, so it is indistinguishable from a new one.
+    if (usePool && !share) created = takeFromPool(config);
+    if (!created) {
+        if (TesseraResult r = createNative(config, share, attempt, created); r != TESSERA_SUCCESS) return r;
+    }
+    return registerContext(config, share, created, out);
+}
+
+TesseraResult Runtime::createContext(const TesseraContextConfig& config, TesseraContext& out) {
+    return createWith(config, true,
+                      [&](Backend& backend, const std::shared_ptr<ContextObject>& share, std::shared_ptr<ContextObject>& created) {
+                          return backend.createContext(config, share, created);
+                      },
+                      out);
+}
+
+TesseraResult Runtime::createContextForWindow(const TesseraContextConfig& config, uint64_t nativeWindow, uint32_t flags,
+                                              TesseraContext& out) {
+    if (nativeWindow == 0) {
+        out = TESSERA_NULL_HANDLE;
+        return fail(TESSERA_ERROR_INVALID_ARGUMENT, "nativeWindow is 0");
+    }
+    if (flags & ~TESSERA_ATTACH_ALLOW_PIXEL_FORMAT) {
+        out = TESSERA_NULL_HANDLE;
+        return fail(TESSERA_ERROR_INVALID_ARGUMENT, "unknown attach flags");
+    }
+    return createWith(config, false,
+                      [&](Backend& backend, const std::shared_ptr<ContextObject>& share, std::shared_ptr<ContextObject>& created) {
+                          return backend.createContextForWindow(config, nativeWindow, flags, share, created);
+                      },
+                      out);
+}
+
+TesseraResult Runtime::prewarm(const TesseraContextConfig& config, int32_t count) {
+    if (!contexts_.isOpen()) return fail(TESSERA_ERROR_NOT_INITIALIZED, "tesseraInit has not been called");
+    if (count < 0) return fail(TESSERA_ERROR_INVALID_ARGUMENT, "count is negative");
+    if (config.shareWith != TESSERA_NULL_HANDLE)
+        return fail(TESSERA_ERROR_INVALID_ARGUMENT, "pre-warmed contexts cannot share with a specific context");
+    if (static_cast<std::size_t>(count) > kMaxPooled || pooledContexts() + static_cast<std::size_t>(count) > kMaxPooled)
+        return fail(TESSERA_ERROR_INVALID_ARGUMENT, "at most 64 contexts can be pooled in total");
+
+    const auto attempt = [&](Backend& backend, const std::shared_ptr<ContextObject>& share, std::shared_ptr<ContextObject>& created) {
+        return backend.createContext(config, share, created);
+    };
+    for (int32_t i = 0; i < count; ++i) {
+        std::shared_ptr<ContextObject> created;
+        if (TesseraResult r = createNative(config, nullptr, attempt, created); r != TESSERA_SUCCESS) return r;
+        std::lock_guard<std::mutex> lock(poolMutex_);
+        if (pool_.size() >= kMaxPooled) return fail(TESSERA_ERROR_INVALID_ARGUMENT, "at most 64 contexts can be pooled in total");
+        pool_.push_back({config, std::move(created)});
+    }
+    return TESSERA_SUCCESS;
+}
+
+TesseraResult Runtime::getNativeHandles(TesseraContext handle, TesseraNativeHandles& out) {
+    std::shared_ptr<ContextObject> object = contexts_.get(handle);
+    if (!object) return fail(TESSERA_ERROR_INVALID_HANDLE, "not a live context handle");
+    out = tesseraDefaultNativeHandles();
+    return object->nativeHandles(out);
 }
 
 TesseraResult Runtime::destroyContext(TesseraContext handle) {
