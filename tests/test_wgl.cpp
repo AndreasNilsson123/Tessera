@@ -40,7 +40,7 @@ using GlIsTexture = unsigned char(WINAPI*)(unsigned);
 using GlBindTexture = void(WINAPI*)(unsigned, unsigned);
 
 static TesseraContextConfig baseConfig() {
-    TesseraContextConfig c = TESSERA_CONTEXT_CONFIG_INIT;
+    TesseraContextConfig c = tesseraDefaultContextConfig();
     c.api = TESSERA_API_OPENGL;
     c.flags = TESSERA_FLAG_DOUBLE_BUFFER;
     return c;
@@ -89,7 +89,7 @@ static void testBasicCreateAndInfo() {
     EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_SUCCESS);
     if (!ctx) return;
 
-    TesseraContextInfo info = TESSERA_CONTEXT_INFO_INIT;
+    TesseraContextInfo info = tesseraDefaultContextInfo();
     EXPECT(tesseraGetContextInfo(ctx, &info), TESSERA_SUCCESS);
     std::printf("  default context: %s | %s | GL %s\n    api=%u %d.%d profile=%u flags=0x%x rgba=%d%d%d%d d=%d s=%d samples=%d\n",
                 info.vendor, info.renderer, info.version, info.api, info.versionMajor, info.versionMinor, info.profile,
@@ -172,7 +172,7 @@ static void testMakeCurrentAndProcs() {
     TesseraContext ctx = 0;
     EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_SUCCESS);
     if (!ctx) return;
-    TesseraContextInfo info = TESSERA_CONTEXT_INFO_INIT;
+    TesseraContextInfo info = tesseraDefaultContextInfo();
     tesseraGetContextInfo(ctx, &info);
 
     EXPECT(tesseraMakeCurrent(ctx), TESSERA_SUCCESS);
@@ -251,7 +251,7 @@ static void testConfigNegotiation() {
     TesseraContext ctx = 0;
     EXPECT(tesseraCreateContext(&msaa, &ctx), TESSERA_SUCCESS);
     if (ctx) {
-        TesseraContextInfo info = TESSERA_CONTEXT_INFO_INIT;
+        TesseraContextInfo info = tesseraDefaultContextInfo();
         tesseraGetContextInfo(ctx, &info);
         CHECK(info.samples < 64);
         std::printf("  best-effort msaa 64 -> %d samples\n", info.samples);
@@ -270,7 +270,7 @@ static void testConfigNegotiation() {
     const TesseraResult r = tesseraCreateContext(&core, &ctx);
     CHECK(r == TESSERA_SUCCESS || r == TESSERA_ERROR_NO_MATCHING_CONFIG);
     if (r == TESSERA_SUCCESS) {
-        TesseraContextInfo info = TESSERA_CONTEXT_INFO_INIT;
+        TesseraContextInfo info = tesseraDefaultContextInfo();
         tesseraGetContextInfo(ctx, &info);
         std::printf("  core request -> GL %d.%d profile=%u flags=0x%x\n", info.versionMajor, info.versionMinor,
                     info.profile, info.flags);
@@ -288,7 +288,7 @@ static void testConfigNegotiation() {
     TesseraContextConfig ladder = baseConfig();
     ladder.profile = TESSERA_PROFILE_CORE;
     if (tesseraCreateContext(&ladder, &ctx) == TESSERA_SUCCESS) {
-        TesseraContextInfo info = TESSERA_CONTEXT_INFO_INIT;
+        TesseraContextInfo info = tesseraDefaultContextInfo();
         tesseraGetContextInfo(ctx, &info);
         std::printf("  core ladder -> GL %d.%d\n", info.versionMajor, info.versionMinor);
         CHECK(info.versionMajor >= 3);
@@ -310,7 +310,7 @@ static void testConfigNegotiation() {
     CHECK(pr == TESSERA_SUCCESS || pr == TESSERA_ERROR_UNSUPPORTED || pr == TESSERA_ERROR_NO_MATCHING_CONFIG);
     std::printf("  pbuffer request: %s\n", tesseraResultString(pr));
     if (pr == TESSERA_SUCCESS) {
-        TesseraContextInfo info = TESSERA_CONTEXT_INFO_INIT;
+        TesseraContextInfo info = tesseraDefaultContextInfo();
         tesseraGetContextInfo(ctx, &info);
         CHECK(info.surface == TESSERA_SURFACE_PBUFFER);
         EXPECT(tesseraMakeCurrent(ctx), TESSERA_SUCCESS);
@@ -323,7 +323,7 @@ static void testConfigNegotiation() {
     none_.surface = TESSERA_SURFACE_NONE;
     EXPECT(tesseraCreateContext(&none_, &ctx), TESSERA_SUCCESS);
     if (ctx) {
-        TesseraContextInfo info = TESSERA_CONTEXT_INFO_INIT;
+        TesseraContextInfo info = tesseraDefaultContextInfo();
         tesseraGetContextInfo(ctx, &info);
         CHECK(info.surface == TESSERA_SURFACE_NONE);
         tesseraDestroyContext(ctx);

@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch/PR supersedes the one still running.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Build + test on every platform with warnings as errors. Windows currently has the only native
+  # backend (WGL); the other platforms build and test the core until their backends land (Phases 3-5).
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: windows-msvc-debug,   os: windows-2022, config: Debug }
+          - { name: windows-msvc-release, os: windows-2022, config: Release }
+          - { name: linux-gcc-debug,      os: ubuntu-24.04, config: Debug,   cc: gcc,   cxx: g++ }
+          - { name: linux-gcc-release,    os: ubuntu-24.04, config: Release, cc: gcc,   cxx: g++ }
+          - { name: linux-clang-debug,    os: ubuntu-24.04, config: Debug,   cc: clang, cxx: clang++ }
+          - { name: macos-arm64-debug,    os: macos-14,     config: Debug }
+    env:
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake --preset ci -DCMAKE_BUILD_TYPE=${{ matrix.config }}
+      - name: Build
+        run: cmake --build --preset ci --config ${{ matrix.config }} --parallel
+      - name: Test (no GPU required)
+        run: ctest --preset ci -C ${{ matrix.config }}
+
+  # Memory/UB and data-race checking of the core logic (handle table, init/terminate, thread ownership).
+  sanitizers:
+    name: ${{ matrix.preset }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [asan-ubsan, tsan]
+    env:
+      CC: clang
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lower ASLR entropy (TSan aborts under the runners' default)
+        if: matrix.preset == 'tsan'
+        run: sudo sysctl vm.mmap_rnd_bits=28
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }} --parallel
+      - name: Test
+        run: ctest --preset ${{ matrix.preset }}
+
+  # The WGL integration test against whatever OpenGL the hosted Windows runner offers (no GPU, so likely
+  # Microsoft's GDI software renderer, GL 1.1). Informational only: expected to fail until the test accepts
+  # a software renderer or the job installs Mesa. Real-driver results come from local runs
+  # (`ctest --preset ci-gpu`) or a self-hosted GPU runner.
+  wgl-software:
+    name: wgl-integration (software GL, informational)
+    runs-on: windows-2022
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure and build
+        run: |
+          cmake --preset ci
+          cmake --build --preset ci --config Debug --parallel
+      - name: Run WGL integration test
+        run: ctest --test-dir build/ci -C Debug -L gpu --output-on-failure
+
+  # Style and static analysis. Informational for now: the existing code predates the formatter settings, so
+  # making these blocking needs a one-time reformat commit first.
+  lint:
+    name: lint (informational)
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    env:
+      CC: clang
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: |
+          python3 -m pip install --user clang-format==18.1.8
+          sudo apt-get update
+          sudo apt-get install -y clang-tidy ninja-build
+      - name: clang-format
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          git ls-files '*.c' '*.cpp' '*.h' '*.hpp' | xargs clang-format --dry-run --Werror
+      - name: clang-tidy
+        run: |
+          cmake --preset tidy
+          cmake --build --preset tidy --parallel

@@ -1,0 +1,17 @@
+# Deliberately conservative: bugs and lifetime/threading hazards, not style. Tighten over time.
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-reserved-identifier,
+  clang-analyzer-*,
+  concurrency-*,
+  performance-*,
+  -performance-no-int-to-ptr,
+  misc-const-correctness,
+  misc-redundant-expression,
+  misc-uniqueptr-reset-release,
+  modernize-use-nullptr,
+  modernize-use-override
+WarningsAsErrors: ''
+HeaderFilterRegex: '(include/tessera|src)/.*'

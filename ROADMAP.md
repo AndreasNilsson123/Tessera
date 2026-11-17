@@ -49,7 +49,7 @@ Key decisions to make in Phase 0 (recorded as ADRs in `docs/adr/`):
 
 - [x] Repo layout: `include/tessera/`, `src/core`, `src/platform/{win32,x11,wayland,egl,cocoa}`, `bindings/java`, `tests`, `docs`.
 - [x] CMake: shared + static targets, symbol visibility hidden by default, explicit export macro, versioned soname / DLL version resource.
-- [ ] CI matrix: Windows (MSVC, clang-cl), Linux (gcc, clang; X11 + Wayland), macOS (arm64 + x64). Software GL (Mesa llvmpipe / WARP-like) for headless runners.
+- [~] CI matrix: Windows (MSVC, clang-cl), Linux (gcc, clang; X11 + Wayland), macOS (arm64 + x64). Software GL (Mesa llvmpipe / WARP-like) for headless runners.
 - [~] Tooling: clang-format, clang-tidy, sanitizers (ASan/UBSan/TSan), `-Wall -Wextra -Werror`.
 - [x] ABI policy: semantic versioning, `tesseraGetVersion()`, struct-size-prefixed config structs (`sizeof` in first field) so fields can be appended without breaking callers.
 - [~] ADRs for the decisions above.

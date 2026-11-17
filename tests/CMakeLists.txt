@@ -3,6 +3,16 @@ target_link_libraries(test_abi PRIVATE Tessera::tessera)
 tessera_apply_options(test_abi)
 add_test(NAME abi COMMAND test_abi)
 
+# The public header must stay valid C99 (compiled as C, not C++).
+add_executable(test_header_c header_c.c)
+target_link_libraries(test_header_c PRIVATE Tessera::tessera)
+tessera_apply_options(test_header_c)
+add_test(NAME header_c COMMAND test_header_c)
+if(WIN32 AND TESSERA_BUILD_SHARED)
+    add_custom_command(TARGET test_header_c POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:tessera> $<TARGET_FILE_DIR:test_header_c>)
+endif()
+
 # On Windows the test must find tessera.dll next to it.
 if(WIN32 AND TESSERA_BUILD_SHARED)
     add_custom_command(TARGET test_abi POST_BUILD
@@ -28,4 +38,8 @@ if(WIN32 AND TESSERA_BUILD_SHARED)
     add_custom_command(TARGET test_wgl POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:tessera> $<TARGET_FILE_DIR:test_wgl>)
     add_test(NAME wgl COMMAND test_wgl)
+    # Needs a real OpenGL driver: excluded from the default (hosted-runner) test preset.
+    set_tests_properties(wgl PROPERTIES LABELS "gpu" TIMEOUT 180)
 endif()
+
+set_tests_properties(abi core header_c PROPERTIES TIMEOUT 60)

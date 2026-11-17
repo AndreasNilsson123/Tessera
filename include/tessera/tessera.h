@@ -18,6 +18,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "tessera_export.h"
 
@@ -154,8 +155,15 @@ typedef struct TesseraContextConfig {
     uint64_t reserved[8];      /* must be zero; reserved for future use */
 } TesseraContextConfig;
 
-/* Initialiser: `TesseraContextConfig cfg = TESSERA_CONTEXT_CONFIG_INIT;` (sets structSize, zeroes the rest). */
-#define TESSERA_CONTEXT_CONFIG_INIT {(uint32_t)sizeof(TesseraContextConfig)}
+/* Zeroed config with structSize set: `TesseraContextConfig cfg = tesseraDefaultContextConfig();`
+ * (A function rather than a brace-initialiser macro: partial initialisers trip -Wmissing-field-initializers.
+ * Bindings that cannot call static inline functions just zero the struct and set structSize themselves.) */
+static inline TesseraContextConfig tesseraDefaultContextConfig(void) {
+    TesseraContextConfig c;
+    memset(&c, 0, sizeof c);
+    c.structSize = (uint32_t)sizeof c;
+    return c;
+}
 
 /* What was actually obtained, as opposed to what was requested. */
 typedef struct TesseraContextInfo {
@@ -175,7 +183,12 @@ typedef struct TesseraContextInfo {
     uint64_t reserved[8];
 } TesseraContextInfo;
 
-#define TESSERA_CONTEXT_INFO_INIT {(uint32_t)sizeof(TesseraContextInfo)}
+static inline TesseraContextInfo tesseraDefaultContextInfo(void) {
+    TesseraContextInfo i;
+    memset(&i, 0, sizeof i);
+    i.structSize = (uint32_t)sizeof i;
+    return i;
+}
 
 /* ---------------------------------------------------------------- contexts
  *

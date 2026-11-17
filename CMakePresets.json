@@ -1,0 +1,84 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "TESSERA_BUILD_TESTS": "ON",
+        "TESSERA_WARNINGS_AS_ERRORS": "ON"
+      }
+    },
+    {
+      "name": "ci",
+      "displayName": "Warnings as errors, default generator (what CI runs on every platform)",
+      "inherits": "base"
+    },
+    {
+      "name": "asan-ubsan",
+      "displayName": "AddressSanitizer + UndefinedBehaviorSanitizer (Linux/macOS)",
+      "inherits": "base",
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "TESSERA_SANITIZE": "address,undefined"
+      }
+    },
+    {
+      "name": "tsan",
+      "displayName": "ThreadSanitizer (Linux/macOS)",
+      "inherits": "base",
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "TESSERA_SANITIZE": "thread"
+      }
+    },
+    {
+      "name": "tidy",
+      "displayName": "clang-tidy during the build (needs clang-tidy on PATH)",
+      "inherits": "base",
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "TESSERA_CLANG_TIDY": "ON",
+        "TESSERA_WARNINGS_AS_ERRORS": "OFF"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "ci", "configurePreset": "ci" },
+    { "name": "asan-ubsan", "configurePreset": "asan-ubsan" },
+    { "name": "tsan", "configurePreset": "tsan" },
+    { "name": "tidy", "configurePreset": "tidy" }
+  ],
+  "testPresets": [
+    {
+      "name": "ci",
+      "displayName": "Everything that needs no GPU",
+      "configurePreset": "ci",
+      "output": { "outputOnFailure": true },
+      "filter": { "exclude": { "label": "gpu" } }
+    },
+    {
+      "name": "ci-gpu",
+      "displayName": "Everything, including tests that need a real OpenGL driver",
+      "configurePreset": "ci",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "asan-ubsan",
+      "configurePreset": "asan-ubsan",
+      "output": { "outputOnFailure": true },
+      "filter": { "exclude": { "label": "gpu" } }
+    },
+    {
+      "name": "tsan",
+      "configurePreset": "tsan",
+      "output": { "outputOnFailure": true },
+      "filter": { "exclude": { "label": "gpu" } }
+    }
+  ]
+}

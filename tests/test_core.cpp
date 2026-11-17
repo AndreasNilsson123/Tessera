@@ -99,7 +99,7 @@ static void testHandleTable() {
 
 static void testConfig() {
     TesseraContextConfig out;
-    TesseraContextConfig cfg = TESSERA_CONTEXT_CONFIG_INIT;
+    TesseraContextConfig cfg = tesseraDefaultContextConfig();
     cfg.api = TESSERA_API_OPENGL;
 
     CHECK(normalizeConfig(&cfg, out) == TESSERA_SUCCESS);
@@ -284,7 +284,7 @@ static void TESSERA_CALL logSink(int32_t level, const char* msg, void* user) {
 }
 
 static void testRuntime() {
-    TesseraContextConfig cfg = TESSERA_CONTEXT_CONFIG_INIT;
+    TesseraContextConfig cfg = tesseraDefaultContextConfig();
     cfg.api = TESSERA_API_OPENGL;
     TesseraContext ctx = 1234;
 
@@ -317,7 +317,7 @@ static void testRuntime() {
     CHECK(ctx != TESSERA_NULL_HANDLE);
     CHECK(g_liveFakeContexts == 1);
 
-    TesseraContextInfo info = TESSERA_CONTEXT_INFO_INIT;
+    TesseraContextInfo info = tesseraDefaultContextInfo();
     CHECK(tesseraGetContextInfo(ctx, &info) == TESSERA_SUCCESS);
     CHECK(info.versionMajor == 3 && info.versionMinor == 3 && info.samples == 4);
     CHECK(std::strcmp(info.renderer, "Fake Renderer") == 0);
@@ -336,14 +336,14 @@ static void testRuntime() {
     CHECK(tesseraGetContextInfo(ctx, &unset) == TESSERA_ERROR_INVALID_ARGUMENT); // structSize not set
 
     // Backend fallthrough: ES request is declined by the desktop backend, served by the ES one.
-    TesseraContextConfig esCfg = TESSERA_CONTEXT_CONFIG_INIT;
+    TesseraContextConfig esCfg = tesseraDefaultContextConfig();
     esCfg.api = TESSERA_API_OPENGL_ES;
     TesseraContext esCtx = 0;
     CHECK(tesseraCreateContext(&esCfg, &esCtx) == TESSERA_SUCCESS);
     CHECK(desktop->calls >= 2 && es->calls == 1);
 
     // Sharing: valid, then invalid.
-    TesseraContextConfig shareCfg = TESSERA_CONTEXT_CONFIG_INIT;
+    TesseraContextConfig shareCfg = tesseraDefaultContextConfig();
     shareCfg.api = TESSERA_API_OPENGL;
     shareCfg.shareWith = ctx;
     TesseraContext sharing = 0;
@@ -362,10 +362,10 @@ static void testRuntime() {
     CHECK(tesseraDestroyContext(ctx) == TESSERA_ERROR_INVALID_HANDLE);
     CHECK(tesseraDestroyContext(TESSERA_NULL_HANDLE) == TESSERA_ERROR_INVALID_HANDLE);
     CHECK(tesseraGetContextInfo(ctx, &info) == TESSERA_ERROR_INVALID_HANDLE);
-    info = TesseraContextInfo TESSERA_CONTEXT_INFO_INIT;
+    info = tesseraDefaultContextInfo();
 
     // Backend failures map to the right codes; exceptions never escape.
-    TesseraContextConfig failCfg = TESSERA_CONTEXT_CONFIG_INIT;
+    TesseraContextConfig failCfg = tesseraDefaultContextConfig();
     failCfg.api = TESSERA_API_OPENGL;
     TesseraContext none = 0;
     failCfg.samples = 16; CHECK(tesseraCreateContext(&failCfg, &none) == TESSERA_ERROR_NO_MATCHING_CONFIG);
@@ -415,7 +415,7 @@ static void testAffinity() {
     CHECK(tesseraInit() == TESSERA_SUCCESS);
     Runtime::instance().registerBackend(std::make_shared<FakeBackend>("fake", TESSERA_API_OPENGL));
 
-    TesseraContextConfig cfg = TESSERA_CONTEXT_CONFIG_INIT;
+    TesseraContextConfig cfg = tesseraDefaultContextConfig();
     cfg.api = TESSERA_API_OPENGL;
     TesseraContext ctx = 0;
     CHECK(tesseraCreateContext(&cfg, &ctx) == TESSERA_SUCCESS);
@@ -444,12 +444,14 @@ static void testAffinity() {
     CHECK(aff.tryAcquire(me));    // and can be taken over
     CHECK(aff.ownedBy(me));
     std::shared_ptr<ThreadToken> live;
+    std::atomic<bool> published{false};
     std::atomic<bool> release{false};
     std::thread holder([&] {
         live = currentThreadToken();
+        published.store(true); // release/acquire pair with the load below makes `live` safe to read
         while (!release.load()) std::this_thread::yield();
     });
-    while (!live) std::this_thread::yield();
+    while (!published.load()) std::this_thread::yield();
     aff.release(me);
     CHECK(aff.tryAcquire(live));
     CHECK(aff.busyElsewhere(me));
