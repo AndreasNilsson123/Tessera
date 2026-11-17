@@ -13,3 +13,12 @@ All are optional and read when the relevant part of Tessera initialises. None is
 
 Tessera never writes to stdout or stderr; use `tesseraSetLogCallback` to see what it decided (backend, relaxed
 configurations, dropped requests).
+
+## Java system properties
+
+Set with `-D` on the JVM command line (see `java.md`).
+
+| Property | Effect |
+|---|---|
+| `tessera.library.path` | Load this native library file instead of the copy embedded in the jar. |
+| `tessera.binding` | `auto` (default), `jni` or `ffm`. `ffm` needs Java 22+. |

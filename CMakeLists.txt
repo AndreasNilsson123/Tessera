@@ -21,6 +21,7 @@ option(TESSERA_BUILD_SHARED "Build Tessera as a shared library" ON)
 option(TESSERA_BUILD_TESTS "Build Tessera tests" ${BUILD_TESTING})
 option(TESSERA_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 option(TESSERA_CLANG_TIDY "Run clang-tidy on the library sources during the build" OFF)
+option(TESSERA_BUILD_JAVA "Build the Java bindings: JNI glue inside the library plus bindings/java (needs a JDK 11+)" OFF)
 option(TESSERA_SANITIZE "Sanitizer to enable: address, undefined, thread (or empty)" "")
 
 set(CMAKE_CXX_STANDARD 17)
@@ -101,6 +102,18 @@ if(APPLE)
     set(TESSERA_PLATFORM_OBJECTS $<TARGET_OBJECTS:tessera_cgl>)
 endif()
 
+# JNI glue, compiled into the library itself so one native file serves both the JNI and the FFM binding.
+if(TESSERA_BUILD_JAVA)
+    find_package(Java 11 REQUIRED COMPONENTS Development)
+    find_package(JNI REQUIRED)
+    add_library(tessera_jni OBJECT bindings/java/src/jni/tessera_jni.cpp)
+    target_include_directories(tessera_jni PRIVATE include)
+    target_include_directories(tessera_jni SYSTEM PRIVATE ${JNI_INCLUDE_DIRS})
+    target_compile_definitions(tessera_jni PRIVATE TESSERA_BUILDING)
+    tessera_apply_options(tessera_jni)
+    list(APPEND TESSERA_PLATFORM_OBJECTS $<TARGET_OBJECTS:tessera_jni>)
+endif()
+
 if(TESSERA_BUILD_SHARED)
     add_library(tessera SHARED $<TARGET_OBJECTS:tessera_core> ${TESSERA_PLATFORM_OBJECTS})
 else()
@@ -125,6 +138,10 @@ set_target_properties(tessera PROPERTIES
 
 if(TESSERA_BUILD_TESTS)
     add_subdirectory(tests)
+endif()
+
+if(TESSERA_BUILD_JAVA)
+    add_subdirectory(bindings/java)
 endif()
 
 # ---- install / find_package ------------------------------------------------

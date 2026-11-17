@@ -118,6 +118,38 @@ jobs:
       - name: Run the CGL test against OpenGL.framework
         run: ctest --test-dir build/ci -L gpu --output-on-failure
 
+  # The Java bindings and their tests on Linux: JNI on Java 21, FFM on Java 25, under a virtual X server with Mesa's
+  # software renderer. Informational: never run (the first Linux run of any of this), and the JavaFX OpenGL pipeline test
+  # needs GTK and a GL-capable software renderer. Drop continue-on-error after the first green run.
+  java-linux:
+    name: java (JDK ${{ matrix.java }}, Xvfb + Mesa, informational)
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        java: ["21", "25"]
+    env:
+      LIBGL_ALWAYS_SOFTWARE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+      - name: Install X server, Mesa and GTK (for JavaFX)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgl1 libgl1-mesa-dri libglx-mesa0 libegl1 libegl-mesa0 libgtk-3-0t64 libxtst6
+      - name: Fetch the pinned LWJGL and JavaFX jars
+        run: python3 scripts/fetch-java-deps.py
+      - name: Configure and build
+        run: |
+          cmake --preset java -DCMAKE_BUILD_TYPE=Debug
+          cmake --build --preset java --parallel
+      - name: Run the Java tests
+        run: xvfb-run -a -s "-screen 0 1280x1024x24" ctest --preset java --output-on-failure
+
   # Style and static analysis. Informational for now: the existing code predates the formatter settings, so
   # making these blocking needs a one-time reformat commit first.
   lint:

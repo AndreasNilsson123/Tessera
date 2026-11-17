@@ -37,6 +37,14 @@
       }
     },
     {
+      "name": "java",
+      "displayName": "Java bindings (JNI + FFM jar) with their tests; needs a JDK, JAVA_HOME selects it",
+      "inherits": "base",
+      "cacheVariables": {
+        "TESSERA_BUILD_JAVA": "ON"
+      }
+    },
+    {
       "name": "tidy",
       "displayName": "clang-tidy during the build (needs clang-tidy on PATH)",
       "inherits": "base",
@@ -52,6 +60,7 @@
     { "name": "ci", "configurePreset": "ci" },
     { "name": "asan-ubsan", "configurePreset": "asan-ubsan" },
     { "name": "tsan", "configurePreset": "tsan" },
+    { "name": "java", "configurePreset": "java" },
     { "name": "tidy", "configurePreset": "tidy" }
   ],
   "testPresets": [
@@ -67,6 +76,13 @@
       "displayName": "Everything, including tests that need a real OpenGL driver",
       "configurePreset": "ci",
       "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "java",
+      "displayName": "Java tests (need a real OpenGL driver)",
+      "configurePreset": "java",
+      "output": { "outputOnFailure": true },
+      "filter": { "include": { "label": "java" } }
     },
     {
       "name": "asan-ubsan",

@@ -186,16 +186,23 @@ JavaFX on macOS uses Metal (recent) or ES2/NSGL (older); AppKit threading rules 
 
 ## Phase 7 — Java / LWJGL integration
 
-- [ ] Java API (`tessera-java`): `TesseraContext`, `TesseraConfig` builder, `AutoCloseable`, `Cleaner` as safety net (never rely on it).
-- [ ] LWJGL bridge: expose `getProcAddress` as an `org.lwjgl.system.FunctionProvider`, and a `makeCurrent()` that works with `GL.createCapabilities()`/`GL.setCapabilities()`; document thread-local capabilities handling.
-- [ ] Panama (FFM) bindings generated with `jextract`, checked into the repo; JNI fallback built from same header.
-- [ ] Native library loading: extract-and-load with checksum, unique temp dir, version-qualified name so two classloaders/apps don't clash; `System.load` only, never `System.loadLibrary` search-path surprises.
-- [ ] Classloader / multi-instance safety: multiple copies of the Java jar loaded by different classloaders in one JVM must not double-init native state (the native refcounted init from Phase 1 covers this).
-- [ ] JavaFX integration doc + samples: Tessera context on a worker thread rendering to a texture/FBO, read back into `WritableImage`/`PixelBuffer`, never touching the JavaFX render thread's context.
-- [ ] Thread-affinity checks surfaced as Java exceptions (`IllegalStateException`) instead of native crashes.
-- [ ] JVM shutdown ordering: shutdown hook-safe teardown; no native callbacks into dead JVM (callback trampolines invalidated first).
+Decision (ADR 0009, resolving the open question about the minimum JDK): **JNI baseline for Java 11+, FFM automatically on Java 22+, one multi-release jar, one native file.** Verified from the same jar on Java 17 and 21 (JNI) and 22, 25 and 28 (FFM); Java 19 runs JNI.
 
-**Exit:** sample app: JavaFX window + background Tessera/LWJGL rendering thread running side by side on all OSes.
+- [x] Java API (`dev.tessera`, placeholder package): `Context` (`AutoCloseable`), `ContextConfig` builder, `ContextInfo`, `Result`/`TesseraException`/`ContextLostException`, `Logger`, `ResetStatus`, `Tessera`. A `Cleaner` safety net destroys contexts that are garbage collected unclosed (tested; it works at all because of Phase 6's deferred destruction).
+- [x] LWJGL bridge: `TesseraFunctionProvider` (an `org.lwjgl.system.FunctionProvider`) and `TesseraGL` (`install()`, per-thread `createCapabilities()`). Tested with real LWJGL 3.3.4 through both bindings: version/renderer match, FBO clear and shader draw read back and verified, buffer round trip, a second thread with its own context and capabilities. **Found and documented:** LWJGL's `GL` class loads the system OpenGL the moment it is first touched, so a custom provider needs `Configuration.OPENGL_EXPLICIT_INIT` set first (done by `install()`).
+- [~] Bindings: JNI (glue compiled into the tessera library) and FFM, both behind one `NativeApi` interface. FFM is **hand-written instead of `jextract`ed** (no tool installed; the surface is ~20 functions and 2 structs; layouts pinned by offsets plus an ABI-version check).
+- [x] Native loading: `-Dtessera.library.path`, else extract the embedded copy to a fresh private temp directory, verify its checksum, `System.load` by absolute path. (Changed from the plan's "version-qualified name": a fresh directory per run is stronger against planted files.)
+- [x] Classloader safety: JNI allows one classloader per library, so a second classloader gets a private copy (independent native state) instead of an error; tested with two isolated classloaders using the library at once. FFM shares one instance.
+- [~] JavaFX integration doc and sample: `docs/java.md` and the `FxCoexistence` test (JavaFX window + render thread + context churn). **Tested on Windows only, and only on JavaFX's Direct3D and software pipelines.** JavaFX's OpenGL (`es2`) pipeline exists only on Linux/macOS; JavaFX Windows does not ship it (an earlier version of this test silently fell back to software and "passed": now a fallback fails the test).
+- [x] Thread-affinity misuse surfaces as `IllegalStateException` (wrong thread, closed context, library shut down); virtual threads are refused for `makeCurrent`. A `makeCurrent` racing a dead holder's OS-thread exit retries briefly (found by the first Java run; `Thread.join()` returns before the OS thread has finished).
+- [x] JVM shutdown: the hook stops native log callbacks first, then terminates the library; a JVM exiting with two live contexts, one current on a parked thread, exits in about 0.8 s on every JDK tried. The JNI log trampoline attaches native threads as daemons and never lets an exception unwind into native code; the FFM upcall catches `Throwable`.
+
+**Status notes (Phase 7):**
+- New: `bindings/java/` (sources, CMake), `scripts/fetch-java-deps.py` (pinned LWJGL/JavaFX from Maven Central with SHA-1 verification into the git-ignored `third_party/java/`), `cmake --preset java`. 8 Java tests on Windows/NVIDIA: JNI and FFM, library from disk and extracted from the jar, shutdown, LWJGL x2, JavaFX x2; plus the same `SelfTest` on 6 JDKs.
+- Build-system lessons recorded in `bindings/java/CMakeLists.txt`: stages must be separate targets (a shared custom-command OUTPUT is re-run in parallel by each target under Visual Studio), and multi-entry classpaths must go in `@argfiles` (`;` does not survive CMake quoting on Windows).
+- **Not done / not verified:** the Java tests have not run on Linux or macOS (the JNI glue is only compile-checked on Linux with gcc `-Werror`; I could not install a JDK in the WSL distro); JavaFX's OpenGL pipeline alongside Tessera is therefore untested (the roadmap's riskiest coexistence case, and Phase 3's open exit criterion); no packaging for Maven Central; the package name is a placeholder; Java 8-10 are unsupported (needs `Cleaner`, `Runtime.version()`).
+
+**Exit:** sample app: JavaFX window + background Tessera/LWJGL rendering thread running side by side on all OSes. **Met on Windows** (Direct3D and software JavaFX pipelines, NVIDIA, both bindings' JavaFX runs used JNI on JDK 25); **not yet on Linux or macOS**.
 
 ## Phase 8 — Interop & advanced (optional / post-1.0)
 
@@ -239,7 +246,7 @@ JavaFX on macOS uses Metal (recent) or ES2/NSGL (older); AppKit threading rules 
 
 ## Open questions
 
-- Minimum supported JDK / LWJGL version? (drives Panama vs JNI priority)
+- ~~Minimum supported JDK / LWJGL version?~~ Resolved in ADR 0009: Java 11+ (JNI), FFM on 22+; LWJGL 3.3.x tested.
 - Is on-screen rendering to caller-supplied windows in scope for 1.0, or offscreen/hidden only?
 - Do we ship our own ANGLE/Mesa builds, or only detect system ones?
 - Minimum GL version floor (3.2 core? 2.1 compat?) and GLES floor (2.0?).
