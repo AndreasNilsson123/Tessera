@@ -18,7 +18,7 @@
 
 namespace {
 
-constexpr int kBadAttribute = 10000, kBadPixelFormat = 10002, kBadContext = 10004, kBadMatch = 10009;
+constexpr int kBadAttribute = 10000, kBadPixelFormat = 10002, kBadContext = 10004, kBadMatch = 10009, kBadAlloc = 10016;
 constexpr int kProfileLegacy = 0x1000, kProfile32 = 0x3200, kProfile4 = 0x4100;
 
 }
@@ -41,6 +41,14 @@ std::map<int, std::set<unsigned>> g_textures; // share group -> texture names
 int g_nextGroup = 1;
 unsigned g_nextTexture = 1;
 std::atomic<int> g_chooseCalls{0};
+// Fault injection: every mutating call counts itself; the call whose number equals g_failAt fails. (Resources are still
+// released when a *release* call "fails", so the live-object counters measure the backend's behaviour, not the fake's.)
+std::atomic<int> g_calls{0};
+std::atomic<int> g_failAt{0};
+bool injectedFault() {
+    const int n = ++g_calls;
+    return g_failAt.load() == n;
+}
 thread_local CGLContextRec* t_current = nullptr;
 
 bool envSet(const char* name) {
@@ -58,6 +66,7 @@ FAKE_EXPORT int CGLChoosePixelFormat(const int* attribs, CGLPixelFormatRec** pix
     ++g_chooseCalls;
     *pix = nullptr;
     *npix = 0;
+    if (injectedFault()) return kBadAlloc;
     CGLPixelFormatRec want;
     int sampleBuffers = 0;
     bool offline = false, havePofile = false;
@@ -98,6 +107,7 @@ FAKE_EXPORT int CGLChoosePixelFormat(const int* attribs, CGLPixelFormatRec** pix
 }
 
 FAKE_EXPORT int CGLDescribePixelFormat(CGLPixelFormatRec* pf, int /*screen*/, int attr, int* value) {
+    if (injectedFault()) return kBadPixelFormat; // leaves *value as the caller initialised it
     std::lock_guard<std::mutex> lock(g_mutex);
     if (!g_formats.count(pf)) return kBadPixelFormat;
     switch (attr) {
@@ -115,15 +125,18 @@ FAKE_EXPORT int CGLDescribePixelFormat(CGLPixelFormatRec* pf, int /*screen*/, in
 }
 
 FAKE_EXPORT int CGLReleasePixelFormat(CGLPixelFormatRec* pf) {
+    const bool fault = injectedFault();
     std::lock_guard<std::mutex> lock(g_mutex);
     if (!g_formats.erase(pf)) return kBadPixelFormat;
     delete pf;
-    return 0;
+    return fault ? kBadPixelFormat : 0;
 }
 
 FAKE_EXPORT int CGLCreateContext(CGLPixelFormatRec* pf, CGLContextRec* share, CGLContextRec** ctx) {
+    const bool fault = injectedFault();
     std::lock_guard<std::mutex> lock(g_mutex);
     *ctx = nullptr;
+    if (fault) return kBadAlloc;
     if (!g_formats.count(pf)) return kBadPixelFormat;
     if (share && !g_contexts.count(share)) return kBadContext;
     if (share && share->profile != pf->profile) return kBadMatch; // legacy and core cannot share
@@ -136,14 +149,16 @@ FAKE_EXPORT int CGLCreateContext(CGLPixelFormatRec* pf, CGLContextRec* share, CG
 }
 
 FAKE_EXPORT int CGLDestroyContext(CGLContextRec* ctx) {
+    const bool fault = injectedFault();
     std::lock_guard<std::mutex> lock(g_mutex);
     if (!g_contexts.erase(ctx)) return kBadContext;
     if (t_current == ctx) t_current = nullptr;
     delete ctx;
-    return 0;
+    return fault ? kBadContext : 0;
 }
 
 FAKE_EXPORT int CGLSetCurrentContext(CGLContextRec* ctx) {
+    if (injectedFault()) return kBadContext; // current context unchanged
     if (ctx) {
         std::lock_guard<std::mutex> lock(g_mutex);
         if (!g_contexts.count(ctx)) return kBadContext;
@@ -168,6 +183,7 @@ FAKE_EXPORT const char* CGLErrorString(int error) {
 // ---- a few GL functions -------------------------------------------------------------------------
 
 FAKE_EXPORT const unsigned char* glGetString(unsigned name) {
+    if (injectedFault()) return nullptr;
     if (!t_current) return nullptr; // like a real driver: no current context, no answer
     switch (name) {
     case 0x1F00: return reinterpret_cast<const unsigned char*>("Fake Vendor");
@@ -181,6 +197,7 @@ FAKE_EXPORT const unsigned char* glGetString(unsigned name) {
 }
 
 FAKE_EXPORT void glGetIntegerv(unsigned name, int* out) {
+    if (injectedFault()) return; // leaves *out untouched
     if (!t_current) return;
     const bool core = t_current->profile != kProfileLegacy;
     if (name == 0x9126) *out = core ? 1 : 0; // GL_CONTEXT_PROFILE_MASK: core bit
@@ -217,3 +234,9 @@ FAKE_EXPORT int fake_cgl_live_pixel_formats() {
     return static_cast<int>(g_formats.size());
 }
 FAKE_EXPORT int fake_cgl_choose_calls() { return g_chooseCalls.load(); }
+// Restarts the call counter; the n-th call after this fails (0 = never).
+FAKE_EXPORT void fake_cgl_set_fail_at(int n) {
+    g_calls = 0;
+    g_failAt = n;
+}
+FAKE_EXPORT int fake_cgl_calls() { return g_calls.load(); }

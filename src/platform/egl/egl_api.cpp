@@ -102,9 +102,12 @@ void EglForeignOps::restore(const State& s) noexcept {
         if (now == slot.ctx && f.eglGetCurrentSurface(kDraw) == slot.draw && f.eglGetCurrentSurface(kRead) == slot.read)
             continue; // already as found
         if (slot.ctx) {
-            if (!f.eglMakeCurrent(slot.dpy, slot.draw, slot.read, slot.ctx))
-                logf(TESSERA_LOG_WARN, "could not restore the previous EGL context (error 0x%x)",
+            if (!f.eglMakeCurrent(slot.dpy, slot.draw, slot.read, slot.ctx)) {
+                logf(TESSERA_LOG_WARN, "could not restore the previous EGL context (error 0x%x); leaving the thread without one",
                      static_cast<unsigned>(f.eglGetError()));
+                // Never leave one of OUR contexts current on a thread that did not ask for it.
+                if (f.eglGetCurrentContext() != nullptr) f.eglMakeCurrent(f.eglGetCurrentDisplay(), nullptr, nullptr, nullptr);
+            }
         } else if (now) {
             // Nothing was current for this API before us: release whatever display now holds our context.
             f.eglMakeCurrent(f.eglGetCurrentDisplay(), nullptr, nullptr, nullptr);

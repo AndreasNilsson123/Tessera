@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "platform/common/arb_context.hpp"
+#include "platform/common/gl_debug.hpp"
 #include "platform/common/gl_query.hpp"
 #include "core/boundary.hpp"
 #include "core/library.hpp"
@@ -197,6 +198,11 @@ class WglContext final : public ContextObject {
         return TESSERA_SUCCESS;
     }
 
+    TesseraResult queryResetStatus(int32_t& out) noexcept override {
+        return queryResetStatusFrom(resetFn, info.flags, out);
+    }
+
+    GlResetStatusFn resetFn = nullptr;
     std::shared_ptr<WglShared> shared_;
     WindowHost::Window window;
     HANDLE pbuffer = nullptr;
@@ -365,10 +371,14 @@ TesseraResult createNativeContext(WglShared& sh, HDC dc, const TesseraContextCon
         lastError = GetLastError();
     }
 
-    // ERROR_INVALID_VERSION_ARB / ERROR_INVALID_PROFILE_ARB (drivers report them with various high bits set).
+    // The driver rejected the request. The ARB spec names ERROR_INVALID_VERSION_ARB / ERROR_INVALID_PROFILE_ARB, but
+    // drivers also answer a combination they dislike with plain Win32 codes (NVIDIA: ERROR_INVALID_DATA), and put various
+    // high bits on all of them. Out-of-memory is the only failure that is not about the request itself.
     const DWORD code = lastError & 0xFFFFu;
-    if (code == 0x2095 || code == 0x2096)
-        return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, "the driver does not support the requested OpenGL version/profile");
+    if (code == 0x2095 || code == 0x2096 || code == 0x000D /*ERROR_INVALID_DATA*/ || code == 0x0057 /*ERROR_INVALID_PARAMETER*/)
+        return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, "the driver does not support the requested OpenGL version/profile/flags");
+    if (code == 0x0008 /*ERROR_NOT_ENOUGH_MEMORY*/ || code == 0x000E /*ERROR_OUTOFMEMORY*/)
+        return fail(TESSERA_ERROR_OUT_OF_MEMORY, describeWin32Error("wglCreateContextAttribsARB failed", lastError));
     return fail(TESSERA_ERROR_PLATFORM, describeWin32Error("wglCreateContextAttribsARB failed", lastError));
 }
 
@@ -487,6 +497,11 @@ class WglBackend final : public Backend {
         // Strict mode promises exactly what was asked for: verify the parts the driver may have loosened.
         if (c.fallback == TESSERA_FALLBACK_STRICT && !contextSatisfies(c, ctx->info))
             return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, "the created context does not satisfy the strict request");
+
+        // Reset polling and debug-message forwarding are bound to the context that is current right now.
+        const auto glProc = [&](const char* n) -> void* { return [&] { void* p = reinterpret_cast<void*>(sh->api->getProcAddress(n)); return isPlausibleProcAddress(p) ? p : sh->api->lib.symbol(n); }(); };
+        ctx->resetFn = resolveResetStatus(glProc);
+        if (ctx->info.flags & TESSERA_FLAG_DEBUG) installGlDebugForwarder(glProc);
 
         out = std::move(ctx);
         return TESSERA_SUCCESS;

@@ -141,8 +141,12 @@ void GlxForeignOps::restore(const State& s) noexcept {
     XErrorScope scope(*api, dpy);
     const Bool ok = g.glXMakeContextCurrent(dpy, s.draw, s.read, s.ctx);
     const int error = scope.sync();
-    if (!ok || error != 0)
-        logf(TESSERA_LOG_WARN, "could not restore the previous GLX context (X error %d)", error);
+    if (!ok || error != 0) {
+        logf(TESSERA_LOG_WARN, "could not restore the previous GLX context (X error %d); leaving the thread without one", error);
+        // Never leave one of OUR contexts current on a thread that did not ask for it.
+        if (Display* current = g.glXGetCurrentDisplay(); current && g.glXGetCurrentContext() != s.ctx)
+            g.glXMakeContextCurrent(current, 0, 0, nullptr);
+    }
 }
 
 } // namespace tessera::x11

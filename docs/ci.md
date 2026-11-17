@@ -12,7 +12,7 @@ configure the project identically.
 | `cgl-macos` | the CGL test against the real OpenGL.framework on a hosted macOS VM (never run) | no (informational) |
 | `lint` | clang-format check, clang-tidy build | no (informational) |
 
-`cgl_fake` (the macOS backend against a fake framework) runs on every POSIX job and in the sanitizer presets. Tests labelled `gpu` (`wgl` on Windows, `glx` and `egl` on Linux, `cgl` on macOS) need a real OpenGL driver and a display and are excluded from the default `ci` test preset.
+`cgl_fake` (the macOS backend against a fake framework, including a fault-injection sweep) and the two unavailable-library runs execute on every POSIX job and in the sanitizer presets; `core` includes the lifecycle/threading tests that need no GPU. Tests labelled `gpu` (`wgl` on Windows, `glx` and `egl` on Linux, `cgl` on macOS) need a real OpenGL driver and a display and are excluded from the default `ci` test preset.
 
 ## Running locally
 

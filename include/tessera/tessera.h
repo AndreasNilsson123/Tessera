@@ -29,7 +29,7 @@ extern "C" {
 /* ---------------------------------------------------------------- version */
 
 #define TESSERA_VERSION_MAJOR 0
-#define TESSERA_VERSION_MINOR 3
+#define TESSERA_VERSION_MINOR 4
 #define TESSERA_VERSION_PATCH 0
 
 /* Incremented on every incompatible change to the C ABI, independent of the semantic version. */
@@ -198,20 +198,55 @@ static inline TesseraContextInfo tesseraDefaultContextInfo(void) {
  */
 TESSERA_API TesseraResult TESSERA_CALL tesseraCreateContext(const TesseraContextConfig* config,
                                                             TesseraContext* outContext);
-/* Destroying TESSERA_NULL_HANDLE is an error (INVALID_HANDLE); destroying twice is an error, not UB. */
+/* Destroying TESSERA_NULL_HANDLE is an error (INVALID_HANDLE); destroying twice is an error, not UB.
+ * Contexts that were created sharing with this one keep working (they hold their own reference). */
 TESSERA_API TesseraResult TESSERA_CALL tesseraDestroyContext(TesseraContext context);
 TESSERA_API TesseraResult TESSERA_CALL tesseraGetContextInfo(TesseraContext context,
                                                              TesseraContextInfo* outInfo);
+
+/* ------------------------------------------------- reset notification and context loss
+ *
+ * A context created with TESSERA_FLAG_ROBUST_ACCESS | TESSERA_FLAG_RESET_NOTIFICATION can be polled for a GPU reset
+ * (driver crash, TDR, GPU removed). Like glGetGraphicsResetStatus, which this wraps, the application decides when to
+ * poll (typically once per frame). Once a reset is reported the context is *lost*: it stays lost, tesseraMakeCurrent
+ * and tesseraSwapBuffers on it return TESSERA_ERROR_CONTEXT_LOST, and it should be replaced with
+ * tesseraRecreateContext. A backend that learns of the loss natively (e.g. EGL_CONTEXT_LOST) marks it the same way.
+ */
+#define TESSERA_RESET_NONE 0
+#define TESSERA_RESET_GUILTY 1   /* this context caused the reset */
+#define TESSERA_RESET_INNOCENT 2 /* another context caused it, but this one was affected */
+#define TESSERA_RESET_UNKNOWN 3
+
+/*
+ * Polls the reset status; `context` must be current on the calling thread. Returns UNSUPPORTED if the context was not
+ * created with robust access and reset notification (or the driver lacks the query). For a context already known to
+ * be lost it returns the status that was reported.
+ */
+TESSERA_API TesseraResult TESSERA_CALL tesseraGetResetStatus(TesseraContext context, int32_t* outStatus);
+
+/* tesseraRecreateContext flags */
+#define TESSERA_RECREATE_SHARE_PRESERVED 0x1u /* the new context joined a surviving member of the old share group */
+
+/*
+ * Creates a new context from the same request as `context` (normally a lost one; the old handle stays valid and must
+ * still be destroyed by the caller). If `context` shared objects with other contexts, the new one shares with a
+ * surviving member of that group, so the group's textures/buffers are still there (TESSERA_RECREATE_SHARE_PRESERVED).
+ * If no member survives, the new context starts an empty group and everything must be re-uploaded. `outFlags` may be NULL.
+ */
+TESSERA_API TesseraResult TESSERA_CALL tesseraRecreateContext(TesseraContext context, TesseraContext* outNew,
+                                                              uint32_t* outFlags);
 
 /*
  * Thread rules (enforced, not just documented):
  *  - A context is current on at most one thread at a time. Making a context current on a second thread
  *    while the first still holds it fails with TESSERA_ERROR_WRONG_THREAD. If the owning thread has
  *    exited, ownership is reclaimed automatically.
- *  - tesseraDestroyContext on a context that is current on a *different live* thread fails with
- *    WRONG_THREAD and leaves the context valid; release it on its thread first. Destroying a context
- *    that is current on the calling thread releases it first.
- *  - Contexts may be created and destroyed from any thread.
+ *  - Contexts may be created and destroyed from any thread. Destroying a context that is current on a
+ *    *different live* thread succeeds at once and invalidates the handle everywhere, but the native context
+ *    cannot be released from outside the owning thread: it is torn down on that thread when it next releases
+ *    it (tesseraMakeCurrent(NULL)), switches to another context, or exits. (This is what makes it safe for a
+ *    finalizer/Cleaner thread to destroy a context the render thread still holds.) Destroying a context that
+ *    is current on the calling thread releases it first.
  */
 
 /*

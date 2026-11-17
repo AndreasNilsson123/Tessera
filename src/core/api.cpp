@@ -80,4 +80,25 @@ TESSERA_API TesseraResult TESSERA_CALL tesseraSetSwapInterval(TesseraContext con
     return guarded([&] { return Runtime::instance().setSwapInterval(context, interval); });
 }
 
+TESSERA_API TesseraResult TESSERA_CALL tesseraGetResetStatus(TesseraContext context, int32_t* outStatus) {
+    return guarded([&]() -> TesseraResult {
+        if (!outStatus) return fail(TESSERA_ERROR_INVALID_ARGUMENT, "outStatus is NULL");
+        *outStatus = TESSERA_RESET_NONE;
+        return Runtime::instance().getResetStatus(context, *outStatus);
+    });
+}
+
+TESSERA_API TesseraResult TESSERA_CALL tesseraRecreateContext(TesseraContext context, TesseraContext* outNew,
+                                                              uint32_t* outFlags) {
+    return guarded([&]() -> TesseraResult {
+        if (!outNew) return fail(TESSERA_ERROR_INVALID_ARGUMENT, "outNew is NULL");
+        *outNew = TESSERA_NULL_HANDLE;
+        if (outFlags) *outFlags = 0;
+        uint32_t flags = 0;
+        const TesseraResult r = Runtime::instance().recreateContext(context, *outNew, flags);
+        if (outFlags) *outFlags = flags;
+        return r;
+    });
+}
+
 } // extern "C"

@@ -49,6 +49,8 @@ TesseraResult normalizeConfig(const TesseraContextConfig* in, TesseraContextConf
     if (out.flags & ~kKnownFlags) return bad("unknown flag bits");
     if ((out.flags & TESSERA_FLAG_FORWARD_COMPATIBLE) && out.api != TESSERA_API_OPENGL)
         return bad("forward-compatible applies to desktop OpenGL only");
+    if ((out.flags & TESSERA_FLAG_FORWARD_COMPATIBLE) && out.versionMajor != 0 && out.versionMajor < 3)
+        return bad("forward-compatible contexts require OpenGL 3.0 or newer");
     if ((out.flags & TESSERA_FLAG_RESET_NOTIFICATION) && !(out.flags & TESSERA_FLAG_ROBUST_ACCESS))
         return bad("reset notification requires robust access");
     if ((out.flags & TESSERA_FLAG_NO_ERROR) &&

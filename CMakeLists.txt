@@ -49,6 +49,7 @@ set(TESSERA_CORE_SOURCES
     src/core/version.cpp
     src/platform/builtin.cpp
     src/platform/common/arb_context.cpp
+    src/platform/common/gl_debug.cpp
     src/platform/common/gl_query.cpp)
 if(WIN32)
     list(APPEND TESSERA_CORE_SOURCES

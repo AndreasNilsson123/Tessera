@@ -34,6 +34,8 @@ static int g_failures = 0;
         }                                                                                                \
     } while (0)
 
+#include "robustness_common.hpp"
+
 using GlGetString = const unsigned char*(WINAPI*)(unsigned);
 using GlGenTextures = void(WINAPI*)(int, unsigned*);
 using GlIsTexture = unsigned char(WINAPI*)(unsigned);
@@ -209,7 +211,6 @@ static void testThreadRules() {
     EXPECT(tesseraMakeCurrent(ctx), TESSERA_SUCCESS);
     std::thread([&] {
         EXPECT(tesseraMakeCurrent(ctx), TESSERA_ERROR_WRONG_THREAD);
-        EXPECT(tesseraDestroyContext(ctx), TESSERA_ERROR_WRONG_THREAD);
         EXPECT(tesseraSetSwapInterval(ctx, 1), TESSERA_ERROR_WRONG_THREAD);
         EXPECT(tesseraSwapBuffers(ctx), TESSERA_ERROR_WRONG_THREAD);
     }).join();
@@ -423,6 +424,26 @@ static void testTerminateAndReinit() {
     if (again) EXPECT(tesseraDestroyContext(again), TESSERA_SUCCESS);
 }
 
+static robust::Hooks wglHooks() {
+    robust::Hooks h;
+    h.base = baseConfig();
+    h.nothingCurrentNatively = [] { return wglGetCurrentContext() == nullptr; };
+    return h;
+}
+static void testDeferredDestroy() { robust::deferredDestroy(wglHooks()); }
+static void testResetStatus() { robust::resetStatus(wglHooks()); }
+static void testDebugForwarding() { robust::debugForwarding(wglHooks()); }
+static void testAttributeMatrix() {
+    ForeignContext foreign;
+    robust::Hooks h = wglHooks();
+    if (foreign.create()) {
+        h.armForeign = [&] { foreign.makeCurrent(); };
+        h.foreignIntact = [&] { return foreign.isCurrent(); };
+    }
+    robust::reportMatrix(h);
+    foreign.destroy();
+}
+
 int main() {
     if (tesseraInit() != TESSERA_SUCCESS) {
         std::fprintf(stderr, "tesseraInit failed: %s\n", tesseraGetLastErrorMessage());
@@ -452,6 +473,10 @@ int main() {
         {"sharing", testSharing},
         {"concurrent creation", testConcurrentCreation},
         {"leak check", testNoLeaks},
+        {"deferred destruction", testDeferredDestroy},
+        {"reset status / recreate", testResetStatus},
+        {"debug message forwarding", testDebugForwarding},
+        {"attribute matrix", testAttributeMatrix},
         {"terminate / re-init", testTerminateAndReinit},
     };
     for (const Section& sec : sections) {

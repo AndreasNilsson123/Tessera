@@ -12,8 +12,8 @@
 namespace tessera {
 
 namespace {
-// The Tessera context this thread last made current. Always validated through the handle table before
-// use, so a destroyed context or a terminated runtime simply reads as "none".
+// The Tessera context this thread last made current. Validated through the handle table (or the pending-destruction
+// list) before use, so a destroyed context or a terminated runtime simply reads as "none".
 thread_local TesseraContext t_current = TESSERA_NULL_HANDLE;
 std::atomic<bool> g_builtinDisabled{false};
 
@@ -30,17 +30,66 @@ struct ThreadExitGuard {
 thread_local ThreadExitGuard t_exitGuard;
 } // namespace
 
+// ---- pending destruction ("zombies") ---------------------------------------------------------------
+
+std::shared_ptr<ContextObject> Runtime::lookupAny(TesseraContext handle) {
+    if (auto object = contexts_.get(handle)) return object;
+    std::lock_guard<std::mutex> lock(zombiesMutex_);
+    const auto it = zombies_.find(handle);
+    return it == zombies_.end() ? nullptr : it->second;
+}
+
+std::shared_ptr<ContextObject> Runtime::takeZombie(TesseraContext handle) {
+    std::lock_guard<std::mutex> lock(zombiesMutex_);
+    const auto it = zombies_.find(handle);
+    if (it == zombies_.end()) return nullptr;
+    std::shared_ptr<ContextObject> object = std::move(it->second);
+    zombies_.erase(it);
+    return object; // the caller lets this die outside every lock, on the thread that owned the context
+}
+
+std::size_t Runtime::pendingDestructions() const {
+    std::lock_guard<std::mutex> lock(zombiesMutex_);
+    return zombies_.size();
+}
+
 void Runtime::releaseAtThreadExit(TesseraContext handle, const std::shared_ptr<ThreadToken>& me) noexcept {
     try {
-        if (auto object = contexts_.get(handle)) {
+        if (auto object = lookupAny(handle)) {
             if (object->affinity.ownedBy(me)) {
                 object->unbindCurrent();
                 object->affinity.release(me);
             }
         }
+        takeZombie(handle); // a context destroyed elsewhere while we held it is finally torn down, here
     } catch (...) {
     }
 }
+
+// ---- share groups -----------------------------------------------------------------------------------
+
+void Runtime::joinGroup(uint64_t group, TesseraHandle handle) {
+    std::lock_guard<std::mutex> lock(groupsMutex_);
+    groups_[group].insert(handle);
+}
+
+void Runtime::leaveGroup(uint64_t group, TesseraHandle handle) {
+    std::lock_guard<std::mutex> lock(groupsMutex_);
+    const auto it = groups_.find(group);
+    if (it == groups_.end()) return;
+    it->second.erase(handle);
+    if (it->second.empty()) groups_.erase(it);
+}
+
+void Runtime::markLost(ContextObject& object, int32_t status) {
+    bool expected = false;
+    if (object.lost.compare_exchange_strong(expected, true)) {
+        object.lostStatus.store(status);
+        logf(TESSERA_LOG_WARN, "a context was lost (reset status %d); recreate it with tesseraRecreateContext", status);
+    }
+}
+
+// ---- lifecycle --------------------------------------------------------------------------------------
 
 Runtime& Runtime::instance() {
     static Runtime* rt = new Runtime(); // leaked on purpose, see class comment
@@ -61,6 +110,7 @@ TesseraResult Runtime::init() {
         if (!g_builtinDisabled.load()) registerBuiltinBackends(builtin); // may throw; nothing changed yet
         backends_ = std::move(builtin);
         contexts_.open();
+        warnAt_.store(64);
         logf(TESSERA_LOG_DEBUG, "tessera initialised (%zu backend(s))", backends_.size());
     }
     ++refCount_;
@@ -69,6 +119,7 @@ TesseraResult Runtime::init() {
 
 TesseraResult Runtime::terminate() {
     std::vector<std::shared_ptr<ContextObject>> leftover;
+    std::map<TesseraHandle, std::shared_ptr<ContextObject>> pending;
     std::vector<std::shared_ptr<Backend>> backends;
     {
         std::lock_guard<std::mutex> lock(lifecycle_);
@@ -77,15 +128,32 @@ TesseraResult Runtime::terminate() {
         leftover = contexts_.closeAndDrain();
         backends.swap(backends_);
     }
+    {
+        std::lock_guard<std::mutex> lock(zombiesMutex_);
+        pending.swap(zombies_);
+    }
+    {
+        std::lock_guard<std::mutex> lock(groupsMutex_);
+        groups_.clear();
+    }
     // Destroy outside the lock: native destructors may call into drivers (and log callbacks).
     if (!leftover.empty())
         logf(TESSERA_LOG_WARN, "tesseraTerminate: destroying %zu context(s) that were never destroyed",
              leftover.size());
+    if (!pending.empty())
+        logf(TESSERA_LOG_WARN,
+             "tesseraTerminate: %zu destroyed context(s) were still current on other threads; their native teardown "
+             "happens when the last reference goes away",
+             pending.size());
     const auto me = currentThreadToken();
     for (auto& object : leftover) {
         if (object->affinity.ownedBy(me)) object->unbindCurrent();
     }
+    for (auto& entry : pending) {
+        if (entry.second->affinity.ownedBy(me)) entry.second->unbindCurrent();
+    }
     leftover.clear();
+    pending.clear();
     backends.clear();
     t_current = TESSERA_NULL_HANDLE;
     return TESSERA_SUCCESS;
@@ -96,6 +164,8 @@ void Runtime::registerBackend(std::shared_ptr<Backend> backend) {
     backends_.push_back(std::move(backend));
 }
 
+// ---- contexts ---------------------------------------------------------------------------------------
+
 TesseraResult Runtime::createContext(const TesseraContextConfig& config, TesseraContext& out) {
     out = TESSERA_NULL_HANDLE;
     if (!contexts_.isOpen()) return fail(TESSERA_ERROR_NOT_INITIALIZED, "tesseraInit has not been called");
@@ -104,6 +174,8 @@ TesseraResult Runtime::createContext(const TesseraContextConfig& config, Tessera
     if (config.shareWith != TESSERA_NULL_HANDLE) {
         share = contexts_.get(config.shareWith);
         if (!share) return fail(TESSERA_ERROR_INVALID_HANDLE, "shareWith is not a live context");
+        if (share->lost.load())
+            return fail(TESSERA_ERROR_CONTEXT_LOST, "shareWith is a lost context; share with a surviving member instead");
     }
 
     std::vector<std::shared_ptr<Backend>> backends;
@@ -123,12 +195,29 @@ TesseraResult Runtime::createContext(const TesseraContextConfig& config, Tessera
     if (result != TESSERA_SUCCESS) return result;
     if (!created) return fail(TESSERA_ERROR_UNKNOWN, "backend reported success without a context");
 
+    // Core bookkeeping, set before the object becomes visible to other threads through the table.
+    created->request = config;
+    {
+        std::lock_guard<std::mutex> lock(groupsMutex_);
+        created->shareGroup = share ? share->shareGroup : nextGroup_++;
+    }
+
     const TesseraHandle handle = contexts_.insert(created);
     if (handle == TESSERA_NULL_HANDLE) {
         // Closed by a concurrent terminate, or table full. `created` is released on return.
         return contexts_.isOpen() ? fail(TESSERA_ERROR_OUT_OF_MEMORY, "too many contexts")
                                   : fail(TESSERA_ERROR_NOT_INITIALIZED, "tesseraTerminate raced with create");
     }
+    joinGroup(created->shareGroup, handle);
+
+    // Each context holds driver resources (and on Windows a window plus GDI/USER handles, of which a process only has
+    // ~10000), so a runaway count is worth a warning long before creation starts failing.
+    const std::size_t live = contexts_.size();
+    std::size_t threshold = warnAt_.load();
+    if (live >= threshold && warnAt_.compare_exchange_strong(threshold, threshold * 4))
+        logf(TESSERA_LOG_WARN, "%zu live contexts: each holds driver and OS resources, check for contexts that are never destroyed",
+             live);
+
     out = handle;
     return TESSERA_SUCCESS;
 }
@@ -137,9 +226,23 @@ TesseraResult Runtime::destroyContext(TesseraContext handle) {
     const auto me = currentThreadToken();
     std::shared_ptr<ContextObject> object = contexts_.get(handle);
     if (!object) return fail(TESSERA_ERROR_INVALID_HANDLE, "not a live context handle");
-    if (object->affinity.busyElsewhere(me))
-        return fail(TESSERA_ERROR_WRONG_THREAD,
-                    "context is current on another thread; release it there before destroying it");
+
+    if (object->affinity.busyElsewhere(me)) {
+        // Current on another live thread, which is the only thread that can release it natively. Kill the handle now
+        // and let that thread finish the job when it lets go of the context (or exits).
+        std::shared_ptr<ContextObject> removed = contexts_.remove(handle);
+        if (!removed) return fail(TESSERA_ERROR_INVALID_HANDLE, "context destroyed concurrently");
+        leaveGroup(removed->shareGroup, handle);
+        {
+            std::lock_guard<std::mutex> lock(zombiesMutex_);
+            zombies_[handle] = removed;
+        }
+        // The owner may have released it between our check and the insert above; it could not have found the zombie
+        // then, so nobody else will finish this. Re-check, and finish it here if the context is free after all.
+        if (!removed->affinity.busyElsewhere(me)) takeZombie(handle);
+        return TESSERA_SUCCESS;
+    }
+
     if (object->affinity.ownedBy(me)) {
         object->unbindCurrent();
         object->affinity.release(me);
@@ -147,7 +250,9 @@ TesseraResult Runtime::destroyContext(TesseraContext handle) {
     if (t_current == handle) t_current = TESSERA_NULL_HANDLE;
     object = contexts_.remove(handle);
     // `object` dies here, outside every lock (later, if another thread still holds a reference).
-    return object ? TESSERA_SUCCESS : fail(TESSERA_ERROR_INVALID_HANDLE, "context destroyed concurrently");
+    if (!object) return fail(TESSERA_ERROR_INVALID_HANDLE, "context destroyed concurrently");
+    leaveGroup(object->shareGroup, handle);
+    return TESSERA_SUCCESS;
 }
 
 TesseraResult Runtime::describeContext(TesseraContext handle, TesseraContextInfo& out) {
@@ -161,12 +266,14 @@ TesseraResult Runtime::makeCurrent(TesseraContext handle) {
 
     if (handle == TESSERA_NULL_HANDLE) {
         if (t_current != TESSERA_NULL_HANDLE) {
-            if (auto prev = contexts_.get(t_current)) {
+            const TesseraContext previous = t_current;
+            if (auto prev = lookupAny(previous)) {
                 if (prev->affinity.ownedBy(me)) {
                     prev->unbindCurrent(); // no-op if a foreign context has since replaced it
                     prev->affinity.release(me);
                 }
             }
+            takeZombie(previous); // if it was destroyed elsewhere meanwhile, this is where it finally dies
             t_current = TESSERA_NULL_HANDLE;
         }
         return TESSERA_SUCCESS;
@@ -174,6 +281,7 @@ TesseraResult Runtime::makeCurrent(TesseraContext handle) {
 
     std::shared_ptr<ContextObject> object = contexts_.get(handle);
     if (!object) return fail(TESSERA_ERROR_INVALID_HANDLE, "not a live context handle");
+    if (object->lost.load()) return fail(TESSERA_ERROR_CONTEXT_LOST, "the context was lost; recreate it");
 
     bool wasNew = false;
     if (!object->affinity.tryAcquire(me, &wasNew))
@@ -182,16 +290,19 @@ TesseraResult Runtime::makeCurrent(TesseraContext handle) {
     const TesseraResult r = object->bindCurrent();
     if (r != TESSERA_SUCCESS) {
         if (wasNew) object->affinity.release(me);
+        if (r == TESSERA_ERROR_CONTEXT_LOST) markLost(*object, TESSERA_RESET_UNKNOWN);
         return r;
     }
 
     // Switching away from another of our contexts: WGL/GLX replace it at the driver, but EGL keeps one current
     // context per client API, so release it explicitly (a no-op where the driver already did).
     if (t_current != TESSERA_NULL_HANDLE && t_current != handle) {
-        if (auto prev = contexts_.get(t_current)) {
+        const TesseraContext previous = t_current;
+        if (auto prev = lookupAny(previous)) {
             if (prev->affinity.ownedBy(me)) prev->unbindCurrent();
             prev->affinity.release(me);
         }
+        takeZombie(previous);
     }
     t_current = handle;
     t_exitGuard.token = me; // arms the release-at-thread-exit above
@@ -202,24 +313,32 @@ TesseraContext Runtime::currentContext() {
     if (t_current == TESSERA_NULL_HANDLE) return TESSERA_NULL_HANDLE;
     const auto me = currentThreadToken();
     auto object = contexts_.get(t_current);
-    if (!object || !object->affinity.ownedBy(me)) {
+    if (object) {
+        if (object->affinity.ownedBy(me)) return t_current;
         t_current = TESSERA_NULL_HANDLE;
         return TESSERA_NULL_HANDLE;
     }
-    return t_current;
+    // Destroyed elsewhere while current here: the handle is dead to the caller, but keep it so the next release or the
+    // thread's exit can finish the native teardown. Anything else is stale.
+    if (!lookupAny(t_current)) t_current = TESSERA_NULL_HANDLE;
+    return TESSERA_NULL_HANDLE;
 }
 
 TesseraResult Runtime::swapBuffers(TesseraContext handle) {
     auto object = contexts_.get(handle);
     if (!object) return fail(TESSERA_ERROR_INVALID_HANDLE, "not a live context handle");
+    if (object->lost.load()) return fail(TESSERA_ERROR_CONTEXT_LOST, "the context was lost; recreate it");
     if (!object->affinity.ownedBy(currentThreadToken()))
         return fail(TESSERA_ERROR_WRONG_THREAD, "context is not current on the calling thread");
-    return object->swapBuffers();
+    const TesseraResult r = object->swapBuffers();
+    if (r == TESSERA_ERROR_CONTEXT_LOST) markLost(*object, TESSERA_RESET_UNKNOWN);
+    return r;
 }
 
 TesseraResult Runtime::setSwapInterval(TesseraContext handle, int32_t interval) {
     auto object = contexts_.get(handle);
     if (!object) return fail(TESSERA_ERROR_INVALID_HANDLE, "not a live context handle");
+    if (object->lost.load()) return fail(TESSERA_ERROR_CONTEXT_LOST, "the context was lost; recreate it");
     if (!object->affinity.ownedBy(currentThreadToken()))
         return fail(TESSERA_ERROR_WRONG_THREAD, "context is not current on the calling thread");
     return object->setSwapInterval(interval);
@@ -235,6 +354,60 @@ void* Runtime::getProcAddress(const char* name) {
     for (const auto& backend : backends)
         if (void* p = backend->getProcAddress(name)) return p;
     return nullptr;
+}
+
+// ---- reset notification, loss and recreation ---------------------------------------------------------
+
+TesseraResult Runtime::getResetStatus(TesseraContext handle, int32_t& outStatus) {
+    outStatus = TESSERA_RESET_NONE;
+    auto object = contexts_.get(handle);
+    if (!object) return fail(TESSERA_ERROR_INVALID_HANDLE, "not a live context handle");
+    if (!object->affinity.ownedBy(currentThreadToken()))
+        return fail(TESSERA_ERROR_WRONG_THREAD, "context is not current on the calling thread");
+    if (object->lost.load()) {
+        const int32_t status = object->lostStatus.load();
+        outStatus = status != TESSERA_RESET_NONE ? status : TESSERA_RESET_UNKNOWN;
+        return TESSERA_SUCCESS;
+    }
+    int32_t status = TESSERA_RESET_NONE;
+    if (TesseraResult r = object->queryResetStatus(status); r != TESSERA_SUCCESS) return r;
+    if (status != TESSERA_RESET_NONE) markLost(*object, status);
+    outStatus = status;
+    return TESSERA_SUCCESS;
+}
+
+TesseraResult Runtime::recreateContext(TesseraContext handle, TesseraContext& out, uint32_t& outFlags) {
+    out = TESSERA_NULL_HANDLE;
+    outFlags = 0;
+    auto object = contexts_.get(handle);
+    if (!object) return fail(TESSERA_ERROR_INVALID_HANDLE, "not a live context handle");
+
+    TesseraContextConfig config = object->request;
+    config.shareWith = TESSERA_NULL_HANDLE;
+
+    // Find a surviving member of the old share group to join, so the group's objects are still there.
+    TesseraHandle survivor = TESSERA_NULL_HANDLE;
+    {
+        std::vector<TesseraHandle> members;
+        {
+            std::lock_guard<std::mutex> lock(groupsMutex_);
+            const auto it = groups_.find(object->shareGroup);
+            if (it != groups_.end()) members.assign(it->second.begin(), it->second.end());
+        }
+        for (TesseraHandle member : members) {
+            if (member == handle) continue;
+            const auto other = contexts_.get(member);
+            if (other && !other->lost.load()) {
+                survivor = member;
+                break;
+            }
+        }
+    }
+    config.shareWith = survivor;
+
+    if (TesseraResult r = createContext(config, out); r != TESSERA_SUCCESS) return r;
+    if (survivor != TESSERA_NULL_HANDLE) outFlags |= TESSERA_RECREATE_SHARE_PRESERVED;
+    return TESSERA_SUCCESS;
 }
 
 } // namespace tessera

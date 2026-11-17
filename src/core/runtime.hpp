@@ -2,8 +2,11 @@
 
 #include <tessera/tessera.h>
 
+#include <atomic>
+#include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <vector>
 
 #include "backend.hpp"
@@ -35,6 +38,8 @@ class Runtime {
     TesseraResult swapBuffers(TesseraContext handle);
     TesseraResult setSwapInterval(TesseraContext handle, int32_t interval);
     void* getProcAddress(const char* name);
+    TesseraResult getResetStatus(TesseraContext handle, int32_t& outStatus);
+    TesseraResult recreateContext(TesseraContext handle, TesseraContext& out, uint32_t& outFlags);
 
     /* Called from a thread_local destructor on an exiting thread; see ThreadExitGuard. */
     void releaseAtThreadExit(TesseraContext handle, const std::shared_ptr<ThreadToken>& thread) noexcept;
@@ -44,9 +49,20 @@ class Runtime {
 
     int refCount() const;
     std::size_t liveContexts() const { return contexts_.size(); }
+    /* Contexts destroyed while current on another thread, whose native teardown is still waiting for that thread. */
+    std::size_t pendingDestructions() const;
 
   private:
     Runtime() : contexts_(kContextTag, kMaxContexts) {}
+
+    // A destroyed context may still be current on another thread. Its handle is dead for everyone, but the object
+    // is kept here until the owning thread releases it (only that thread can), then dropped on that thread.
+    std::shared_ptr<ContextObject> lookupAny(TesseraContext handle);
+    std::shared_ptr<ContextObject> takeZombie(TesseraContext handle);
+
+    void joinGroup(uint64_t group, TesseraHandle handle);
+    void leaveGroup(uint64_t group, TesseraHandle handle);
+    void markLost(ContextObject& object, int32_t status);
 
     static constexpr uint8_t kContextTag = 0x43; // 'C'
     static constexpr uint32_t kMaxContexts = 1u << 20;
@@ -55,6 +71,15 @@ class Runtime {
     int refCount_ = 0;
     std::vector<std::shared_ptr<Backend>> backends_; // guarded by lifecycle_
     HandleTable<ContextObject> contexts_;
+
+    std::mutex groupsMutex_; // never held while calling into contexts_ other than get()
+    std::map<uint64_t, std::set<TesseraHandle>> groups_;
+    uint64_t nextGroup_ = 1;
+
+    mutable std::mutex zombiesMutex_;
+    std::map<TesseraHandle, std::shared_ptr<ContextObject>> zombies_;
+
+    std::atomic<std::size_t> warnAt_{64}; // next live-context count at which to warn
 };
 
 /* Implemented in src/platform/builtin.cpp: registers whichever backends this build contains. */

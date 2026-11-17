@@ -9,6 +9,7 @@
 
 #include "glx_api.hpp"
 #include "platform/common/arb_context.hpp"
+#include "platform/common/gl_debug.hpp"
 #include "platform/common/gl_query.hpp"
 #include "core/boundary.hpp"
 #include "core/log.hpp"
@@ -165,6 +166,11 @@ class GlxContext final : public ContextObject {
         return fail(TESSERA_ERROR_UNSUPPORTED, "no GLX swap-control extension is available");
     }
 
+    TesseraResult queryResetStatus(int32_t& out) noexcept override {
+        return queryResetStatusFrom(resetFn, info.flags, out);
+    }
+
+    GlResetStatusFn resetFn = nullptr;
     std::shared_ptr<GlxShared> shared_;
     GLXFBConfig fbconfig = nullptr;
     Window window = 0;
@@ -357,6 +363,11 @@ class GlxBackend final : public Backend {
         // Strict mode promises exactly what was asked for: verify the parts the driver may have loosened.
         if (c.fallback == TESSERA_FALLBACK_STRICT && !contextSatisfies(c, ctx->info))
             return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, "the created context does not satisfy the strict request");
+
+        // Reset polling and debug-message forwarding are bound to the context that is current right now.
+        const auto glProc = [&](const char* n) -> void* { return sh->proc(n); };
+        ctx->resetFn = resolveResetStatus(glProc);
+        if (ctx->info.flags & TESSERA_FLAG_DEBUG) installGlDebugForwarder(glProc);
 
         out = std::move(ctx);
         return TESSERA_SUCCESS;

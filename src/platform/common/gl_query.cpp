@@ -1,6 +1,8 @@
 #include "gl_query.hpp"
 
 #include <cstring>
+
+#include "core/boundary.hpp"
 #include <mutex>
 
 namespace tessera {
@@ -12,7 +14,7 @@ constexpr int kLoseContextOnReset = 0x8252;
 constexpr unsigned kGlContextReleaseBehavior = 0x82FB;
 constexpr int kGlReleaseBehaviorFlush = 0x82FC;
 
-bool parseVersion(const char* text, bool& isEs, int& major, int& minor) {
+bool parseVersionImpl(const char* text, bool& isEs, int& major, int& minor) {
     if (!text) return false;
     isEs = std::strncmp(text, "OpenGL ES", 9) == 0;
     const char* p = text;
@@ -22,10 +24,16 @@ bool parseVersion(const char* text, bool& isEs, int& major, int& minor) {
         while (*p == ' ') ++p;
     }
     // "<major>.<minor>..." - parsed by hand (locale-independent, no CRT scanf).
+    // At most four digits per component: no real version has more, and an unbounded accumulator would overflow
+    // (signed overflow is undefined behaviour) on a driver that returns something absurd.
     auto number = [&p](int& out) {
         if (*p < '0' || *p > '9') return false;
         int v = 0;
-        for (; *p >= '0' && *p <= '9'; ++p) v = v * 10 + (*p - '0');
+        int digits = 0;
+        for (; *p >= '0' && *p <= '9'; ++p) {
+            if (++digits > 4) return false;
+            v = v * 10 + (*p - '0');
+        }
         out = v;
         return true;
     };
@@ -35,6 +43,10 @@ bool parseVersion(const char* text, bool& isEs, int& major, int& minor) {
 }
 
 } // namespace
+
+bool parseGlVersion(const char* text, bool& isEs, int& major, int& minor) noexcept {
+    return parseVersionImpl(text, isEs, major, minor);
+}
 
 void copyString(char* dst, std::size_t cap, const char* src) noexcept {
     std::size_t i = 0;
@@ -65,7 +77,7 @@ bool queryContextInfo(const GlQueryFns& gl, TesseraContextInfo& info) {
 
     bool isEs = false;
     int major = 0, minor = 0;
-    if (!parseVersion(versionText, isEs, major, minor)) return false;
+    if (!parseGlVersion(versionText, isEs, major, minor)) return false;
     info.api = isEs ? TESSERA_API_OPENGL_ES : TESSERA_API_OPENGL;
     info.versionMajor = major;
     info.versionMinor = minor;
@@ -108,6 +120,30 @@ bool queryContextInfo(const GlQueryFns& gl, TesseraContextInfo& info) {
     return true;
 }
 
+GlResetStatusFn resolveResetStatus(const std::function<void*(const char*)>& getProc) {
+    for (const char* name : {"glGetGraphicsResetStatus", "glGetGraphicsResetStatusKHR", "glGetGraphicsResetStatusARB",
+                             "glGetGraphicsResetStatusEXT"}) {
+        if (void* p = getProc(name)) return reinterpret_cast<GlResetStatusFn>(p);
+    }
+    return nullptr;
+}
+
+TesseraResult queryResetStatusFrom(GlResetStatusFn fn, uint32_t grantedFlags, int32_t& out) {
+    out = TESSERA_RESET_NONE;
+    constexpr uint32_t kNeeded = TESSERA_FLAG_ROBUST_ACCESS | TESSERA_FLAG_RESET_NOTIFICATION;
+    if ((grantedFlags & kNeeded) != kNeeded)
+        return fail(TESSERA_ERROR_UNSUPPORTED,
+                    "the context was not created with TESSERA_FLAG_ROBUST_ACCESS | TESSERA_FLAG_RESET_NOTIFICATION");
+    if (!fn) return fail(TESSERA_ERROR_UNSUPPORTED, "glGetGraphicsResetStatus is not available");
+    switch (fn()) {
+    case 0: out = TESSERA_RESET_NONE; break;           // GL_NO_ERROR
+    case 0x8253: out = TESSERA_RESET_GUILTY; break;    // GL_GUILTY_CONTEXT_RESET
+    case 0x8254: out = TESSERA_RESET_INNOCENT; break;  // GL_INNOCENT_CONTEXT_RESET
+    default: out = TESSERA_RESET_UNKNOWN; break;       // GL_UNKNOWN_CONTEXT_RESET, or anything unexpected
+    }
+    return TESSERA_SUCCESS;
+}
+
 bool contextSatisfies(const TesseraContextConfig& c, const TesseraContextInfo& i) noexcept {
     const bool versionOk = c.versionMajor == 0 || i.versionMajor > c.versionMajor ||
                            (i.versionMajor == c.versionMajor && i.versionMinor >= c.versionMinor);
@@ -115,10 +151,14 @@ bool contextSatisfies(const TesseraContextConfig& c, const TesseraContextInfo& i
     const bool profileOk = c.profile == TESSERA_PROFILE_ANY || i.profile == c.profile;
     const bool samplesOk = i.samples >= c.samples;
     const uint32_t checked = TESSERA_FLAG_DEBUG | TESSERA_FLAG_FORWARD_COMPATIBLE | TESSERA_FLAG_ROBUST_ACCESS |
-                             TESSERA_FLAG_NO_ERROR | TESSERA_FLAG_SRGB | TESSERA_FLAG_FLOAT_COLOR |
-                             TESSERA_FLAG_DOUBLE_BUFFER | TESSERA_FLAG_STEREO;
+                             TESSERA_FLAG_RESET_NOTIFICATION | TESSERA_FLAG_NO_ERROR | TESSERA_FLAG_SRGB |
+                             TESSERA_FLAG_FLOAT_COLOR | TESSERA_FLAG_DOUBLE_BUFFER | TESSERA_FLAG_STEREO |
+                             TESSERA_FLAG_RELEASE_FLUSH;
     const uint32_t missing = c.flags & ~i.flags & checked;
-    return versionOk && apiOk && profileOk && samplesOk && missing == 0;
+    // Requested sizes are minimums ("0 = don't care"), exactly as the pixel-format APIs treat them.
+    const bool sizesOk = i.redBits >= c.redBits && i.greenBits >= c.greenBits && i.blueBits >= c.blueBits &&
+                         i.alphaBits >= c.alphaBits && i.depthBits >= c.depthBits && i.stencilBits >= c.stencilBits;
+    return versionOk && apiOk && profileOk && samplesOk && sizesOk && missing == 0;
 }
 
 } // namespace tessera

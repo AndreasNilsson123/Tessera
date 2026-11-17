@@ -61,8 +61,14 @@ void CglForeignOps::restore(const State& s) noexcept {
     const CglApi* api = cglApi();
     if (!api) return;
     if (api->fn.CGLGetCurrentContext() == s.ctx) return; // already as found
-    const CGLError e = api->fn.CGLSetCurrentContext(s.ctx);
-    if (e != kNoError) logf(TESSERA_LOG_WARN, "could not restore the previous CGL context (error %d)", static_cast<int>(e));
+    CGLError e = api->fn.CGLSetCurrentContext(s.ctx);
+    if (e != kNoError) e = api->fn.CGLSetCurrentContext(s.ctx); // one retry: the failure may be transient
+    if (e != kNoError) {
+        // The caller's context cannot be put back (e.g. it was destroyed meanwhile). Whatever happens, one of OUR
+        // contexts must not be left current on a thread that never asked for it.
+        logf(TESSERA_LOG_WARN, "could not restore the previous CGL context (error %d); leaving the thread without one", static_cast<int>(e));
+        api->fn.CGLSetCurrentContext(nullptr);
+    }
 }
 
 } // namespace tessera::cgl

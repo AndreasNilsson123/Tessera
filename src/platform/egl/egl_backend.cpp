@@ -14,6 +14,7 @@
 #include "core/log.hpp"
 #include "egl_api.hpp"
 #include "platform/common/arb_context.hpp"
+#include "platform/common/gl_debug.hpp"
 #include "platform/common/gl_query.hpp"
 
 namespace tessera::egl {
@@ -176,8 +177,11 @@ class EglContext final : public ContextObject {
         // eglMakeCurrent needs no bound API, but leaving ours bound would change what the host's own
         // eglGetCurrentContext() calls report, so the previous binding is put back.
         ScopedBindApi bind(*shared_->api, apiEnum);
-        if (!f.eglMakeCurrent(shared_->dpy, surface, surface, ctx))
-            return fail(TESSERA_ERROR_PLATFORM, eglErrorText("eglMakeCurrent failed", f.eglGetError()));
+        if (!f.eglMakeCurrent(shared_->dpy, surface, surface, ctx)) {
+            const EGLint err = f.eglGetError();
+            return fail(err == kContextLost ? TESSERA_ERROR_CONTEXT_LOST : TESSERA_ERROR_PLATFORM,
+                        eglErrorText("eglMakeCurrent failed", err));
+        }
         return TESSERA_SUCCESS;
     }
 
@@ -195,6 +199,11 @@ class EglContext final : public ContextObject {
         return fail(TESSERA_ERROR_UNSUPPORTED, "swap interval does not apply to EGL pbuffer/surfaceless drawables");
     }
 
+    TesseraResult queryResetStatus(int32_t& out) noexcept override {
+        return queryResetStatusFrom(resetFn, info.flags, out);
+    }
+
+    GlResetStatusFn resetFn = nullptr;
     std::shared_ptr<EglShared> shared_;
     EGLenum apiEnum = kOpenGlApi;
     EGLConfig config = nullptr;
@@ -496,6 +505,11 @@ class EglBackend final : public Backend {
         // Strict mode promises exactly what was asked for: verify the parts the driver may have loosened.
         if (c.fallback == TESSERA_FALLBACK_STRICT && !contextSatisfies(c, ctx->info))
             return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, "the created context does not satisfy the strict request");
+
+        // Reset polling and debug-message forwarding are bound to the context that is current right now.
+        const auto glProc = [&](const char* n) -> void* { return sh->api->fn.eglGetProcAddress(n); };
+        ctx->resetFn = resolveResetStatus(glProc);
+        if (ctx->info.flags & TESSERA_FLAG_DEBUG) installGlDebugForwarder(glProc);
 
         out = std::move(ctx);
         return TESSERA_SUCCESS;

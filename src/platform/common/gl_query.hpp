@@ -3,6 +3,7 @@
 #include <tessera/tessera.h>
 
 #include <cstddef>
+#include <functional>
 
 #if defined(_WIN32)
 #define TESSERA_GLCALL __stdcall
@@ -31,6 +32,22 @@ void copyString(char* dst, std::size_t cap, const char* src) noexcept;
  * Returns false if the driver gave no usable version string.
  */
 bool queryContextInfo(const GlQueryFns& gl, TesseraContextInfo& info);
+
+/*
+ * Parses a GL_VERSION string ("4.6.0 NVIDIA 546.30", "OpenGL ES 3.2 Mesa ...", "OpenGL ES-CM 1.1"). False for anything
+ * malformed; must never overflow or read past the terminator, whatever a broken driver returns.
+ */
+bool parseGlVersion(const char* text, bool& isEs, int& major, int& minor) noexcept;
+
+/* glGetGraphicsResetStatus (core, KHR, ARB or EXT spelling), resolved through the backend's loader; null if absent. */
+using GlResetStatusFn = unsigned(TESSERA_GLCALL*)();
+GlResetStatusFn resolveResetStatus(const std::function<void*(const char*)>& getProc);
+
+/*
+ * Shared body of ContextObject::queryResetStatus. `grantedFlags` is what the context actually got (info.flags): without
+ * both robust access and reset notification the driver gives no meaningful answer, so this reports UNSUPPORTED.
+ */
+TesseraResult queryResetStatusFrom(GlResetStatusFn fn, uint32_t grantedFlags, int32_t& out);
 
 /* Strict-mode check: does `info` (including its pixel-format fields) honour everything in `requested`? */
 bool contextSatisfies(const TesseraContextConfig& requested, const TesseraContextInfo& info) noexcept;

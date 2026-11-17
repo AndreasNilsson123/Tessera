@@ -77,6 +77,11 @@ if(UNIX)
     target_link_libraries(test_cgl_fake PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
     tessera_apply_options(test_cgl_fake)
     add_test(NAME cgl_fake COMMAND test_cgl_fake)
+    # The library is missing / is not OpenGL.framework: a clean UNSUPPORTED (each needs its own process: the framework
+    # is loaded once per process).
+    add_test(NAME cgl_missing_library COMMAND test_cgl_fake --missing-library)
+    add_test(NAME cgl_wrong_library COMMAND test_cgl_fake --wrong-library)
+    set_tests_properties(cgl_missing_library cgl_wrong_library PROPERTIES TIMEOUT 60)
     set_tests_properties(cgl_fake PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
 endif()
 

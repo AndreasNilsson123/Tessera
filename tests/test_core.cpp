@@ -7,17 +7,20 @@
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include "core/backend.hpp"
+#include "core/boundary.hpp"
 #include "core/config.hpp"
 #include "core/foreign_state.hpp"
 #include "core/handle_table.hpp"
 #include "core/library.hpp"
 #include "core/runtime.hpp"
+#include "platform/common/gl_query.hpp"
 #include "core/thread_affinity.hpp"
 
 static int g_failures = 0;
@@ -30,6 +33,16 @@ static int g_failures = 0;
     } while (0)
 
 using namespace tessera;
+
+#define EXPECT(call, want)                                                                               \
+    do {                                                                                                 \
+        const TesseraResult got_ = (call);                                                               \
+        if (got_ != (want)) {                                                                            \
+            std::fprintf(stderr, "%s:%d: %s -> %s, expected %s (%s)\n", __FILE__, __LINE__, #call,       \
+                         tesseraResultString(got_), tesseraResultString(want), tesseraGetLastErrorMessage()); \
+            ++g_failures;                                                                                \
+        }                                                                                                \
+    } while (0)
 
 static_assert(sizeof(TesseraContextInfo) == 504, "TesseraContextInfo layout");
 
@@ -465,14 +478,363 @@ static void testAffinity() {
     CHECK(tesseraTerminate() == TESSERA_SUCCESS);
 }
 
+// Whatever a broken driver returns from glGetString(GL_VERSION) must be rejected or parsed, never overflow.
+static void testGlVersionParsing() {
+    struct Case { const char* text; bool ok; bool es; int major, minor; };
+    const Case cases[] = {
+        {"4.6.0 NVIDIA 546.30", true, false, 4, 6},
+        {"2.1 Metal - 83.1", true, false, 2, 1},
+        {"4.2 (Compatibility Profile) Mesa 23.2.1", true, false, 4, 2},
+        {"OpenGL ES 3.2 Mesa 23.2.1", true, true, 3, 2},
+        {"OpenGL ES-CM 1.1 Fake", true, true, 1, 1},
+        {"1.0", true, false, 1, 0},
+        {"10.20", true, false, 10, 20},
+        {"", false, false, 0, 0},
+        {"garbage", false, false, 0, 0},
+        {"OpenGL ES", false, true, 0, 0},
+        {"4.", false, false, 0, 0},
+        {".6", false, false, 0, 0},
+        {"4,6", false, false, 0, 0},
+        {" 4.5", false, false, 0, 0},
+        {"-4.5", false, false, 0, 0},
+        {"99999999999999999999.1", false, false, 0, 0}, // would overflow an int accumulator
+        {"4.99999999999999999999", false, false, 0, 0},
+        {"2147483648.0", false, false, 0, 0},
+        {"OpenGL ES 99999999999.1", false, true, 0, 0},
+    };
+    for (const Case& c : cases) {
+        bool es = false;
+        int major = -1, minor = -1;
+        const bool ok = parseGlVersion(c.text, es, major, minor);
+        if (ok != c.ok) {
+            std::fprintf(stderr, "parseGlVersion(\"%s\") -> %d, expected %d\n", c.text, ok, c.ok);
+            ++g_failures;
+        } else if (ok && (es != c.es || major != c.major || minor != c.minor)) {
+            std::fprintf(stderr, "parseGlVersion(\"%s\") -> es=%d %d.%d, expected es=%d %d.%d\n", c.text, es, major, minor,
+                         c.es, c.major, c.minor);
+            ++g_failures;
+        }
+    }
+    bool es = false;
+    int major = 0, minor = 0;
+    CHECK(!parseGlVersion(nullptr, es, major, minor));
+}
+
+// ---- a fake backend whose contexts can be bound, reset and lost on command ----------------------------------
+
+static std::atomic<int> g_liveRobust{0};
+static std::atomic<int> g_resetToReport{0};
+static std::atomic<bool> g_bindReportsLost{false};
+static std::mutex g_destroyMutex;
+static std::thread::id g_lastDestroyThread;
+
+class RobustFakeContext : public ContextObject {
+  public:
+    explicit RobustFakeContext(const TesseraContextConfig& c) : cfg(c) { ++g_liveRobust; }
+    ~RobustFakeContext() override {
+        {
+            std::lock_guard<std::mutex> lock(g_destroyMutex);
+            g_lastDestroyThread = std::this_thread::get_id(); // which thread performed the "native" teardown
+        }
+        --g_liveRobust;
+    }
+    TesseraResult describe(TesseraContextInfo& out) const noexcept override {
+        out.api = cfg.api;
+        out.versionMajor = cfg.versionMajor;
+        out.samples = cfg.samples;
+        out.flags = TESSERA_FLAG_ROBUST_ACCESS | TESSERA_FLAG_RESET_NOTIFICATION;
+        return TESSERA_SUCCESS;
+    }
+    TesseraResult bindCurrent() noexcept override {
+        if (g_bindReportsLost) return fail(TESSERA_ERROR_CONTEXT_LOST, "device lost");
+        bound = true;
+        return TESSERA_SUCCESS;
+    }
+    void unbindCurrent() noexcept override { bound = false; }
+    TesseraResult swapBuffers() noexcept override { return TESSERA_SUCCESS; }
+    TesseraResult setSwapInterval(int32_t) noexcept override { return TESSERA_SUCCESS; }
+    TesseraResult queryResetStatus(int32_t& out) noexcept override {
+        out = g_resetToReport;
+        return TESSERA_SUCCESS;
+    }
+    TesseraContextConfig cfg;
+    bool bound = false;
+};
+
+class RobustFakeBackend : public Backend {
+  public:
+    const char* name() const noexcept override { return "robust-fake"; }
+    TesseraResult createContext(const TesseraContextConfig& c, const std::shared_ptr<ContextObject>&,
+                                std::shared_ptr<ContextObject>& out) override {
+        out = std::make_shared<RobustFakeContext>(c);
+        return TESSERA_SUCCESS;
+    }
+};
+
+static TesseraContext makeRobust(TesseraContextConfig cfg, TesseraContext shareWith = 0) {
+    cfg.shareWith = shareWith;
+    TesseraContext ctx = 0;
+    EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_SUCCESS);
+    return ctx;
+}
+
+// Drives the context into the lost state the way an application would: poll while the "driver" reports a reset.
+static void loseContext(TesseraContext ctx, int32_t status) {
+    EXPECT(tesseraMakeCurrent(ctx), TESSERA_SUCCESS);
+    g_resetToReport = status;
+    int32_t got = 99;
+    EXPECT(tesseraGetResetStatus(ctx, &got), TESSERA_SUCCESS);
+    CHECK(got == status);
+    g_resetToReport = TESSERA_RESET_NONE; // the driver is quiet again; the context must stay lost regardless
+    EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS);
+}
+
+static void testResetAndLoss() {
+    TesseraContextConfig cfg = tesseraDefaultContextConfig();
+    cfg.api = TESSERA_API_OPENGL;
+    TesseraContext ctx = makeRobust(cfg);
+    int32_t status = 99;
+
+    EXPECT(tesseraGetResetStatus(ctx, &status), TESSERA_ERROR_WRONG_THREAD); // not current anywhere
+    EXPECT(tesseraGetResetStatus(ctx, nullptr), TESSERA_ERROR_INVALID_ARGUMENT);
+    EXPECT(tesseraMakeCurrent(ctx), TESSERA_SUCCESS);
+    g_resetToReport = TESSERA_RESET_NONE;
+    EXPECT(tesseraGetResetStatus(ctx, &status), TESSERA_SUCCESS);
+    CHECK(status == TESSERA_RESET_NONE);
+    EXPECT(tesseraSwapBuffers(ctx), TESSERA_SUCCESS); // healthy
+
+    g_resetToReport = TESSERA_RESET_GUILTY;
+    EXPECT(tesseraGetResetStatus(ctx, &status), TESSERA_SUCCESS);
+    CHECK(status == TESSERA_RESET_GUILTY);
+    g_resetToReport = TESSERA_RESET_NONE; // the loss is permanent: asking again must not "heal" it
+    status = 99;
+    EXPECT(tesseraGetResetStatus(ctx, &status), TESSERA_SUCCESS);
+    CHECK(status == TESSERA_RESET_GUILTY);
+    EXPECT(tesseraSwapBuffers(ctx), TESSERA_ERROR_CONTEXT_LOST);
+    EXPECT(tesseraSetSwapInterval(ctx, 1), TESSERA_ERROR_CONTEXT_LOST);
+    EXPECT(tesseraMakeCurrent(ctx), TESSERA_ERROR_CONTEXT_LOST);
+    EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS); // letting go of a lost context always works
+    EXPECT(tesseraMakeCurrent(ctx), TESSERA_ERROR_CONTEXT_LOST);
+    EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
+
+    // A loss the backend discovers natively (e.g. EGL_CONTEXT_LOST at make-current) marks the context the same way.
+    TesseraContext native = makeRobust(cfg);
+    g_bindReportsLost = true;
+    EXPECT(tesseraMakeCurrent(native), TESSERA_ERROR_CONTEXT_LOST);
+    g_bindReportsLost = false;
+    EXPECT(tesseraMakeCurrent(native), TESSERA_ERROR_CONTEXT_LOST); // stays lost
+    CHECK(tesseraGetCurrentContext() == TESSERA_NULL_HANDLE);
+    EXPECT(tesseraDestroyContext(native), TESSERA_SUCCESS);
+
+    // Each reset status is passed through unchanged.
+    for (int32_t s : {TESSERA_RESET_INNOCENT, TESSERA_RESET_UNKNOWN}) {
+        TesseraContext c = makeRobust(cfg);
+        loseContext(c, s);
+        EXPECT(tesseraDestroyContext(c), TESSERA_SUCCESS);
+    }
+    CHECK(g_liveRobust == 0);
+}
+
+static void testRecreateAndShareGroups() {
+    TesseraContextConfig cfg = tesseraDefaultContextConfig();
+    cfg.api = TESSERA_API_OPENGL;
+    cfg.versionMajor = 3;
+    cfg.samples = 4;
+    cfg.fallback = TESSERA_FALLBACK_BEST_EFFORT;
+
+    TesseraContext a = makeRobust(cfg);
+    TesseraContext b = makeRobust(cfg, a);
+    TesseraContext c = makeRobust(cfg, a);
+    uint32_t flags = 99;
+    TesseraContext n1 = 0;
+
+    // The old share group has survivors: the new context joins it, with the same request as the lost one.
+    loseContext(a, TESSERA_RESET_GUILTY);
+    EXPECT(tesseraRecreateContext(a, &n1, &flags), TESSERA_SUCCESS);
+    CHECK(flags & TESSERA_RECREATE_SHARE_PRESERVED);
+    TesseraContextInfo info = tesseraDefaultContextInfo();
+    EXPECT(tesseraGetContextInfo(n1, &info), TESSERA_SUCCESS);
+    CHECK(info.versionMajor == 3 && info.samples == 4);
+    EXPECT(tesseraMakeCurrent(n1), TESSERA_SUCCESS);
+    EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS);
+
+    // Sharing with a lost context is refused: the caller must pick a survivor.
+    TesseraContextConfig sharing = cfg;
+    sharing.shareWith = a;
+    TesseraContext refused = 0;
+    EXPECT(tesseraCreateContext(&sharing, &refused), TESSERA_ERROR_CONTEXT_LOST);
+    CHECK(refused == TESSERA_NULL_HANDLE);
+
+    // Lose one more; the group still has c and n1.
+    loseContext(b, TESSERA_RESET_INNOCENT);
+    TesseraContext n2 = 0;
+    EXPECT(tesseraRecreateContext(b, &n2, &flags), TESSERA_SUCCESS);
+    CHECK(flags & TESSERA_RECREATE_SHARE_PRESERVED);
+
+    // Every member lost: nothing to join, so the new context starts a fresh group and says so.
+    loseContext(c, TESSERA_RESET_UNKNOWN);
+    loseContext(n1, TESSERA_RESET_UNKNOWN);
+    loseContext(n2, TESSERA_RESET_UNKNOWN);
+    TesseraContext n3 = 0;
+    flags = 99;
+    EXPECT(tesseraRecreateContext(a, &n3, &flags), TESSERA_SUCCESS);
+    CHECK(flags == 0);
+    EXPECT(tesseraMakeCurrent(n3), TESSERA_SUCCESS); // and it is healthy
+    EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS);
+
+    // Destroying members shrinks the group; a context that never shared has no group to preserve.
+    EXPECT(tesseraDestroyContext(a), TESSERA_SUCCESS);
+    EXPECT(tesseraDestroyContext(b), TESSERA_SUCCESS);
+    EXPECT(tesseraDestroyContext(c), TESSERA_SUCCESS);
+    EXPECT(tesseraDestroyContext(n1), TESSERA_SUCCESS);
+    EXPECT(tesseraDestroyContext(n2), TESSERA_SUCCESS);
+    TesseraContext alone = makeRobust(cfg);
+    loseContext(alone, TESSERA_RESET_GUILTY);
+    TesseraContext n4 = 0;
+    flags = 99;
+    EXPECT(tesseraRecreateContext(alone, &n4, &flags), TESSERA_SUCCESS);
+    CHECK(flags == 0);
+    EXPECT(tesseraDestroyContext(alone), TESSERA_SUCCESS);
+    EXPECT(tesseraDestroyContext(n3), TESSERA_SUCCESS);
+    EXPECT(tesseraDestroyContext(n4), TESSERA_SUCCESS);
+
+    TesseraContext none = 0;
+    EXPECT(tesseraRecreateContext(0xBAD, &none, &flags), TESSERA_ERROR_INVALID_HANDLE);
+    EXPECT(tesseraRecreateContext(a, nullptr, &flags), TESSERA_ERROR_INVALID_ARGUMENT); // `a` is destroyed: still no crash
+    CHECK(g_liveRobust == 0);
+}
+
+static void testDeferredDestruction() {
+    TesseraContextConfig cfg = tesseraDefaultContextConfig();
+    cfg.api = TESSERA_API_OPENGL;
+
+    // Destroyed by one thread while another holds it: the handle dies at once, the teardown happens ON the owner.
+    TesseraContext ctx = makeRobust(cfg);
+    std::atomic<bool> held{false}, destroyed{false};
+    std::thread::id ownerId;
+    std::thread owner([&] {
+        ownerId = std::this_thread::get_id();
+        EXPECT(tesseraMakeCurrent(ctx), TESSERA_SUCCESS);
+        held = true;
+        while (!destroyed.load()) std::this_thread::yield();
+        CHECK(g_liveRobust == 1);                               // still alive: only this thread may release it
+        CHECK(tessera::Runtime::instance().pendingDestructions() == 1);
+        EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS); // the owner lets go: teardown happens here
+        CHECK(g_liveRobust == 0);
+    });
+    while (!held.load()) std::this_thread::yield();
+    EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
+    EXPECT(tesseraMakeCurrent(ctx), TESSERA_ERROR_INVALID_HANDLE);
+    EXPECT(tesseraDestroyContext(ctx), TESSERA_ERROR_INVALID_HANDLE);
+    destroyed = true;
+    owner.join();
+    CHECK(g_liveRobust == 0 && tessera::Runtime::instance().pendingDestructions() == 0);
+    {
+        std::lock_guard<std::mutex> lock(g_destroyMutex);
+        CHECK(g_lastDestroyThread == ownerId);
+    }
+
+    // The owner exits without releasing: its exit hook performs the teardown, on its own thread.
+    TesseraContext leaving = makeRobust(cfg);
+    held = false;
+    destroyed = false;
+    std::thread::id leaverId;
+    std::thread leaver([&] {
+        leaverId = std::this_thread::get_id();
+        EXPECT(tesseraMakeCurrent(leaving), TESSERA_SUCCESS);
+        held = true;
+        while (!destroyed.load()) std::this_thread::yield();
+    });
+    while (!held.load()) std::this_thread::yield();
+    EXPECT(tesseraDestroyContext(leaving), TESSERA_SUCCESS);
+    CHECK(g_liveRobust == 1);
+    destroyed = true;
+    leaver.join();
+    CHECK(g_liveRobust == 0 && tessera::Runtime::instance().pendingDestructions() == 0);
+    {
+        std::lock_guard<std::mutex> lock(g_destroyMutex);
+        CHECK(g_lastDestroyThread == leaverId);
+    }
+
+    // The owner switches to another context: the switch completes the teardown.
+    TesseraContext first = makeRobust(cfg), second = makeRobust(cfg);
+    held = false;
+    destroyed = false;
+    std::thread switcher([&] {
+        EXPECT(tesseraMakeCurrent(first), TESSERA_SUCCESS);
+        held = true;
+        while (!destroyed.load()) std::this_thread::yield();
+        EXPECT(tesseraMakeCurrent(second), TESSERA_SUCCESS);
+        CHECK(g_liveRobust == 1); // `first` is gone, `second` remains
+        EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS);
+    });
+    while (!held.load()) std::this_thread::yield();
+    EXPECT(tesseraDestroyContext(first), TESSERA_SUCCESS);
+    destroyed = true;
+    switcher.join();
+    EXPECT(tesseraDestroyContext(second), TESSERA_SUCCESS);
+    CHECK(g_liveRobust == 0);
+
+    // tesseraTerminate while a destroyed context is still held elsewhere: nothing leaks, nothing crashes.
+    EXPECT(tesseraTerminate(), TESSERA_SUCCESS);
+    EXPECT(tesseraInit(), TESSERA_SUCCESS);
+    tessera::Runtime::instance().registerBackend(std::make_shared<RobustFakeBackend>());
+    TesseraContext heldAtTerminate = makeRobust(cfg);
+    held = false;
+    destroyed = false;
+    std::atomic<bool> terminated{false};
+    std::thread late([&] {
+        EXPECT(tesseraMakeCurrent(heldAtTerminate), TESSERA_SUCCESS);
+        held = true;
+        while (!terminated.load()) std::this_thread::yield();
+        EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS); // the runtime is gone: harmless no-op
+    });
+    while (!held.load()) std::this_thread::yield();
+    EXPECT(tesseraDestroyContext(heldAtTerminate), TESSERA_SUCCESS);
+    EXPECT(tesseraTerminate(), TESSERA_SUCCESS);
+    terminated = true;
+    late.join();
+    CHECK(g_liveRobust == 0);
+    EXPECT(tesseraInit(), TESSERA_SUCCESS);
+    tessera::Runtime::instance().registerBackend(std::make_shared<RobustFakeBackend>());
+}
+
+static void testResourceWarnings() {
+    TesseraContextConfig cfg = tesseraDefaultContextConfig();
+    cfg.api = TESSERA_API_OPENGL;
+    g_logs.clear();
+    tesseraSetLogCallback(logSink, nullptr);
+    std::vector<TesseraContext> all;
+    for (int i = 0; i < 300; ++i) all.push_back(makeRobust(cfg));
+    tesseraSetLogCallback(nullptr, nullptr);
+    int warnings = 0;
+    for (const auto& l : g_logs)
+        if (l.rfind("2:", 0) == 0 && l.find("live contexts") != std::string::npos) ++warnings;
+    CHECK(warnings == 2); // once at 64 and once at 256, not once per context
+    for (TesseraContext ctx : all) EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
+    CHECK(g_liveRobust == 0);
+}
+
+static void testLifecycleRobustness() {
+    CHECK(tesseraInit() == TESSERA_SUCCESS);
+    tessera::Runtime::instance().registerBackend(std::make_shared<RobustFakeBackend>());
+    testResetAndLoss();
+    testRecreateAndShareGroups();
+    testDeferredDestruction();
+    testResourceWarnings();
+    CHECK(tesseraTerminate() == TESSERA_SUCCESS);
+}
+
 int main() {
     Runtime::disableBuiltinBackendsForTesting(); // inject fakes only; real backends have their own tests
     testHandleTable();
+    testGlVersionParsing();
     testConfig();
     testForeignGuard();
     testLibrary();
     testRuntime();
     testAffinity();
+    testLifecycleRobustness();
     if (g_failures == 0) std::puts("test_core: OK");
     return g_failures == 0 ? 0 : 1;
 }

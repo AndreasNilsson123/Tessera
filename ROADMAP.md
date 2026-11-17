@@ -166,16 +166,23 @@ JavaFX on macOS uses Metal (recent) or ES2/NSGL (older); AppKit threading rules 
 
 ## Phase 6 — Context feature completeness & robustness
 
-- [ ] Full attribute matrix tested per backend: version × profile × flags × samples × robustness.
-- [ ] Reset notification: poll wrapper `tesseraGetResetStatus` (`glGetGraphicsResetStatus`), "context lost" event, recreate helper preserving share groups.
-- [ ] Driver-loss/TDR handling (Windows), GPU hot-unplug (Linux), display changes: surfaced as `TESSERA_CONTEXT_LOST`, never a crash.
-- [ ] Share-group management: tracked groups, destruction ordering rules, refcounts so a context in use by another thread is deferred-destroyed, not UB.
-- [ ] Debug output plumbing: `KHR_debug` callback forwarded to the log callback, with callback lifetime safety across context destroy.
-- [ ] Quirks database (`quirks.def`): driver/renderer/version matched workarounds (e.g. Intel core-profile bugs, `wglGetProcAddress` junk values, Mesa software limits), each entry with a regression test or linked issue.
-- [ ] Extension/version string parsing robust to malformed driver output; `GL_NUM_EXTENSIONS` path for core profile.
-- [ ] Resource limits: max contexts per process warnings, handle table growth caps.
+- [~] Attribute matrix, run on **WGL (NVIDIA), GLX (Mesa) and EGL (Mesa)**: 192 combinations each of API x profile x version x flags, with samples, depth/stencil, fallback policy and surface rotated through them (not the full cross-product). An oracle independent of the library checks that every returned context honours the request (hard attributes always, flags/sizes in strict mode), that created contexts are usable, that failures return no handle, that no result is `PLATFORM`/`UNKNOWN`, and that the host's context is undisturbed by every create. Results: WGL 140 ok / 42 refused / 10 invalid; GLX 67 / 115 / 10; EGL 97 / 85 / 10; zero problems. **Not covered: CGL** (only the fake-driver cases), and robustness/no-error flags are only exercised where a driver grants them.
+- [~] Reset notification: `tesseraGetResetStatus`, permanent *lost* state (`CONTEXT_LOST` from make-current/swap/swap-interval), `tesseraRecreateContext` with share-group preservation (ADR 0008). Polling returns `NONE` on real drivers (NVIDIA on WGL, Mesa on EGL; GLX Mesa grants no robustness). **`GUILTY`/`INNOCENT`/`UNKNOWN`, the sticky lost state and group-aware recreate are tested only against a fake backend; no real GPU reset has ever been triggered here.**
+- [~] Driver loss / TDR / hot-unplug: only EGL's native `EGL_CONTEXT_LOST` is mapped (to `CONTEXT_LOST`, untested on real hardware). WGL and GLX have no reliable native signal, so loss is detected by polling on robust contexts only. Display changes: nothing done.
+- [x] Share-group management: groups are tracked; destruction ordering holds (children keep their parent alive); a context destroyed while current on another thread is **deferred-destroyed on that thread** (release, switch or exit), tested with the teardown thread asserted and a race-closing re-check; `tesseraTerminate` drains pending destructions. **API change:** `tesseraDestroyContext` no longer returns `WRONG_THREAD` in that case.
+- [x] Debug output plumbing: a granted debug context forwards `KHR_debug` messages (severity mapped to log level) to the log callback, synchronously, through a stateless function so nothing outlives the context. Tested: a provoked `GL_INVALID_ENUM` arrives in the log on NVIDIA (WGL) and Mesa (GLX, EGL). Not covered: an application replacing the callback (it simply wins), library unload while a foreign party still holds the context.
+- [ ] Quirks database: **deliberately not started.** There is no known, reproducible quirk to put in it (the roadmap's examples are either handled generically already - junk `wglGetProcAddress` values, software-rasteriser limits via negotiation - or unverifiable here, e.g. Intel core-profile bugs). Machinery with no entries invites untestable ones; add it with the first real, regression-tested quirk.
+- [~] Malformed driver output: **found and fixed undefined behaviour** in the GL version parser (signed overflow on absurd digit strings, which it then accepted as valid; reproduced with UBSan before the fix, table-tested after). Platform extension lists are parsed from NUL-terminated strings with bounds-safe splitting. `GL_NUM_EXTENSIONS`: not applicable, Tessera reads platform extension strings, never GL's.
+- [~] Resource limits: a warning at 64, 256, 1024, ... live contexts (tested: once per threshold). No refusal on Windows' ~10,000 GDI/USER handle limit beyond the OS's own error; the handle table's hard cap is 2^20.
+- [x] (Found by the matrix) Forward-compatible with an explicit version below 3.0 is now rejected as `INVALID_ARGUMENT`, and drivers' other "invalid request" answers (NVIDIA: `ERROR_INVALID_DATA`) map to `NO_MATCHING_CONFIG` instead of leaking out as `PLATFORM`.
+- [x] (Found by the fault sweep) A failing restore of the host's context could leave a Tessera context current on the caller's thread; CGL/GLX/EGL now release it (CGL retries once first), as WGL already did.
+- [x] (Strictness) `contextSatisfies` also verifies reset notification, release behaviour and colour/depth/stencil minimums.
 
-**Exit:** fault-injection tests (fake loader returning NULLs, failing mid-creation) leave no leaks and restore foreign state every time.
+**Status notes (Phase 6):**
+- New tests: `test_core` (lifecycle with a controllable fake backend; a **mutation check** confirmed the deferred-destruction tests fail when the fix is removed), the shared `robustness_common.hpp` suite in `test_wgl`/`test_glx`/`test_egl`, and in `test_cgl_fake` a fault-injection sweep plus missing/wrong-library runs. ASan/UBSan and TSan clean on everything that runs without a GPU.
+- Public API (0.4.0): `tesseraGetResetStatus`, `tesseraRecreateContext`, `TESSERA_RESET_*`, `TESSERA_RECREATE_SHARE_PRESERVED`; the destroy-while-current-elsewhere contract changed.
+
+**Exit:** fault-injection tests (fake loader returning NULLs, failing mid-creation) leave no leaks and restore foreign state every time. **Met for CGL only**: every native call position of five create scenarios was failed in turn (leaks, handles, error codes and the host's context checked), and a missing / non-OpenGL library gives a clean `UNSUPPORTED`. WGL, GLX and EGL talk to real drivers, so their failure paths are covered by the matrix and the earlier tests but have **not** been fault-injected.
 
 ## Phase 7 — Java / LWJGL integration
 

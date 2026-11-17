@@ -44,6 +44,8 @@ static CglFns g_cgl;
 static int (*g_liveContexts)() = nullptr;
 static int (*g_livePixelFormats)() = nullptr;
 static int (*g_chooseCalls)() = nullptr;
+static void (*g_setFailAt)(int) = nullptr;
+static int (*g_fakeCalls)() = nullptr;
 
 template <class Fn> static bool bind(void* lib, const char* name, Fn& out) {
     out = reinterpret_cast<Fn>(dlsym(lib, name));
@@ -61,7 +63,8 @@ static bool loadFake() {
            bind(lib, "CGLCreateContext", g_cgl.CGLCreateContext) && bind(lib, "CGLDestroyContext", g_cgl.CGLDestroyContext) &&
            bind(lib, "CGLSetCurrentContext", g_cgl.CGLSetCurrentContext) &&
            bind(lib, "CGLGetCurrentContext", g_cgl.CGLGetCurrentContext) && bind(lib, "fake_cgl_live_contexts", g_liveContexts) &&
-           bind(lib, "fake_cgl_live_pixel_formats", g_livePixelFormats) && bind(lib, "fake_cgl_choose_calls", g_chooseCalls);
+           bind(lib, "fake_cgl_live_pixel_formats", g_livePixelFormats) && bind(lib, "fake_cgl_choose_calls", g_chooseCalls) &&
+           bind(lib, "fake_cgl_set_fail_at", g_setFailAt) && bind(lib, "fake_cgl_calls", g_fakeCalls);
 }
 
 static TesseraContextConfig baseConfig() {
@@ -453,7 +456,132 @@ static void testTerminateDestroysLeaks() {
     noLeaks(__LINE__);
 }
 
-int main() {
+// Fails every native call position of a create in turn. After each injected fault: no leaked contexts or pixel
+// formats, the other library's context still current, a sensible error code, and no handle returned on failure.
+static void testFaultInjection() {
+    // The "other library": a raw legacy context current on this thread throughout.
+    const int32_t rawAttribs[] = {99, 0x1000, 0};
+    CGLPixelFormatObj pf = nullptr;
+    int32_t n = 0;
+    CHECK(g_cgl.CGLChoosePixelFormat(rawAttribs, &pf, &n) == 0 && pf);
+    CGLContextObj foreign = nullptr;
+    CHECK(g_cgl.CGLCreateContext(pf, nullptr, &foreign) == 0 && foreign);
+    g_cgl.CGLReleasePixelFormat(pf);
+    g_cgl.CGLSetCurrentContext(foreign);
+
+    struct Scenario {
+        const char* name;
+        TesseraContextConfig cfg;
+        bool withParent;
+    };
+    TesseraContextConfig legacy = baseConfig();
+    TesseraContextConfig core = coreConfig();
+    TesseraContextConfig msaa = baseConfig();
+    msaa.samples = 64; // many pixel-format attempts: lots of call positions, and graceful degradation when one fails
+    msaa.fallback = TESSERA_FALLBACK_BEST_EFFORT;
+    TesseraContextConfig fl = baseConfig();
+    fl.flags = TESSERA_FLAG_FLOAT_COLOR;
+    TesseraContextConfig child = baseConfig();
+    const Scenario scenarios[] = {{"legacy", legacy, false},
+                                  {"core", core, false},
+                                  {"msaa 64 best-effort", msaa, false},
+                                  {"float colour", fl, false},
+                                  {"legacy sharing with a live parent", child, true}};
+
+    for (const Scenario& sc : scenarios) {
+        TesseraContextConfig cfg = sc.cfg;
+        TesseraContext parent = 0;
+        if (sc.withParent) {
+            TesseraContextConfig pc = baseConfig();
+            EXPECT(tesseraCreateContext(&pc, &parent), TESSERA_SUCCESS);
+            cfg.shareWith = parent;
+        }
+        const int baseline = g_liveContexts();
+
+        // Dry run: how many native calls does a healthy create make?
+        TesseraContext h = 0;
+        g_setFailAt(0);
+        EXPECT(tesseraCreateContext(&cfg, &h), TESSERA_SUCCESS);
+        const int calls = g_fakeCalls();
+        if (h) tesseraDestroyContext(h);
+
+        int clean = 0, survived = 0;
+        for (int at = 1; at <= calls; ++at) {
+            g_cgl.CGLSetCurrentContext(foreign);
+            h = 0;
+            g_setFailAt(at);
+            const TesseraResult r = tesseraCreateContext(&cfg, &h);
+            g_setFailAt(0); // from here on the fake behaves
+
+            if (r == TESSERA_SUCCESS) {
+                ++survived; // the fault hit something the backend can do without (or retried around)
+                CHECK(h != TESSERA_NULL_HANDLE);
+                EXPECT(tesseraDestroyContext(h), TESSERA_SUCCESS);
+            } else {
+                ++clean;
+                CHECK(h == TESSERA_NULL_HANDLE);
+                CHECK(r == TESSERA_ERROR_OUT_OF_MEMORY || r == TESSERA_ERROR_PLATFORM || r == TESSERA_ERROR_NO_MATCHING_CONFIG);
+                CHECK(tesseraGetLastErrorMessage()[0] != '\0');
+            }
+            if (g_liveContexts() != baseline || g_livePixelFormats() != 0) {
+                std::fprintf(stderr, "%s:%d: leak after a fault at native call %d/%d of '%s': %d context(s) (expected %d), %d pixel format(s)\n",
+                             __FILE__, __LINE__, at, calls, sc.name, g_liveContexts(), baseline, g_livePixelFormats());
+                ++g_failures;
+            }
+            if (g_cgl.CGLGetCurrentContext() != foreign) {
+                std::fprintf(stderr, "%s:%d: the other library's context was disturbed by a fault at native call %d/%d of '%s'\n",
+                             __FILE__, __LINE__, at, calls, sc.name);
+                ++g_failures;
+            }
+        }
+        std::printf("  %-34s %2d native calls: %2d faults failed cleanly, %2d survived\n", sc.name, calls, clean, survived);
+        CHECK(clean > 0); // at least the pixel-format and context-creation calls must be fatal
+        if (parent) tesseraDestroyContext(parent);
+    }
+
+    // Faults while tearing down: the failing destroy/release must not crash or leave the runtime unusable.
+    TesseraContextConfig cfg = baseConfig();
+    TesseraContext h = 0;
+    EXPECT(tesseraCreateContext(&cfg, &h), TESSERA_SUCCESS);
+    EXPECT(tesseraMakeCurrent(h), TESSERA_SUCCESS);
+    g_setFailAt(1); // the first native call during teardown (the release of the current context) fails
+    tesseraDestroyContext(h);
+    g_setFailAt(0);
+    g_cgl.CGLSetCurrentContext(nullptr);
+    TesseraContext after = 0;
+    EXPECT(tesseraCreateContext(&cfg, &after), TESSERA_SUCCESS); // still fully functional
+    if (after) tesseraDestroyContext(after);
+
+    g_cgl.CGLSetCurrentContext(nullptr);
+    g_cgl.CGLDestroyContext(foreign);
+    noLeaks(__LINE__);
+}
+
+// A missing library, and a library that exists but is not OpenGL.framework: clean UNSUPPORTED, never a crash.
+static int runUnavailableLibrary(const char* path) {
+    setenv("TESSERA_CGL_LIBRARY", path, 1);
+    tessera::Runtime::disableBuiltinBackendsForTesting();
+    if (tesseraInit() != TESSERA_SUCCESS) return 1;
+    tessera::Runtime::instance().registerBackend(makeCglBackend());
+    TesseraContextConfig cfg = baseConfig();
+    TesseraContext ctx = 0;
+    EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_ERROR_UNSUPPORTED);
+    CHECK(ctx == TESSERA_NULL_HANDLE);
+    CHECK(tesseraGetProcAddress("glGetString") == nullptr);
+    tesseraTerminate();
+    if (g_failures == 0) std::printf("test_cgl_fake (%s): OK\n", path);
+    return g_failures == 0 ? 0 : 1;
+}
+
+int main(int argc, char** argv) {
+    if (argc > 1 && std::strcmp(argv[1], "--missing-library") == 0) return runUnavailableLibrary("/nonexistent/OpenGL");
+    if (argc > 1 && std::strcmp(argv[1], "--wrong-library") == 0) {
+#if defined(__APPLE__)
+        return runUnavailableLibrary("/usr/lib/libSystem.B.dylib");
+#else
+        return runUnavailableLibrary("libm.so.6");
+#endif
+    }
     setenv("TESSERA_CGL_LIBRARY", FAKE_CGL_PATH, 1);
     if (!loadFake()) return 77;
 
@@ -475,6 +603,7 @@ int main() {
         {"foreign context untouched", testForeignContextUntouched},
         {"sharing", testSharing},
         {"threads and concurrency", testThreadsAndConcurrency},
+        {"fault injection at every native call", testFaultInjection},
         {"terminate destroys leaked contexts", testTerminateDestroysLeaks},
     };
     for (const Section& sec : sections) {

@@ -44,6 +44,7 @@ constexpr EGLenum kPlatformDevice = 0x313F;      // EGL_EXT_platform_device
 constexpr EGLenum kPlatformSurfaceless = 0x31DD; // EGL_MESA_platform_surfaceless
 
 constexpr EGLint kBadAlloc = 0x3003, kBadMatch = 0x3009, kBadAccess = 0x3002;
+constexpr EGLint kContextLost = 0x300E; // EGL 1.1: a power management event or GPU reset lost the context
 
 // ---- function tables ----------------------------------------------------------------------------
 struct EglFns {
