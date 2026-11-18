@@ -133,10 +133,14 @@ typedef uint32_t TesseraEnum;
 #define TESSERA_SURFACE_DEFAULT 0x0000u /* backend picks the safest available */
 #define TESSERA_SURFACE_HIDDEN_WINDOW 0x0001u
 #define TESSERA_SURFACE_PBUFFER 0x0002u
-#define TESSERA_SURFACE_NONE                                                                                 \
-    0x0003u /* no drawable exposed; render to FBOs (WGL still uses an internal one) */
-#define TESSERA_SURFACE_WINDOW                                                                               \
-    0x0004u /* reported for contexts made by tesseraCreateContextForWindow; not a request value */
+/*
+ * NONE: no drawable is exposed; render to framebuffer objects. EGL and GLX really have none (GLX falls back
+ * to a hidden window on a driver that refuses a drawable-less make-current); WGL cannot (wglMakeCurrent needs
+ * a DC) and keeps a 1x1 window.
+ */
+#define TESSERA_SURFACE_NONE 0x0003u
+/* Reported for contexts made by tesseraCreateContextForWindow; not a request value. */
+#define TESSERA_SURFACE_WINDOW 0x0004u
 
 /* TesseraContextConfig::fallback */
 #define TESSERA_FALLBACK_STRICT 0x0000u      /* fail unless every requested attribute is met */
