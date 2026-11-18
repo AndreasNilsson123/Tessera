@@ -63,7 +63,9 @@ Phases 0-9 are **built and tested on the one machine this was developed on** (Wi
 | 9 Hardening | Seeded fuzzing under sanitizers (found and fixed an over-read), leak-tracked soak (10,200 cycles flat on Windows), security self-review, threading/coexistence/troubleshooting/compat docs, verified CMake package | `docs/security-review.md`, `docs/compat.md` |
 | post-9 Diagnostics | `tesseraProbe` (ABI 0.6.0) and the `tessera-diag` tool | `docs/diag.md` |
 
-Verified here: WGL (NVIDIA), GLX and EGL (Mesa), Java JNI+FFM on Windows (JavaFX D3D and software pipelines), ASan/UBSan/TSan on everything that needs no GPU. See Phase 10 for everything else.
+Verified here: WGL (NVIDIA), GLX and EGL (Mesa), Java JNI+FFM on Windows (JavaFX D3D and software pipelines), Java JNI on Linux (JavaFX software **and OpenGL/es2** pipelines, LWJGL; Mesa D3D12 via WSLg and llvmpipe), ASan/UBSan/TSan on everything that needs no GPU.
+
+**CI (GitHub Actions) has run** and everything passes except the two macOS jobs, which never got a runner (relabelled `macos-latest`; result unknown). Passing: MSVC Debug/Release, gcc 13 Debug/Release, clang 18, ASan+UBSan, TSan, WGL on the hosted GDI-Generic GL 1.1 renderer, GLX+EGL on Xvfb/llvmpipe, Java on JDK 21 (JNI) and 25 (FFM), lint (clang-format 18.1.8 + clang-tidy). Running it found and fixed: a stack-overflow in the scoped X error handler (JavaFX es2), a crash at thread exit after `tesseraTerminate` (GLX connection now kept open), best-effort requests returning a context below the requested minimum version (GDI GL 1.1), plus several warnings that only newer compilers report. All of those jobs are now blocking. See Phase 10 for everything else.
 
 ### Decisions that departed from the original plan (kept because they explain the code)
 
@@ -83,12 +85,12 @@ Everything here was implemented-but-untested, deliberately skipped, or needs som
 
 ### 10.1 Needs other hardware or operating systems
 
-- [ ] **macOS**: run `tests/test_cgl.cpp` on a real Mac (Apple Silicon and Intel). Biggest risks: hand-written CGL constants, whether `kCGLPFAColorSize` includes alpha, whether core contexts report the forward-compatible bit, GPU-less CI VMs. Then run the Java tests and the JavaFX (Metal) coexistence case there.
+- [ ] **macOS**: run `tests/test_cgl.cpp` on a real Mac (Apple Silicon and Intel). The hosted `macos-latest` job is the first chance; it has not produced a result yet. Biggest risks: hand-written CGL constants, whether `kCGLPFAColorSize` includes alpha, whether core contexts report the forward-compatible bit, GPU-less CI VMs. Then run the Java tests and the JavaFX (Metal) coexistence case there.
 - [ ] **Other GPU vendors**: AMD, Intel (Windows and Linux), NVIDIA proprietary on Linux. Re-run the attribute matrix, window attach, `dxinterop` and the soak; fill `docs/compat.md`.
-- [ ] **Real X server / non-WSL Linux**: Xvfb + llvmpipe, a real Xorg session, non-GLVND `libGL`, clang, 32-bit. Swap-control extensions are untested because WSLg advertises none.
+- [ ] **Real X server / non-WSL Linux**: a real Xorg session with a hardware driver, non-GLVND `libGL`, 32-bit. (Xvfb + llvmpipe and clang are done in CI.) Swap-control extensions are untested because neither WSLg nor llvmpipe advertises them.
 - [ ] **Multi-GPU**: render-node and PCI matching in `TESSERA_EGL_DEVICE` (index 0 and the refusal paths are tested; matching is not). Add UUID selection (`EGL_EXT_device_persistent_id`).
-- [ ] **Java on Linux and macOS**: JNI glue is compile-checked only; needs a JDK in the Linux test environment (the earlier attempt to download one was blocked by the permission system; allow it or run `cmake --preset java` there).
-- [ ] **JavaFX `es2` (OpenGL) pipeline next to Tessera** on Linux/macOS: the riskiest coexistence case and the open exit criterion of Phases 3 and 7 (Xvfb/real X, hours of runtime, X-error-handler interference).
+- [~] **Java on Linux and macOS**: Linux is done (JDK 21 locally and in CI, JNI; JDK 25 FFM in CI). macOS: not run.
+- [~] **JavaFX `es2` (OpenGL) pipeline next to Tessera**: passes on Linux with Mesa (D3D12 and llvmpipe, 25/25 runs after the fix; ~50% crashed before it, which is how the X error handler bug was found). Needs `-Dprism.forceGPU=true` because JavaFX does not allow-list Mesa. Not done: a real hardware driver (NVIDIA/AMD/Intel on Xorg), a run of hours, macOS (Metal/ES2).
 - [ ] **A real GPU reset** (TDR / device removal) with a robust context: `GUILTY`/`INNOCENT`/`UNKNOWN`, sticky lost state and recreate are tested only on a fake backend. Also hot-unplug and display changes.
 
 ### 10.2 Implemented but never exercised
@@ -98,7 +100,7 @@ Everything here was implemented-but-untested, deliberately skipped, or needs som
 - [ ] Share-order validation on WGL (not implemented) and context priority (not implemented).
 - [ ] Fault-injection of the WGL, GLX and EGL failure paths (done for CGL only; the others are covered by the matrix and earlier tests).
 - [ ] The Linux memory growth seen in the soak (+23-27 MB per ~1800 cycles with 3 threads, +2.5 MB with 1): LeakSanitizer shows no Tessera leak, but reachable growth (ours or Mesa's per-thread caches) is not ruled out. Compare against a driver that is not Mesa-on-D3D12, or instrument the handle table/groups/zombies sizes.
-- [ ] CI: the GitHub Actions workflow (build matrix, sanitizers, wgl-software, gl-linux-software, cgl-macos, java-linux, lint) has **never run** because there is no remote. First push will find problems; budget for them.
+- [x] CI: the workflow has run; see the status above. Open: the macOS jobs, and a scheduled (nightly) soak.
 
 ### 10.3 Not implemented (known gaps)
 

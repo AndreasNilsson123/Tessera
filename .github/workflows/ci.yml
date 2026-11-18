@@ -20,6 +20,8 @@ jobs:
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    # macOS has never produced a result (its runner was cancelled at once in every run so far): do not let it block until it has.
+    continue-on-error: ${{ matrix.experimental == true }}
     strategy:
       fail-fast: false
       matrix:
@@ -29,7 +31,7 @@ jobs:
           - { name: linux-gcc-debug,      os: ubuntu-24.04, config: Debug,   cc: gcc,   cxx: g++ }
           - { name: linux-gcc-release,    os: ubuntu-24.04, config: Release, cc: gcc,   cxx: g++ }
           - { name: linux-clang-debug,    os: ubuntu-24.04, config: Debug,   cc: clang, cxx: clang++ }
-          - { name: macos-arm64-debug,    os: macos-14,     config: Debug }
+          - { name: macos-arm64-debug,    os: macos-latest, config: Debug, experimental: true }
     env:
       CC: ${{ matrix.cc }}
       CXX: ${{ matrix.cxx }}
@@ -65,14 +67,13 @@ jobs:
       - name: Test
         run: ctest --preset ${{ matrix.preset }}
 
-  # The WGL integration test against whatever OpenGL the hosted Windows runner offers (no GPU, so likely
-  # Microsoft's GDI software renderer, GL 1.1). Informational only: expected to fail until the test accepts
-  # a software renderer or the job installs Mesa. Real-driver results come from local runs
+  # The WGL integration test against whatever OpenGL the hosted Windows runner offers (no GPU: Microsoft's GDI software
+  # renderer, GL 1.1). The tests accept what that renderer cannot do (no ARB_create_context, no swap control) but still check
+  # that nothing weaker than the request is ever returned. Real-driver results come from local runs
   # (`ctest --preset ci-gpu`) or a self-hosted GPU runner.
   wgl-software:
-    name: wgl-integration (software GL, informational)
+    name: wgl-integration (software GL)
     runs-on: windows-2022
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - name: Configure and build
@@ -82,12 +83,10 @@ jobs:
       - name: Run WGL integration test
         run: ctest --test-dir build/ci -C Debug -L gpu --output-on-failure
 
-  # The GLX and EGL integration tests against a virtual X server with Mesa's software renderer (no GPU needed). Informational
-  # until it has run green once on a hosted runner; then drop continue-on-error.
+  # The GLX and EGL integration tests against a virtual X server with Mesa's software renderer (no GPU needed).
   gl-linux-software:
-    name: glx + egl integration (Xvfb + Mesa llvmpipe, informational)
+    name: glx + egl integration (Xvfb + Mesa llvmpipe)
     runs-on: ubuntu-24.04
-    continue-on-error: true
     env:
       LIBGL_ALWAYS_SOFTWARE: "1"
     steps:
@@ -107,7 +106,7 @@ jobs:
   # passed once. Hosted macOS runners are GPU-less VMs, so a core profile may legitimately be unavailable there.
   cgl-macos:
     name: cgl real-framework test (macOS, informational)
-    runs-on: macos-14
+    runs-on: macos-latest
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -119,12 +118,10 @@ jobs:
         run: ctest --test-dir build/ci -L gpu --output-on-failure
 
   # The Java bindings and their tests on Linux: JNI on Java 21, FFM on Java 25, under a virtual X server with Mesa's
-  # software renderer. Informational: never run (the first Linux run of any of this), and the JavaFX OpenGL pipeline test
-  # needs GTK and a GL-capable software renderer. Drop continue-on-error after the first green run.
+  # software renderer. The JavaFX OpenGL pipeline test needs GTK and prism.forceGPU (JavaFX does not allow-list Mesa).
   java-linux:
-    name: java (JDK ${{ matrix.java }}, Xvfb + Mesa, informational)
+    name: java (JDK ${{ matrix.java }}, Xvfb + Mesa)
     runs-on: ubuntu-24.04
-    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
@@ -150,12 +147,10 @@ jobs:
       - name: Run the Java tests
         run: xvfb-run -a -s "-screen 0 1280x1024x24" ctest --preset java --output-on-failure
 
-  # Style and static analysis. The sources are clang-format clean (18.1.8); the clang-tidy step has not been run locally, so
-  # the job stays informational until it has passed once.
+  # Style and static analysis: clang-format 18.1.8 (--Werror) and the clang-tidy build.
   lint:
-    name: lint (informational)
+    name: lint
     runs-on: ubuntu-24.04
-    continue-on-error: true
     env:
       CC: clang
       CXX: clang++

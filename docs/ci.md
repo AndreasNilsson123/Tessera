@@ -5,13 +5,13 @@ configure the project identically.
 
 | Job | What it runs | Blocking |
 |---|---|---|
-| `build` | MSVC (Debug+Release), gcc (Debug+Release), clang, macOS arm64: build with warnings as errors, run all tests that need no GPU (`abi`, `header_c`, `core`) | yes |
+| `build` | MSVC (Debug+Release), gcc (Debug+Release), clang: build with warnings as errors, run all tests that need no GPU (`abi`, `header_c`, `core`, `fuzz`, `cgl_fake`, ...). The macOS arm64 entry is `experimental` | yes (macOS: no) |
 | `sanitizers` | clang ASan+UBSan and TSan over the same tests | yes |
-| `wgl-integration` | the WGL test against the hosted runner's software OpenGL | no (informational) |
-| `gl-linux-software` | the GLX and EGL tests under Xvfb with Mesa llvmpipe (software GL, no GPU) | no (informational until first green run) |
-| `cgl-macos` | the CGL test against the real OpenGL.framework on a hosted macOS VM (never run) | no (informational) |
-| `java-linux` | the Java bindings and their tests (JNI + FFM, LWJGL, JavaFX) on Linux under Xvfb + Mesa (never run) | no (informational) |
-| `lint` | clang-format check, clang-tidy build | no (informational) |
+| `wgl-integration` | the WGL test, soak and diag against the hosted runner's software OpenGL (GDI Generic, GL 1.1) | yes |
+| `gl-linux-software` | the GLX and EGL tests under Xvfb with Mesa llvmpipe (software GL, no GPU) | yes |
+| `java-linux` | the Java bindings and their tests (JNI on JDK 21, FFM on JDK 25, LWJGL, JavaFX software and OpenGL pipelines) on Linux under Xvfb + Mesa | yes |
+| `lint` | clang-format 18.1.8 check, clang-tidy build | yes |
+| `cgl-macos` | the CGL test against the real OpenGL.framework on a hosted macOS VM | no (informational: has never produced a result) |
 
 `cgl_fake` (the macOS backend against a fake framework, including a fault-injection sweep) and the two unavailable-library runs execute on every POSIX job and in the sanitizer presets; `core` includes the lifecycle/threading tests that need no GPU. Tests labelled `gpu` (`wgl` on Windows, `glx` and `egl` on Linux, `cgl` on macOS) need a real OpenGL driver and a display and are excluded from the default `ci` test preset.
 
@@ -36,13 +36,16 @@ CI job lowers `vm.mmap_rnd_bits`.
 
 - Verified locally: the `ci` preset on Windows/MSVC (including the real-GPU `wgl` test), and `ci`, `asan-ubsan`, `tsan` on Ubuntu 22.04/gcc 11 (WSL), where the `glx` and `egl` tests also ran against WSLg (Mesa D3D12).
 - The `glx`/`egl` tests under TSan report races inside NVIDIA's WSL driver (uninstrumented, none with Tessera code on the accessing side); GPU tests are therefore excluded from the sanitizer presets.
-- Never run yet: the workflow itself (no remote exists), clang builds, macOS, the `lint`, `gl-linux-software`, `cgl-macos` and `java-linux` jobs, and the runner image names
-  (`windows-2022`, `ubuntu-24.04`, `macos-14`). Expect to adjust on first push.
+- The workflow has run on GitHub Actions since the first push, and every job except the two macOS ones passes. The macOS jobs
+  were cancelled within a second with no runner assigned (the `macos-14` label never got a machine), so the label was changed to
+  `macos-latest`; **whether the CGL backend passes on a real macOS VM is still unknown.**
+- What the hosted runners exercise that local runs cannot: clang 18 and gcc 13 warnings, GDI Generic GL 1.1 on Windows (it
+  found that best-effort requests must still honour the minimum version), Mesa llvmpipe, and JavaFX es2 (which needs
+  `-Dprism.forceGPU=true` to accept Mesa).
 - `lint`: the code base is formatted with clang-format 18.1.8 (the version CI pins; checked with
   `git ls-files '*.c' '*.cpp' '*.h' '*.hpp' | xargs clang-format --dry-run --Werror`, 0 violations). Run clang-format before
   committing. Do not let it reorder Windows headers: `<windows.h>` must precede `<psapi.h>` (guarded with
-  `// clang-format off`). The clang-tidy step of the job has not been reproduced locally and may still report findings, so the
-  job stays informational.
+  `// clang-format off`). The clang-tidy step passes in CI.
 - No x86-64 macOS job, and no GPU job: real-driver coverage comes from local runs until a self-hosted runner exists.
 
 ## Java
@@ -50,7 +53,7 @@ CI job lowers `vm.mmap_rnd_bits`.
 `cmake --preset java` builds the bindings (needs a JDK; `JAVA_HOME` selects it) and `ctest --preset java -C Debug` runs the
 Java tests, which need a real OpenGL driver and so carry the `gpu` label. `python scripts/fetch-java-deps.py` fetches the
 pinned LWJGL and JavaFX jars that the optional integration tests use. See `docs/java.md`. Locally verified on Windows (NVIDIA)
-with JDKs 17, 19, 21, 22, 25 and 28; the Linux job above is the first attempt at Linux and has never run.
+with JDKs 17, 19, 21, 22, 25 and 28.
 
 ## Fuzzing and soak (Phase 9)
 
