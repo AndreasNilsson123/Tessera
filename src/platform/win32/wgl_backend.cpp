@@ -655,6 +655,10 @@ class WglBackend final : public Backend {
         if (window)
             ctx->info.surface = TESSERA_SURFACE_WINDOW;
 
+        // Never negotiable, whatever the fallback policy: API, minimum version, profile.
+        if (const char* why = hardRequirementViolation(c, ctx->info))
+            return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, why);
+
         // Strict mode promises exactly what was asked for: verify the parts the driver may have loosened.
         if (c.fallback == TESSERA_FALLBACK_STRICT && !contextSatisfies(c, ctx->info))
             return fail(TESSERA_ERROR_NO_MATCHING_CONFIG,

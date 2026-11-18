@@ -205,8 +205,12 @@ static void testMakeCurrentAndProcs() {
     if (info.versionMajor >= 2)
         CHECK(tesseraGetProcAddress("glGenBuffers") != nullptr);
 
-    EXPECT(tesseraSetSwapInterval(ctx, 0), TESSERA_SUCCESS);
-    EXPECT(tesseraSetSwapInterval(ctx, 1), TESSERA_SUCCESS);
+    // WGL_EXT_swap_control is missing on Microsoft's GDI software renderer: UNSUPPORTED is the right answer
+    // there.
+    for (int interval = 0; interval <= 1; ++interval) {
+        const TesseraResult si = tesseraSetSwapInterval(ctx, interval);
+        CHECK(si == TESSERA_SUCCESS || si == TESSERA_ERROR_UNSUPPORTED);
+    }
     EXPECT(tesseraSwapBuffers(ctx), TESSERA_SUCCESS);
 
     EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS);

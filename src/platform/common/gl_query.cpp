@@ -175,6 +175,17 @@ TesseraResult queryResetStatusFrom(GlResetStatusFn fn, uint32_t grantedFlags, in
     return TESSERA_SUCCESS;
 }
 
+const char* hardRequirementViolation(const TesseraContextConfig& c, const TesseraContextInfo& i) noexcept {
+    if (i.api != c.api)
+        return "the created context is for a different API";
+    if (c.versionMajor != 0 && (i.versionMajor < c.versionMajor ||
+                                (i.versionMajor == c.versionMajor && i.versionMinor < c.versionMinor)))
+        return "the driver only offers an OpenGL version below the requested minimum";
+    if (c.profile != TESSERA_PROFILE_ANY && i.profile != c.profile)
+        return "the created context has a different profile";
+    return nullptr;
+}
+
 bool contextSatisfies(const TesseraContextConfig& c, const TesseraContextInfo& i) noexcept {
     const bool versionOk = c.versionMajor == 0 || i.versionMajor > c.versionMajor ||
                            (i.versionMajor == c.versionMajor && i.versionMinor >= c.versionMinor);

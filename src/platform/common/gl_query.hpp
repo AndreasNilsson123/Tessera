@@ -51,6 +51,15 @@ GlResetStatusFn resolveResetStatus(const std::function<void*(const char*)>& getP
  */
 TesseraResult queryResetStatusFrom(GlResetStatusFn fn, uint32_t grantedFlags, int32_t& out);
 
+/*
+ * The part of a request that is never negotiable, in strict AND best-effort mode: API, minimum version,
+ * profile. Returns a short reason if `info` breaks one of them, otherwise null. (Fallback may relax samples,
+ * depth and flags, never these: a GL 1.1 software context is no answer to "at least 3.3", whatever the
+ * fallback policy.)
+ */
+const char* hardRequirementViolation(const TesseraContextConfig& requested,
+                                     const TesseraContextInfo& info) noexcept;
+
 /* Strict-mode check: does `info` (including its pixel-format fields) honour everything in `requested`? */
 bool contextSatisfies(const TesseraContextConfig& requested, const TesseraContextInfo& info) noexcept;
 
