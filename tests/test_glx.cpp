@@ -561,6 +561,85 @@ static void testTerminateWithBusyThread() {
         EXPECT(tesseraDestroyContext(again), TESSERA_SUCCESS);
 }
 
+// SURFACE_NONE: the context is made current without a drawable where the driver allows it (no window is
+// created at all), and with a hidden window where it does not. Either way it must be fully usable for
+// offscreen rendering.
+static void testSurfaceNone() {
+    TesseraContextConfig cfg = baseConfig();
+    cfg.surface = TESSERA_SURFACE_NONE;
+    cfg.fallback = TESSERA_FALLBACK_BEST_EFFORT;
+    TesseraContext ctx = 0;
+    EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_SUCCESS);
+    if (!ctx)
+        return;
+    TesseraContextInfo info = tesseraDefaultContextInfo();
+    EXPECT(tesseraGetContextInfo(ctx, &info), TESSERA_SUCCESS);
+    CHECK(info.surface == TESSERA_SURFACE_NONE);
+    TesseraNativeHandles nh = tesseraDefaultNativeHandles();
+    EXPECT(tesseraGetNativeHandles(ctx, &nh), TESSERA_SUCCESS);
+    const bool drawableless = nh.handles[2] == 0 && nh.handles[4] == 0;
+    const bool windowed = nh.handles[2] != 0 && nh.handles[2] == nh.handles[4];
+    CHECK(drawableless || windowed); // never half of each
+    std::printf("  SURFACE_NONE here: %s\n",
+                drawableless ? "no drawable at all" : "hidden window (this driver needs one)");
+
+    EXPECT(tesseraMakeCurrent(ctx), TESSERA_SUCCESS);
+    CHECK(g_g.glXGetCurrentContext() != nullptr);
+    CHECK(g_g.glXGetCurrentDrawable() == nh.handles[2]);
+    // Offscreen rendering works: clear a renderbuffer-backed framebuffer and read the pixel back.
+    using GenFn = void (*)(int, unsigned*);
+    using BindFn = void (*)(unsigned, unsigned);
+    using StorageFn = void (*)(unsigned, unsigned, int, int);
+    using AttachFn = void (*)(unsigned, unsigned, unsigned, unsigned);
+    using ClearColorFn = void (*)(float, float, float, float);
+    using ClearFn = void (*)(unsigned);
+    using ReadFn = void (*)(int, int, int, int, unsigned, unsigned, void*);
+    auto genFbo = reinterpret_cast<GenFn>(tesseraGetProcAddress("glGenFramebuffers"));
+    auto genRbo = reinterpret_cast<GenFn>(tesseraGetProcAddress("glGenRenderbuffers"));
+    auto bindFbo = reinterpret_cast<BindFn>(tesseraGetProcAddress("glBindFramebuffer"));
+    auto bindRbo = reinterpret_cast<BindFn>(tesseraGetProcAddress("glBindRenderbuffer"));
+    auto storage = reinterpret_cast<StorageFn>(tesseraGetProcAddress("glRenderbufferStorage"));
+    auto attach = reinterpret_cast<AttachFn>(tesseraGetProcAddress("glFramebufferRenderbuffer"));
+    auto clearColor = reinterpret_cast<ClearColorFn>(tesseraGetProcAddress("glClearColor"));
+    auto clear = reinterpret_cast<ClearFn>(tesseraGetProcAddress("glClear"));
+    auto readPixels = reinterpret_cast<ReadFn>(tesseraGetProcAddress("glReadPixels"));
+    CHECK(genFbo && genRbo && bindFbo && bindRbo && storage && attach && clearColor && clear && readPixels);
+    if (genFbo && genRbo && bindFbo && bindRbo && storage && attach && clearColor && clear && readPixels) {
+        unsigned fbo = 0, rbo = 0;
+        genFbo(1, &fbo);
+        genRbo(1, &rbo);
+        bindRbo(0x8D41, rbo);                // GL_RENDERBUFFER
+        storage(0x8D41, 0x8058, 8, 8);       // GL_RGBA8
+        bindFbo(0x8D40, fbo);                // GL_FRAMEBUFFER
+        attach(0x8D40, 0x8CE0, 0x8D41, rbo); // GL_COLOR_ATTACHMENT0
+        clearColor(0.f, 0.f, 1.f, 1.f);
+        clear(0x4000);
+        unsigned char px[4] = {};
+        readPixels(0, 0, 1, 1, 0x1908, 0x1401, px);
+        CHECK(px[0] == 0 && px[1] == 0 && px[2] == 255 && px[3] == 255);
+    }
+    EXPECT(tesseraSwapBuffers(ctx), TESSERA_SUCCESS); // nothing to present is not an error
+    const TesseraResult si = tesseraSetSwapInterval(ctx, 1);
+    CHECK(drawableless ? si == TESSERA_ERROR_UNSUPPORTED
+                       : (si == TESSERA_SUCCESS || si == TESSERA_ERROR_UNSUPPORTED));
+    EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS);
+    CHECK(g_g.glXGetCurrentContext() == nullptr);
+    EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
+
+    // Sharing between a drawable-less and a normal context.
+    TesseraContext normal = 0;
+    TesseraContextConfig plain = baseConfig();
+    plain.fallback = TESSERA_FALLBACK_BEST_EFFORT;
+    EXPECT(tesseraCreateContext(&plain, &normal), TESSERA_SUCCESS);
+    cfg.shareWith = normal;
+    TesseraContext child = 0;
+    EXPECT(tesseraCreateContext(&cfg, &child), TESSERA_SUCCESS);
+    if (child)
+        EXPECT(tesseraDestroyContext(child), TESSERA_SUCCESS);
+    if (normal)
+        EXPECT(tesseraDestroyContext(normal), TESSERA_SUCCESS);
+}
+
 static robust::Hooks glxHooks() {
     robust::Hooks h;
     h.base = baseConfig();
@@ -748,6 +827,7 @@ int main() {
         {"window attach", testWindowAttach},
         {"terminate / re-init", testTerminateAndReinit},
         {"terminate with a busy thread", testTerminateWithBusyThread},
+        {"surface none", testSurfaceNone},
     };
     for (const Section& sec : sections) {
         std::puts(sec.name);

@@ -173,7 +173,7 @@ class GlxContext final : public ContextObject {
     }
 
     TesseraResult swapBuffers() noexcept override {
-        if (pbuffer)
+        if (pbuffer || drawable == 0)
             return TESSERA_SUCCESS; // nothing to present
         // A caller's window can vanish under us; the resulting X error must not reach Xlib's default (exit)
         // handler.
@@ -189,6 +189,9 @@ class GlxContext final : public ContextObject {
     TesseraResult setSwapInterval(int32_t interval) noexcept override {
         if (pbuffer)
             return fail(TESSERA_ERROR_UNSUPPORTED, "swap interval does not apply to pbuffers");
+        if (drawable == 0)
+            return fail(TESSERA_ERROR_UNSUPPORTED,
+                        "swap interval does not apply to a context without a drawable");
         if (interval < 0 && !shared_->has("GLX_EXT_swap_control_tear"))
             return fail(TESSERA_ERROR_INVALID_ARGUMENT,
                         "adaptive vsync (GLX_EXT_swap_control_tear) is not available");
@@ -395,41 +398,27 @@ class GlxBackend final : public Backend {
         ForeignContextGuard guard;
 
         const bool wantPbuffer = c.surface == TESSERA_SURFACE_PBUFFER;
+        const bool wantNone = c.surface == TESSERA_SURFACE_NONE;
         auto ctx = std::make_shared<GlxContext>(sh); // RAII: any failure below cleans up through ~GlxContext
 
         if (TesseraResult r = chooseFbConfig(*sh, c, wantPbuffer, ctx->fbconfig); r != TESSERA_SUCCESS)
             return r;
 
-        // The drawable: a pbuffer, or a hidden window that is never mapped (no window manager involvement).
-        {
+        // The drawable: a pbuffer, or a hidden window that is never mapped (no window manager involvement),
+        // or none at all (SURFACE_NONE: the context is made current without a drawable, which GLX allows for
+        // modern contexts; if the driver refuses, a hidden window is created after all, see below).
+        if (wantPbuffer) {
             XErrorScope scope(api, sh->dpy);
-            if (wantPbuffer) {
-                const int attribs[] = {
-                    kGlxPbufferWidth, 1, kGlxPbufferHeight, 1, kGlxPreservedContents, 0, 0};
-                ctx->pbuffer = api.glx.glXCreatePbuffer(sh->dpy, ctx->fbconfig, attribs);
-                ctx->drawable = ctx->pbuffer;
-            } else {
-                XVisualInfo* vi = api.glx.glXGetVisualFromFBConfig(sh->dpy, ctx->fbconfig);
-                if (!vi)
-                    return fail(TESSERA_ERROR_NO_MATCHING_CONFIG,
-                                "the framebuffer configuration has no X visual");
-                const Window root = api.xlib.XRootWindow(sh->dpy, sh->screen);
-                ctx->colormap = api.xlib.XCreateColormap(sh->dpy, root, vi->visual, kAllocNone);
-                XSetWindowAttributes attrs = {};
-                attrs.border_pixel = 0;
-                attrs.override_redirect = 1;
-                attrs.event_mask = 0;
-                attrs.colormap = ctx->colormap;
-                ctx->window = api.xlib.XCreateWindow(
-                    sh->dpy, root, 0, 0, 1, 1, 0, vi->depth, kInputOutput, vi->visual,
-                    kCWBorderPixel | kCWOverrideRedirect | kCWEventMask | kCWColormap, &attrs);
-                api.xlib.XFree(vi);
-                ctx->drawable = ctx->window;
-            }
+            const int attribs[] = {kGlxPbufferWidth, 1, kGlxPbufferHeight, 1, kGlxPreservedContents, 0, 0};
+            ctx->pbuffer = api.glx.glXCreatePbuffer(sh->dpy, ctx->fbconfig, attribs);
+            ctx->drawable = ctx->pbuffer;
             const int e = scope.sync();
             if (e != 0 || !ctx->drawable)
                 return fail(TESSERA_ERROR_PLATFORM,
                             "could not create the drawable (X error " + std::to_string(e) + ")");
+        } else if (!wantNone) {
+            if (TesseraResult r = createHiddenWindow(*sh, *ctx); r != TESSERA_SUCCESS)
+                return r;
         }
 
         if (TesseraResult r = createNativeContext(*sh, *ctx, c, parent ? parent->ctx : nullptr);
@@ -437,8 +426,18 @@ class GlxBackend final : public Backend {
             return r;
         ctx->parent = std::move(parent);
 
-        if (TesseraResult r = ctx->bindCurrent(); r != TESSERA_SUCCESS)
-            return r;
+        TesseraResult bound = ctx->bindCurrent();
+        if (bound != TESSERA_SUCCESS && wantNone && ctx->drawable == 0) {
+            // This driver cannot make a context current without a drawable: give it a hidden window after
+            // all.
+            logf(TESSERA_LOG_DEBUG,
+                 "GLX: no drawable-less make-current here, using a hidden window for SURFACE_NONE");
+            if (TesseraResult r = createHiddenWindow(*sh, *ctx); r != TESSERA_SUCCESS)
+                return r;
+            bound = ctx->bindCurrent();
+        }
+        if (bound != TESSERA_SUCCESS)
+            return bound;
         const bool ok = queryInfo(*sh, ctx->fbconfig, c, wantPbuffer, ctx->info);
         // `guard` restores the caller's context; it must not be left to us.
         if (!ok)
@@ -544,6 +543,33 @@ class GlxBackend final : public Backend {
     }
 
   private:
+    /* A 1x1 override-redirect window that is never mapped, with our own colormap, matching the context's
+     * framebuffer configuration; becomes the context's drawable. */
+    static TesseraResult createHiddenWindow(GlxShared& sh, GlxContext& ctx) {
+        const LinuxApi& api = *sh.api;
+        XErrorScope scope(api, sh.dpy);
+        XVisualInfo* vi = api.glx.glXGetVisualFromFBConfig(sh.dpy, ctx.fbconfig);
+        if (!vi)
+            return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, "the framebuffer configuration has no X visual");
+        const Window root = api.xlib.XRootWindow(sh.dpy, sh.screen);
+        ctx.colormap = api.xlib.XCreateColormap(sh.dpy, root, vi->visual, kAllocNone);
+        XSetWindowAttributes attrs = {};
+        attrs.border_pixel = 0;
+        attrs.override_redirect = 1;
+        attrs.event_mask = 0;
+        attrs.colormap = ctx.colormap;
+        ctx.window =
+            api.xlib.XCreateWindow(sh.dpy, root, 0, 0, 1, 1, 0, vi->depth, kInputOutput, vi->visual,
+                                   kCWBorderPixel | kCWOverrideRedirect | kCWEventMask | kCWColormap, &attrs);
+        api.xlib.XFree(vi);
+        ctx.drawable = ctx.window;
+        const int e = scope.sync();
+        if (e != 0 || !ctx.drawable)
+            return fail(TESSERA_ERROR_PLATFORM,
+                        "could not create the drawable (X error " + std::to_string(e) + ")");
+        return TESSERA_SUCCESS;
+    }
+
     /* The context is current and described: verify strict requests and bind the per-context extras. */
     static TesseraResult finishContext(GlxShared& sh, const std::shared_ptr<GlxContext>& ctx,
                                        const TesseraContextConfig& c, bool /*window*/,
