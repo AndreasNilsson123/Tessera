@@ -38,7 +38,8 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public final class FxCoexistence {
     private static final int SIZE = 128;
-    private static final int FRAMES = 240;
+    // -Dfxtest.frames=N lengthens the run (the stress variant renders for minutes instead of seconds).
+    private static final int FRAMES = Integer.getInteger("fxtest.frames", 240);
 
     private static final List<String> problems = new CopyOnWriteArrayList<>();
     private static final AtomicInteger fxPulses = new AtomicInteger();

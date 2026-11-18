@@ -157,16 +157,22 @@ endif()
 
 # ---- Optional LWJGL integration (adapter jar + a rendering test) -----------------------------------------------------
 # Built only when the LWJGL jars are present: python scripts/fetch-java-deps.py   (or -DTESSERA_JAVA_DEPS_DIR=<dir>)
+option(TESSERA_JAVA_STRESS "Also register the long JavaFX coexistence run (label stress)" OFF)
+set(TESSERA_JAVA_STRESS_FRAMES 6000 CACHE STRING "Frames of the JavaFX stress run")
 set(TESSERA_JAVA_DEPS_DIR "${PROJECT_SOURCE_DIR}/third_party/java" CACHE PATH "Directory holding the optional third-party jars (LWJGL, JavaFX)")
 file(GLOB TESSERA_LWJGL_JARS CONFIGURE_DEPENDS ${TESSERA_JAVA_DEPS_DIR}/lwjgl-*.jar)
 set(_have_lwjgl_api FALSE)
 set(_have_lwjgl_gl FALSE)
+set(_have_lwjgl_glfw FALSE)
 foreach(_jar ${TESSERA_LWJGL_JARS})
     if(_jar MATCHES "/lwjgl-[0-9.]+\\.jar$")
         set(_have_lwjgl_api TRUE)
     endif()
     if(_jar MATCHES "/lwjgl-opengl-[0-9.]+\\.jar$")
         set(_have_lwjgl_gl TRUE)
+    endif()
+    if(_jar MATCHES "/lwjgl-glfw-[0-9.]+\\.jar$")
+        set(_have_lwjgl_glfw TRUE)
     endif()
 endforeach()
 
@@ -199,6 +205,23 @@ if(_have_lwjgl_api AND _have_lwjgl_gl)
             list(APPEND _lwjgl_tests java_lwjgl_ffm)
         endif()
         set_tests_properties(${_lwjgl_tests} PROPERTIES LABELS "gpu;java;lwjgl" TIMEOUT 180)
+        # GLFW (through LWJGL) in the same process as Tessera: its own window and context, Tessera around it and in its windows.
+        # Exits 77 (skipped) where GLFW cannot open a window at all (no display).
+        if(_have_lwjgl_glfw)
+            tessera_java_test(java_glfw dev.tessera.lwjgl.GlfwCoexistence BINDING jni NATIVE_LIB CLASSPATH ${_lwjgl_cp} ${_native_access})
+            set(_glfw_tests java_glfw)
+            if(Java_VERSION_MAJOR GREATER_EQUAL 22)
+                tessera_java_test(java_glfw_ffm dev.tessera.lwjgl.GlfwCoexistence BINDING ffm NATIVE_LIB NATIVE_ACCESS CLASSPATH ${_lwjgl_cp})
+                list(APPEND _glfw_tests java_glfw_ffm)
+            endif()
+            set_tests_properties(${_glfw_tests} PROPERTIES LABELS "gpu;java;lwjgl;glfw" TIMEOUT 180 SKIP_RETURN_CODE 77)
+        endif()
+        # Java2D's OpenGL pipeline (WGL on Windows, GLX on Linux) inside the same JVM: AWT/Swing owns GL contexts too.
+        # Skips (77) where the pipeline does not come up (no display, or a driver Java2D does not accept).
+        tessera_java_test(java_awt_opengl dev.tessera.lwjgl.AwtCoexistence BINDING jni NATIVE_LIB CLASSPATH ${_lwjgl_cp}
+            JVM_OPTIONS -Dsun.java2d.opengl=True ${_native_access})
+        set(_awt_tests java_awt_opengl)
+        set_tests_properties(${_awt_tests} PROPERTIES LABELS "gpu;java;lwjgl;awt" TIMEOUT 180 SKIP_RETURN_CODE 77)
     endif()
 else()
     message(STATUS "LWJGL jars not found in ${TESSERA_JAVA_DEPS_DIR}: skipping the LWJGL adapter and its test (run scripts/fetch-java-deps.py)")
@@ -249,6 +272,20 @@ if(TARGET tessera_java_lwjgl AND TESSERA_JAVAFX_JARS)
                 set_tests_properties(java_javafx_${_pipeline} PROPERTIES FAIL_REGULAR_EXPRESSION "Fallback to Prism SW pipeline")
             endif()
         endforeach()
+        # The same test for minutes instead of seconds on the pipeline that shares a GL API with Tessera (Direct3D on Windows is the
+        # non-GL control): -DTESSERA_JAVA_STRESS=ON adds it, label `stress`. ~4 frames per 100 ms: 6000 frames is about 2.5 minutes.
+        if(TESSERA_JAVA_STRESS)
+            list(GET _fx_pipelines 0 _stress_pipeline)
+            set(_stress_extra "")
+            if(_stress_pipeline STREQUAL "es2")
+                set(_stress_extra -Dprism.forceGPU=true)
+            endif()
+            tessera_java_test(java_javafx_${_stress_pipeline}_stress dev.tessera.javafx.FxCoexistence BINDING jni NATIVE_LIB
+                CLASSPATH ${_fx_cp} MODULE_PATH ${TESSERA_JAVAFX_JARS}
+                JVM_OPTIONS -Dprism.order=${_stress_pipeline} -Dprism.verbose=true -Dfxtest.frames=${TESSERA_JAVA_STRESS_FRAMES} ${_stress_extra} ${_native_access})
+            set_tests_properties(java_javafx_${_stress_pipeline}_stress PROPERTIES LABELS "gpu;java;javafx;stress" TIMEOUT 3000
+                FAIL_REGULAR_EXPRESSION "Fallback to Prism SW pipeline")
+        endif()
     endif()
 else()
     message(STATUS "JavaFX jars not found in ${TESSERA_JAVA_DEPS_DIR}: skipping the JavaFX coexistence test (run scripts/fetch-java-deps.py)")

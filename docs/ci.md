@@ -72,3 +72,11 @@ with JDKs 17, 19, 21, 22, 25 and 28.
 driver entry points are wrapped, each failable call is failed once and then every call from there on, and the public-API scenarios
 (plain, pbuffer, sharing, core + debug, MSAA/sRGB ladder, no surface, recreate) must neither crash nor leak native objects nor
 disturb the other library's context. Label `gpu;fault`, about a minute each.
+
+## Coexistence tests (Java)
+
+`java_glfw` (GLFW through LWJGL), `java_awt_opengl` (Java2D OpenGL pipeline) and the JavaFX tests run in the blocking Java jobs
+under Xvfb. They exit 77 (skipped) where the host library cannot come up (no display, or Java2D refuses the driver). Both need
+the LWJGL GLFW jars, which `scripts/fetch-java-deps.py` now downloads. There is no Windows Java job: the hosted runner's GDI
+renderer is OpenGL 1.1, which the LWJGL rendering tests cannot use. `-DTESSERA_JAVA_STRESS=ON` adds a 6000-frame JavaFX run
+(label `stress`, about 1-2 minutes) for nightly or local use.

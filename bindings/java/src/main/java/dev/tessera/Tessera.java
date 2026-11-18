@@ -117,11 +117,13 @@ public final class Tessera {
 
     /**
      * Address of an OpenGL function for loaders such as LWJGL, or 0. Extension and post-1.1 functions only resolve while a
-     * context is current on the calling thread. On some platforms a made-up {@code gl...} name can still return a harmless
+     * context is current on the calling thread (any context: another library's works too). On some platforms a made-up {@code gl...} name can still return a harmless
      * stub, so learn what is supported from the extension strings, not from this being non-zero.
      */
     public static long procAddress(String name) {
-        return api().procAddress(name);
+        // Initialises the library if nothing has yet: a loader may ask for functions of a context that another library (GLFW,
+        // AWT) made current, before Tessera has created one of its own.
+        return apiInitialized().procAddress(name);
     }
 
     // ------------------------------------------------------------------ internal

@@ -36,7 +36,7 @@ def artifacts(want_lwjgl, want_javafx):
     h = host()
     out = []
     if want_lwjgl:
-        for name in ("lwjgl", "lwjgl-opengl"):
+        for name in ("lwjgl", "lwjgl-opengl", "lwjgl-glfw"):
             base = f"{REPO}/org/lwjgl/{name}/{LWJGL_VERSION}/{name}-{LWJGL_VERSION}"
             out.append(base + ".jar")
             out.append(base + f"-{h['lwjgl']}.jar")

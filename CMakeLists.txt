@@ -62,6 +62,7 @@ if(WIN32)
 endif()
 if(UNIX AND NOT APPLE)
     list(APPEND TESSERA_CORE_SOURCES
+        src/platform/common/cross_api.cpp
         src/platform/x11/glx_api.cpp
         src/platform/x11/glx_backend.cpp
         src/platform/egl/egl_api.cpp

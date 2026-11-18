@@ -39,6 +39,7 @@ static int g_failures = 0;
         }                                                                                                    \
     } while (0)
 
+#include "foreign_other_api.hpp"
 #include "interop_common.hpp"
 #include "robustness_common.hpp"
 
@@ -734,6 +735,49 @@ static void testHeadlessFallthrough() {
     EXPECT(tesseraInit(), TESSERA_SUCCESS);
 }
 
+// The host's context belongs to the OTHER windowing API (see foreign_other_api.hpp): Tessera must neither
+// fail nor disturb it.
+static void testForeignGlxContext() {
+    foreign::GlxCtx host;
+    if (!host.create()) {
+        std::printf("  (no Glx context available to play the other library: skipped)\n");
+        return;
+    }
+    TesseraContextConfig cfg = baseConfig();
+    cfg.fallback = TESSERA_FALLBACK_BEST_EFFORT;
+    host.makeCurrent();
+    CHECK(host.isCurrent());
+
+    TesseraContext a = 0, b = 0;
+    EXPECT(tesseraCreateContext(&cfg, &a), TESSERA_SUCCESS);
+    CHECK(host.isCurrent()); // creating leaves the host's context current
+    TesseraContextConfig pbuffer = cfg;
+    pbuffer.surface = TESSERA_SURFACE_PBUFFER;
+    EXPECT(tesseraCreateContext(&pbuffer, &b), TESSERA_SUCCESS);
+    CHECK(host.isCurrent());
+    TesseraContextInfo info = tesseraDefaultContextInfo();
+    EXPECT(tesseraGetContextInfo(a, &info), TESSERA_SUCCESS);
+    CHECK(host.isCurrent());
+
+    // Making ours current replaces the host's (the documented contract), and must work instead of failing.
+    EXPECT(tesseraMakeCurrent(a), TESSERA_SUCCESS);
+    CHECK(!host.isCurrent());
+    EXPECT(tesseraMakeCurrent(b), TESSERA_SUCCESS);
+    EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS);
+    CHECK(host.nothingCurrent());
+
+    // Destroying and probing while the host's context is current leaves it alone.
+    host.makeCurrent();
+    EXPECT(tesseraDestroyContext(a), TESSERA_SUCCESS);
+    CHECK(host.isCurrent());
+    TesseraProbeReport rep = tesseraDefaultProbeReport();
+    EXPECT(tesseraProbe(&cfg, &rep), TESSERA_SUCCESS);
+    CHECK(host.isCurrent());
+    EXPECT(tesseraDestroyContext(b), TESSERA_SUCCESS);
+    CHECK(host.isCurrent());
+    host.destroy();
+}
+
 static robust::Hooks eglHooks() {
     robust::Hooks h;
     h.base = baseConfig();
@@ -865,6 +909,7 @@ int main() {
         {"native handles", testNativeHandles},
         {"terminate leaves the shared display alive", testTerminateKeepsSharedDisplayAlive},
         {"device selection", testDeviceSelection},
+        {"host context from GLX", testForeignGlxContext},
         {"headless fallthrough (no DISPLAY, default order)", testHeadlessFallthrough},
     };
     for (const Section& sec : sections) {

@@ -12,6 +12,7 @@
 #include "core/log.hpp"
 #include "glx_api.hpp"
 #include "platform/common/arb_context.hpp"
+#include "platform/common/cross_api.hpp"
 #include "platform/common/gl_debug.hpp"
 #include "platform/common/gl_query.hpp"
 
@@ -143,6 +144,8 @@ class GlxContext final : public ContextObject {
 
     TesseraResult bindCurrent() noexcept override {
         const LinuxApi& api = *shared_->api;
+        crossapi::releaseOtherEglCurrent(); // a host's EGL context on this thread must not make ours fail
+                                            // (Mesa: one per thread)
         XErrorScope scope(api, shared_->dpy);
         const Bool ok = api.glx.glXMakeContextCurrent(shared_->dpy, drawable, drawable, ctx);
         const int error = scope.sync();
@@ -395,7 +398,7 @@ class GlxBackend final : public Backend {
         }
 
         // Everything below may change this thread's current context; put the caller's back on every path.
-        ForeignContextGuard guard;
+        crossapi::GlxGuard guard;
 
         const bool wantPbuffer = c.surface == TESSERA_SURFACE_PBUFFER;
         const bool wantNone = c.surface == TESSERA_SURFACE_NONE;
@@ -469,7 +472,7 @@ class GlxBackend final : public Backend {
                 return fail(TESSERA_ERROR_INVALID_ARGUMENT,
                             "cannot share objects with a context from another backend");
         }
-        ForeignContextGuard guard;
+        crossapi::GlxGuard guard;
         auto ctx = std::make_shared<GlxContext>(sh);
         ctx->foreignWindow = static_cast<Window>(nativeWindow);
         ctx->drawable = static_cast<GLXDrawable>(nativeWindow);

@@ -15,6 +15,7 @@
 #include "core/log.hpp"
 #include "egl_api.hpp"
 #include "platform/common/arb_context.hpp"
+#include "platform/common/cross_api.hpp"
 #include "platform/common/gl_debug.hpp"
 #include "platform/common/gl_query.hpp"
 
@@ -300,6 +301,8 @@ class EglContext final : public ContextObject {
 
     TesseraResult bindCurrent() noexcept override {
         const EglFns& f = shared_->api->fn;
+        crossapi::releaseOtherGlxCurrent(); // a host's GLX context on this thread must not make ours fail
+                                            // (Mesa: one per thread)
         // eglMakeCurrent needs no bound API, but leaving ours bound would change what the host's own
         // eglGetCurrentContext() calls report, so the previous binding is put back.
         ScopedBindApi bind(*shared_->api, apiEnum);
@@ -639,7 +642,7 @@ class EglBackend final : public Backend {
         }
 
         // EGL state is per thread and per API; put the caller's all back on every path.
-        ForeignContextGuard guard;
+        crossapi::EglGuard guard;
 
         EglPlan plan;
         if (TesseraResult r = planEgl(*sh, c, plan); r != TESSERA_SUCCESS)
@@ -684,6 +687,7 @@ class EglBackend final : public Backend {
             return r;
         ctx->parent = std::move(parent);
 
+        crossapi::releaseOtherGlxCurrent(); // the host's GLX context (guarded above) must not make ours fail
         if (!f.eglMakeCurrent(sh->dpy, ctx->surface, ctx->surface, ctx->ctx))
             return fail(TESSERA_ERROR_PLATFORM,
                         eglErrorText("eglMakeCurrent failed on the new context", f.eglGetError()));
