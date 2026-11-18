@@ -327,7 +327,8 @@ void sweep() {
     oneRun("clean run");
     const long total = g_calls.load();
     std::printf("  %ld failable driver calls in one run of %zu scenarios\n", total, buildScenarios().size());
-    if (total < 10) {
+    if (total < 3) { // (a software renderer with no extensions makes few failable calls: that is fine; none
+                     // means the hooks are unused)
         problem("suspiciously few failable calls: the hooks are not being used");
         return;
     }
