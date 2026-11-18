@@ -21,7 +21,7 @@ JDKs: SelfTest ran on 17 and 21 (JNI), 22, 25 and 28 (FFM), 19 (JNI, FFM preview
 | AMD, Intel (Windows and Linux), NVIDIA proprietary on Linux | Vendor drivers differ in `WGL_ARB_create_context` strictness, robustness, flush control and sRGB/float format support; the attribute matrix and strict/best-effort behaviour should be rerun on each |
 | Apple Silicon / macOS (CGL) | The CGL backend has only ever run against a fake driver (`test_cgl.cpp` is ready for a real Mac) |
 | Mesa llvmpipe on a real X server (Xvfb) | CI configures it, never run |
-| ANGLE | Not supported yet (loader restrictions, see ROADMAP Phase 4) |
+| ANGLE | Not supported yet (loader restrictions, see ROADMAP 10.3) |
 | Wayland, `wl_surface` attach | No Wayland backend |
 | JavaFX es2 (OpenGL) pipeline next to Tessera (Linux) | The only JavaFX pipeline where a real GL-context conflict is possible |
 | Java tests on Linux/macOS | JNI glue is compile-checked only |
