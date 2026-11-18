@@ -1,6 +1,7 @@
 // extern "C" entry points for lifecycle and contexts. Everything goes through guarded().
 #include <tessera/tessera.h>
 
+#include <cstddef>
 #include <cstring>
 
 #include "boundary.hpp"
@@ -137,11 +138,18 @@ TESSERA_API TesseraResult TESSERA_CALL tesseraCreateContextForWindow(const Tesse
         if (!outContext) return fail(TESSERA_ERROR_INVALID_ARGUMENT, "outContext is NULL");
         *outContext = TESSERA_NULL_HANDLE;
         if (!config) return fail(TESSERA_ERROR_INVALID_ARGUMENT, "config is NULL");
-        // The surface of an attached context is the window; accept DEFAULT or WINDOW and validate the rest as usual.
-        TesseraContextConfig copy = *config;
-        if (copy.structSize >= sizeof(TesseraContextConfig) && (copy.surface == TESSERA_SURFACE_WINDOW)) copy.surface = TESSERA_SURFACE_DEFAULT;
-        else if (copy.structSize >= sizeof(TesseraContextConfig) && copy.surface != TESSERA_SURFACE_DEFAULT)
-            return fail(TESSERA_ERROR_INVALID_ARGUMENT, "the surface of a context for a window must be TESSERA_SURFACE_DEFAULT or TESSERA_SURFACE_WINDOW");
+        // The surface of an attached context is the window: accept DEFAULT or WINDOW, validate the rest as usual. Only
+        // `structSize` bytes of the caller's struct may be read (it can be older and smaller than ours).
+        TesseraContextConfig copy;
+        std::memset(&copy, 0, sizeof copy);
+        const uint32_t claimed = config->structSize;
+        std::memcpy(&copy, config, claimed < sizeof copy ? claimed : sizeof copy);
+        constexpr std::size_t kSurfaceEnd = offsetof(TesseraContextConfig, surface) + sizeof(TesseraEnum);
+        if (claimed >= kSurfaceEnd) {
+            if (copy.surface == TESSERA_SURFACE_WINDOW) copy.surface = TESSERA_SURFACE_DEFAULT;
+            else if (copy.surface != TESSERA_SURFACE_DEFAULT)
+                return fail(TESSERA_ERROR_INVALID_ARGUMENT, "the surface of a context for a window must be TESSERA_SURFACE_DEFAULT or TESSERA_SURFACE_WINDOW");
+        }
         TesseraContextConfig normalized;
         if (TesseraResult r = normalizeConfig(&copy, normalized); r != TESSERA_SUCCESS) return r;
         return Runtime::instance().createContextForWindow(normalized, nativeWindow, flags, *outContext);

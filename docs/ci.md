@@ -48,3 +48,15 @@ CI job lowers `vm.mmap_rnd_bits`.
 Java tests, which need a real OpenGL driver and so carry the `gpu` label. `python scripts/fetch-java-deps.py` fetches the
 pinned LWJGL and JavaFX jars that the optional integration tests use. See `docs/java.md`. Locally verified on Windows (NVIDIA)
 with JDKs 17, 19, 21, 22, 25 and 28; the Linux job above is the first attempt at Linux and has never run.
+
+## Fuzzing and soak (Phase 9)
+
+- `fuzz` (no GPU, in every preset including ASan/UBSan/TSan): seeded random, structure-aware inputs against the public API
+  with exact-size heap buffers, so any over-read/over-write is a sanitizer report. `TESSERA_FUZZ_SEED` and
+  `TESSERA_FUZZ_ITERATIONS` (default 20000 per section) change the stream; a failing run prints its seed. Run a few seeds at
+  100000 iterations before a release: `for s in 1 2 3; do TESSERA_FUZZ_SEED=$s TESSERA_FUZZ_ITERATIONS=100000 build/asan-ubsan/tests/test_fuzz; done`.
+- `soak` (label `gpu;soak`, real driver): create/use/switch/destroy loops on several threads, with handle / GDI / USER / fd /
+  memory counters sampled only while no context is alive. The first tenth is warm-up; growth after it fails the test.
+  `TESSERA_SOAK_CYCLES` (per thread, default 1500, about a minute) or `TESSERA_SOAK_SECONDS` (e.g. 86400) scale it. The
+  informational GPU CI jobs run the default size.
+

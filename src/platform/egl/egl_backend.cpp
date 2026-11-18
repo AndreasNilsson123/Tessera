@@ -100,6 +100,7 @@ bool looksLikePciAddress(const std::string& s) {
 /* The device in `devices` that `selector` names, or -1. */
 int findDevice(const EglFns& f, void* const* devices, EGLint count, const std::string& selector) {
     if (!selector.empty() && selector.find_first_not_of("0123456789") == std::string::npos) {
+        if (selector.size() > 4) return -1; // far beyond any device count; also keeps atoi away from signed overflow
         const int i = std::atoi(selector.c_str());
         return i < count ? i : -1;
     }

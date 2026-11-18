@@ -93,7 +93,7 @@ JavaFX on Windows uses D3D (Prism d3d) by default, so WGL conflicts are less lik
 - `[~]` items: robust access / reset notification / no-error / release-flush are implemented but untested (the test GPU path was not exercised for them); share-order validation and context priority are not implemented; DWM swap quirks untested.
 - Not done: multi-GPU selection (`WGL_NV_gpu_affinity`, `WGL_AMD_gpu_association`, DXGI) and ANGLE detection (Phase 4). Only one GPU vendor and driver tested so far.
 - Context creation is ~29 ms on the test machine (mostly driver cost, not profiled); pooled creation is in Phase 8 (`tesseraPrewarmContexts`, ~0.01 ms).
-- Exit criteria still open: a 10k-cycle soak (300 done) and the JavaFX coexistence run (needs the Phase 7 Java bindings).
+- Exit criteria: the 10k-cycle soak was run in Phase 9 (10200 cycles, flat) and the JavaFX coexistence run in Phase 7 (D3D and software pipelines).
 
 **Exit:** create/destroy 10k contexts in a loop with no handle/GDI leaks (verified with GDI/USER object counters); coexistence test with a running JavaFX app (D3D pipeline and `-Dprism.order=sw`) shows no interference.
 
@@ -221,14 +221,18 @@ Decision (ADR 0009, resolving the open question about the minimum JDK): **JNI ba
 
 ## Phase 9 — Hardening & release
 
-- [ ] Fuzzing of config parsing, `getProcAddress` names, extension-string parsing.
-- [ ] Soak tests: 24h create/destroy/switch loops with leak tracking (GDI/USER handles, FDs, X resources, Mach ports).
-- [ ] Hardware matrix: NVIDIA, AMD, Intel, Apple Silicon, Mesa llvmpipe, ANGLE; record results in `docs/compat.md`.
-- [ ] Coexistence matrix (automated where possible): JavaFX {d3d, es2, sw, metal} × OS × Tessera {onscreen-hidden, offscreen, surfaceless, shared}.
-- [ ] Security review: input validation on all handles/pointers/sizes; no unbounded allocations from untrusted strings.
-- [ ] Docs: API reference, threading guide, "living with JavaFX/AWT" guide, troubleshooting, ABI stability policy.
-- [ ] Packaging: Maven Central artifact with per-platform natives, CMake `find_package` config, vcpkg/conan recipes.
-- [ ] 1.0 release: freeze ABI v1.
+- [~] **Fuzzing** (`tests/test_fuzz.cpp`): seeded, structure-aware random inputs for config structs (exact-size heap buffers, sizes below/above ours), handles (real, stale, bit-flipped), output structs, `getProcAddress` names (up to 5000 chars, control/high bytes), driver version strings, plus a 4-thread hostile-input section. Runs in every preset, clean under ASan/UBSan/TSan at 20000 iterations (CI) and 3 seeds x 100000. **It found a real bug on its first ASan run:** `tesseraCreateContextForWindow` read `sizeof(TesseraContextConfig)` bytes from a caller struct that could be smaller (fixed). Review also found `atoi` on a huge digit string in the EGL device selector (fixed). **Not done:** coverage-guided fuzzing (libFuzzer/AFL targets), fuzzing the JNI glue and Java layer, a dedicated extension-string parser test (it is trivial word splitting inside the EGL backend).
+- [~] **Soak** (`tests/test_soak.cpp`): 3 threads x (create, share, pbuffer, make current, draw, swap, destroy in rotating order), handles / GDI / USER / fds / memory sampled only while no context is alive, warm-up then growth check. **Windows (RTX 3060): 10200 cycles = 30600 contexts in 761 s, flat: kernel handles -6, GDI +0, USER -1, private bytes +44 KB** (this closes the open Phase 2 exit criterion of 10k create/destroy cycles). **Linux (Mesa 23.2 D3D12 over WSLg): handles/fds flat, but resident memory grows**: +27 MB over 1800 cycles on GLX (3 threads), +23 MB on EGL (3 threads), +2.5 MB single-threaded GLX. LeakSanitizer over 150 cycles reports 5 leaks, none with a Tessera frame (all in Mesa/unknown modules), so nothing Tessera allocates is leaked, but growth in memory that is still reachable (ours or Mesa's per-thread caches) is **not ruled out and not investigated**. **The 24 h run has not been done**: `TESSERA_SOAK_SECONDS=86400` is supported; X resources and Mach ports are not tracked.
+- [~] **Hardware matrix** (`docs/compat.md`): written with only what was actually run (one NVIDIA laptop + Mesa D3D12). AMD, Intel, Apple Silicon, llvmpipe, ANGLE: **not run**; they need other machines.
+- [~] **Coexistence matrix** (`docs/coexistence.md`): the promises and how each is checked; JavaFX d3d and sw pipelines tested on Windows. es2, metal and every Linux/macOS cell: **not run**.
+- [~] **Security review** (`docs/security-review.md`): a self-review of every boundary input with the fuzz results, two fixes made; explicitly not an independent audit.
+- [~] **Docs**: `docs/threading.md`, `docs/coexistence.md`, `docs/troubleshooting.md`, `docs/interop.md`, `docs/java.md`, `docs/environment.md`, `docs/abi-policy.md`, ADRs 0001-0010. **Not done:** a generated API reference (the header is the reference, comments in it are the documentation).
+- [~] **Packaging**: the CMake package (`find_package(Tessera CONFIG)`) is verified: installed to a prefix, a separate C project found it, built, linked, ran, and a too-new version request was rejected. **Not done and not attempted** (cannot be verified from here): Maven Central artifact with per-platform natives (the jar embeds only the natives of the machine that built it), vcpkg and Conan recipes.
+- [ ] **1.0 release: freeze ABI v1.** Deliberately **not** done. Phase 8 changed the ABI as recently as this phase (0.5.0), only one GPU vendor has been tested, and the open questions below (window attach in 1.0? GL/GLES floor?) are decisions for the project owner. Freezing is a one-line version change; living with a wrong freeze is not.
+
+**Status notes (Phase 9):**
+- Verified: Windows `ci-gpu` suite; Linux `ci`, `asan-ubsan`, `tsan` 7/7 each (GLX and EGL under WSLg run separately via `ctest --preset ci-gpu`).
+- The CI workflow runs the default-size soak in its informational GPU jobs; it has never run (no remote).
 
 ---
 

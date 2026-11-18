@@ -30,6 +30,18 @@ endif()
 tessera_apply_options(test_core)
 add_test(NAME core COMMAND test_core)
 
+# Seeded fuzzing of config structs, handles, struct sizes, proc names and version strings (see the file header).
+add_executable(test_fuzz test_fuzz.cpp $<TARGET_OBJECTS:tessera_core>)
+target_include_directories(test_fuzz PRIVATE ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/include)
+target_compile_definitions(test_fuzz PRIVATE TESSERA_STATIC)
+target_link_libraries(test_fuzz PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+if(WIN32)
+    target_link_libraries(test_fuzz PRIVATE gdi32 user32)
+endif()
+tessera_apply_options(test_fuzz)
+add_test(NAME fuzz COMMAND test_fuzz)
+set_tests_properties(fuzz PROPERTIES TIMEOUT 300)
+
 # WGL integration test: public API only, against the real DLL, with a raw WGL context as the "other library".
 if(WIN32 AND TESSERA_BUILD_SHARED)
     add_executable(test_wgl test_wgl.cpp)
@@ -50,6 +62,20 @@ if(WIN32 AND TESSERA_BUILD_SHARED)
     set_tests_properties(dxinterop PROPERTIES LABELS "gpu" TIMEOUT 120 SKIP_RETURN_CODE 77)
     # Needs a real OpenGL driver: excluded from the default (hosted-runner) test preset.
     set_tests_properties(wgl PROPERTIES LABELS "gpu" TIMEOUT 180)
+endif()
+
+# Create/use/destroy loops with leak tracking (handles, GDI/USER objects, fds, memory). Real driver; exits 77 without one.
+# Scale with TESSERA_SOAK_CYCLES / TESSERA_SOAK_SECONDS (see the file header); the default is a ~1 minute smoke run.
+if(TESSERA_BUILD_SHARED AND (WIN32 OR (UNIX AND NOT APPLE)))
+    add_executable(test_soak test_soak.cpp)
+    target_link_libraries(test_soak PRIVATE Tessera::tessera Threads::Threads)
+    tessera_apply_options(test_soak)
+    if(WIN32)
+        add_custom_command(TARGET test_soak POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:tessera> $<TARGET_FILE_DIR:test_soak>)
+    endif()
+    add_test(NAME soak COMMAND test_soak)
+    set_tests_properties(soak PROPERTIES LABELS "gpu;soak" TIMEOUT 900 SKIP_RETURN_CODE 77)
 endif()
 
 # GLX integration test: public API only, against the real shared library, with a raw GLX context on its own X
