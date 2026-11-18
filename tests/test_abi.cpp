@@ -19,6 +19,9 @@ static_assert(sizeof(TesseraHandle) == 8, "handles are 64-bit");
 static_assert(sizeof(TesseraResult) == 4, "results are 32-bit");
 static_assert(sizeof(TesseraContextInfo) == 504, "TesseraContextInfo layout");
 static_assert(sizeof(TesseraProbeReport) == 832, "TesseraProbeReport layout");
+static_assert(offsetof(TesseraContextConfig, adapterLuid) == 72 &&
+                  offsetof(TesseraContextConfig, gpuPreference) == 80,
+              "TesseraContextConfig GPU fields (the Java FFM binding hard-codes the offsets)");
 static_assert(sizeof(TesseraNativeHandles) == 88,
               "TesseraNativeHandles layout (the Java FFM binding hard-codes it)");
 static_assert(offsetof(TesseraProbeReport, info) == 8 && offsetof(TesseraProbeReport, backend) == 512 &&

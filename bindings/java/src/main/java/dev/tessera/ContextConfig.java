@@ -59,6 +59,22 @@ public final class ContextConfig {
         }
     }
 
+    /**
+     * Which GPU to use. Windows (WGL) only; other backends refuse a non-default value with {@link Result#UNSUPPORTED}. A process
+     * cannot make Windows load a different GPU's OpenGL driver, so this does not switch GPUs: Tessera resolves the adapter through
+     * DXGI and <em>checks</em> that the OpenGL driver it got belongs to it (by PCI vendor), failing with
+     * {@link Result#NO_MATCHING_CONFIG} instead of silently handing out another GPU. For a preference the check is a failure in
+     * strict mode and a logged warning in best-effort mode; for {@link Builder#adapterLuid(long)} it is always a failure.
+     */
+    public enum GpuPreference {
+        DEFAULT(0), HIGH_PERFORMANCE(1), LOW_POWER(2);
+        final int nativeValue;
+
+        GpuPreference(int v) {
+            nativeValue = v;
+        }
+    }
+
     public enum Fallback {
         STRICT(0), BEST_EFFORT(1);
         final int nativeValue;
@@ -100,6 +116,8 @@ public final class ContextConfig {
     private final int stencil;
     private final int samples;
     private final Context shareWith;
+    private final GpuPreference gpuPreference;
+    private final long adapterLuid;
 
     private ContextConfig(Builder b) {
         api = b.api;
@@ -117,6 +135,8 @@ public final class ContextConfig {
         stencil = b.stencil;
         samples = b.samples;
         shareWith = b.shareWith;
+        gpuPreference = b.gpuPreference;
+        adapterLuid = b.adapterLuid;
     }
 
     public static Builder builder() {
@@ -159,10 +179,23 @@ public final class ContextConfig {
         return shareWith;
     }
 
-    /** Layout shared with the native side: api, major, minor, profile, flags, surface, fallback, r, g, b, a, depth, stencil, samples. */
+    public GpuPreference gpuPreference() {
+        return gpuPreference;
+    }
+
+    /** The requested DXGI adapter LUID, or 0. */
+    public long adapterLuid() {
+        return adapterLuid;
+    }
+
+    /**
+     * Layout shared with the native side: api, major, minor, profile, flags, surface, fallback, r, g, b, a, depth, stencil,
+     * samples, gpuPreference, adapterLuid (low 32 bits, high 32 bits).
+     */
     int[] toNative() {
         return new int[] {api.nativeValue, versionMajor, versionMinor, profile.nativeValue, flags, surface.nativeValue,
-                fallback.nativeValue, red, green, blue, alpha, depth, stencil, samples};
+                fallback.nativeValue, red, green, blue, alpha, depth, stencil, samples, gpuPreference.nativeValue,
+                (int) adapterLuid, (int) (adapterLuid >>> 32)};
     }
 
     @Override
@@ -180,6 +213,8 @@ public final class ContextConfig {
         private int flags;
         private Surface surface = Surface.DEFAULT;
         private Fallback fallback = Fallback.STRICT;
+        private GpuPreference gpuPreference = GpuPreference.DEFAULT;
+        private long adapterLuid;
         private int red;
         private int green;
         private int blue;
@@ -220,6 +255,18 @@ public final class ContextConfig {
 
         public Builder surface(Surface surface) {
             this.surface = Objects.requireNonNull(surface, "surface");
+            return this;
+        }
+
+        /** See {@link GpuPreference}. Not combinable with {@link #adapterLuid(long)}. */
+        public Builder gpuPreference(GpuPreference preference) {
+            this.gpuPreference = Objects.requireNonNull(preference, "preference");
+            return this;
+        }
+
+        /** A DXGI adapter LUID ({@code (HighPart << 32) | LowPart}); Windows only, see {@link GpuPreference}. 0 = none. */
+        public Builder adapterLuid(long luid) {
+            this.adapterLuid = luid;
             return this;
         }
 

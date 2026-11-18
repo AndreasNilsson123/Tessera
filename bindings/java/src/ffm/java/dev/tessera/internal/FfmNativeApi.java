@@ -28,7 +28,7 @@ final class FfmNativeApi implements NativeApi {
     private static final long CONFIG_SIZE = 136;
     private static final long CFG_STRUCT_SIZE = 0, CFG_API = 4, CFG_MAJOR = 8, CFG_MINOR = 12, CFG_PROFILE = 16, CFG_FLAGS = 20,
             CFG_SURFACE = 24, CFG_FALLBACK = 28, CFG_RED = 32, CFG_GREEN = 36, CFG_BLUE = 40, CFG_ALPHA = 44, CFG_DEPTH = 48,
-            CFG_STENCIL = 52, CFG_SAMPLES = 56, CFG_SHARE_WITH = 64;
+            CFG_STENCIL = 52, CFG_SAMPLES = 56, CFG_SHARE_WITH = 64, CFG_ADAPTER_LUID = 72, CFG_GPU_PREFERENCE = 80;
     // TesseraContextInfo (504 bytes)
     private static final long INFO_SIZE = 504;
     private static final long INFO_STRUCT_SIZE = 0, INFO_API = 4, INFO_MAJOR = 8, INFO_MINOR = 12, INFO_PROFILE = 16, INFO_FLAGS = 20,
@@ -175,6 +175,8 @@ final class FfmNativeApi implements NativeApi {
         c.set(INT, CFG_STENCIL, cfg[12]);
         c.set(INT, CFG_SAMPLES, cfg[13]);
         c.set(LONG, CFG_SHARE_WITH, shareWith);
+        c.set(INT, CFG_GPU_PREFERENCE, cfg[14]);
+        c.set(LONG, CFG_ADAPTER_LUID, (cfg[15] & 0xFFFFFFFFL) | ((long) cfg[16] << 32));
         return c;
     }
 

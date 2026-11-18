@@ -7,6 +7,8 @@
 #define NOMINMAX
 #include <windows.h>
 
+#include <dxgi.h>
+
 #include <tessera/tessera.h>
 
 #include <atomic>
@@ -534,6 +536,152 @@ static void testNativeHandles() {
     }
 }
 
+// ---------------------------------------------------------------- GPU selection (adapterLuid /
+// gpuPreference)
+
+struct TestAdapter {
+    uint64_t luid;
+    unsigned vendor;
+    bool software;
+    std::string name;
+};
+
+static std::vector<TestAdapter> dxgiAdapters() {
+    std::vector<TestAdapter> v;
+    IDXGIFactory1* f = nullptr;
+    if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(&f))) || !f)
+        return v;
+    for (UINT i = 0;; ++i) {
+        IDXGIAdapter1* a = nullptr;
+        if (f->EnumAdapters1(i, &a) == DXGI_ERROR_NOT_FOUND)
+            break;
+        DXGI_ADAPTER_DESC1 d = {};
+        a->GetDesc1(&d);
+        char name[256] = {};
+        WideCharToMultiByte(CP_UTF8, 0, d.Description, -1, name, sizeof name - 1, nullptr, nullptr);
+        v.push_back({(static_cast<uint64_t>(static_cast<uint32_t>(d.AdapterLuid.HighPart)) << 32) |
+                         d.AdapterLuid.LowPart,
+                     d.VendorId, (d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0, name});
+        a->Release();
+    }
+    f->Release();
+    return v;
+}
+
+static void testAdapterSelection() {
+    TesseraContextConfig base = baseConfig();
+    base.fallback = TESSERA_FALLBACK_BEST_EFFORT;
+    TesseraContext probe = 0;
+    EXPECT(tesseraCreateContext(&base, &probe), TESSERA_SUCCESS);
+    TesseraContextInfo info = tesseraDefaultContextInfo();
+    if (probe)
+        tesseraGetContextInfo(probe, &info);
+    if (probe)
+        tesseraDestroyContext(probe);
+    const std::string glText = std::string(info.vendor) + " " + info.renderer;
+    const bool microsoftGl = glText.find("Microsoft") != std::string::npos;
+    const auto adapters = dxgiAdapters();
+    std::printf("  OpenGL driver: %s; %zu DXGI adapter(s)\n", glText.c_str(), adapters.size());
+    for (const auto& a : adapters)
+        std::printf("    %s vendor 0x%04x luid %016llx%s\n", a.name.c_str(), a.vendor,
+                    static_cast<unsigned long long>(a.luid), a.software ? " (software)" : "");
+
+    // Which DXGI adapter is the OpenGL driver's own? (by vendor; only meaningful when exactly one hardware
+    // adapter matches)
+    const TestAdapter* mine = nullptr;
+    int hardware = 0;
+    for (const auto& a : adapters) {
+        if (a.software)
+            continue;
+        ++hardware;
+        const bool nv = a.vendor == 0x10DE && glText.find("NVIDIA") != std::string::npos;
+        const bool amd = (a.vendor == 0x1002 || a.vendor == 0x1022) &&
+                         (glText.find("ATI") != std::string::npos || glText.find("AMD") != std::string::npos);
+        const bool intel = a.vendor == 0x8086 && glText.find("Intel") != std::string::npos;
+        if (nv || amd || intel)
+            mine = &a;
+    }
+
+    TesseraContext ctx = 0;
+    // Unknown LUID: refused, with a reason, never a handle.
+    TesseraContextConfig bogus = base;
+    bogus.adapterLuid = 0x1234567800000001ull;
+    EXPECT(tesseraCreateContext(&bogus, &ctx), TESSERA_ERROR_NO_MATCHING_CONFIG);
+    CHECK(ctx == TESSERA_NULL_HANDLE && std::strstr(tesseraGetLastErrorMessage(), "LUID") != nullptr);
+
+    // Both fields together, and an unknown preference, are argument errors.
+    TesseraContextConfig both = base;
+    both.adapterLuid = 1;
+    both.gpuPreference = TESSERA_GPU_HIGH_PERFORMANCE;
+    EXPECT(tesseraCreateContext(&both, &ctx), TESSERA_ERROR_INVALID_ARGUMENT);
+    TesseraContextConfig unknown = base;
+    unknown.gpuPreference = 9;
+    EXPECT(tesseraCreateContext(&unknown, &ctx), TESSERA_ERROR_INVALID_ARGUMENT);
+
+    // An adapter that is not the one the OpenGL driver belongs to is refused, in best-effort mode too (an
+    // explicit LUID is hard).
+    for (const auto& a : adapters) {
+        if (&a == mine || microsoftGl)
+            continue;
+        TesseraContextConfig other = base;
+        other.adapterLuid = a.luid;
+        const TesseraResult r = tesseraCreateContext(&other, &ctx);
+        if (a.software && hardware == 1 && mine) {
+            // the software adapter (Microsoft Basic Render Driver) is not what NVIDIA's OpenGL driver runs on
+            CHECK(r == TESSERA_ERROR_NO_MATCHING_CONFIG);
+            CHECK(std::strstr(tesseraGetLastErrorMessage(), "does not belong to the requested adapter") !=
+                  nullptr);
+        }
+        if (r == TESSERA_SUCCESS && ctx) {
+            std::fprintf(stderr, "adapter %s was accepted but the OpenGL driver is %s\n", a.name.c_str(),
+                         glText.c_str());
+            ++g_failures;
+            tesseraDestroyContext(ctx);
+        }
+        ctx = 0;
+    }
+
+    if (mine) {
+        // The real one works, by LUID and by preference.
+        TesseraContextConfig byLuid = base;
+        byLuid.adapterLuid = mine->luid;
+        EXPECT(tesseraCreateContext(&byLuid, &ctx), TESSERA_SUCCESS);
+        if (ctx) {
+            TesseraContextInfo got = tesseraDefaultContextInfo();
+            tesseraGetContextInfo(ctx, &got);
+            CHECK(std::strcmp(got.renderer, info.renderer) == 0);
+            EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
+        }
+        if (hardware == 1) { // with a single hardware adapter, both preferences name it
+            for (unsigned pref : {TESSERA_GPU_HIGH_PERFORMANCE, TESSERA_GPU_LOW_POWER}) {
+                TesseraContextConfig p = base;
+                p.fallback = TESSERA_FALLBACK_STRICT;
+                p.gpuPreference = pref;
+                EXPECT(tesseraCreateContext(&p, &ctx), TESSERA_SUCCESS);
+                if (ctx)
+                    EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
+            }
+        }
+        // Pre-warmed contexts are keyed on the request: a default pool entry is not handed out for an adapter
+        // request.
+        TesseraContextConfig plain = base;
+        EXPECT(tesseraPrewarmContexts(&plain, 1), TESSERA_SUCCESS);
+        const int before = tesseraPooledContextCount();
+        EXPECT(tesseraCreateContext(&byLuid, &ctx), TESSERA_SUCCESS);
+        CHECK(tesseraPooledContextCount() == before); // the pooled default context was left alone
+        if (ctx)
+            EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
+        TesseraProbeReport rep = tesseraDefaultProbeReport();
+        EXPECT(tesseraProbe(&byLuid, &rep), TESSERA_SUCCESS);
+        TesseraProbeReport badRep = tesseraDefaultProbeReport();
+        EXPECT(tesseraProbe(&bogus, &badRep), TESSERA_ERROR_NO_MATCHING_CONFIG);
+        CHECK(badRep.message[0] != '\0');
+    } else {
+        std::printf(
+            "  (the OpenGL driver does not map to exactly one DXGI adapter here: positive cases skipped)\n");
+    }
+}
+
 static HWND rawWindow(bool withPixelFormat, bool doubleBuffer) {
     HWND w =
         CreateWindowExW(0, L"STATIC", L"attach", WS_POPUP, 0, 0, 64, 64, nullptr, nullptr, nullptr, nullptr);
@@ -736,6 +884,7 @@ int main() {
         {"probe", testProbe},
         {"native handles", testNativeHandles},
         {"window attach", testWindowAttach},
+        {"GPU selection", testAdapterSelection},
         {"terminate / re-init", testTerminateAndReinit},
     };
     for (const Section& sec : sections) {

@@ -69,6 +69,12 @@ class Backend {
     virtual TesseraResult createContext(const TesseraContextConfig& config,
                                         const std::shared_ptr<ContextObject>& shareWith,
                                         std::shared_ptr<ContextObject>& out) = 0;
+    /* Can this backend honour TesseraContextConfig::adapterLuid / gpuPreference? Backends that cannot are
+     * skipped for such a request (so it fails with UNSUPPORTED instead of silently using whatever GPU the
+     * backend picks). */
+    virtual bool supportsAdapterSelection() const noexcept {
+        return false;
+    }
     /* Renders into a caller-owned window; see tesseraCreateContextForWindow. UNSUPPORTED by default (without
      * side effects). */
     virtual TesseraResult createContextForWindow(const TesseraContextConfig& /*config*/,

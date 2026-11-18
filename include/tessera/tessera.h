@@ -29,7 +29,7 @@ extern "C" {
 /* ---------------------------------------------------------------- version */
 
 #define TESSERA_VERSION_MAJOR 0
-#define TESSERA_VERSION_MINOR 6
+#define TESSERA_VERSION_MINOR 7
 #define TESSERA_VERSION_PATCH 0
 
 /* Incremented on every incompatible change to the C ABI, independent of the semantic version. */
@@ -142,6 +142,21 @@ typedef uint32_t TesseraEnum;
 /* Reported for contexts made by tesseraCreateContextForWindow; not a request value. */
 #define TESSERA_SURFACE_WINDOW 0x0004u
 
+/*
+ * TesseraContextConfig::gpuPreference. Windows (WGL) only; any other backend refuses a non-default value with
+ * UNSUPPORTED (on EGL use TESSERA_EGL_DEVICE). A process cannot make Windows load a different GPU's OpenGL
+ * driver, so this does not switch GPUs: Tessera resolves the adapter the request names through DXGI and
+ * CHECKS that the OpenGL driver it got belongs to it (by PCI vendor). A mismatch, or an adapter that cannot
+ * be verified because several share a vendor, fails with NO_MATCHING_CONFIG: you never silently get another
+ * GPU. For HIGH_PERFORMANCE / LOW_POWER the check is a failure in strict mode and a logged warning in
+ * best-effort mode; for an explicit adapterLuid it is always a failure.
+ */
+#define TESSERA_GPU_DEFAULT 0x0000u /* no request */
+#define TESSERA_GPU_HIGH_PERFORMANCE                                                                         \
+    0x0001u /* the adapter DXGI considers the fastest (never a software adapter) */
+#define TESSERA_GPU_LOW_POWER                                                                                \
+    0x0002u /* the adapter DXGI considers the most frugal (usually the integrated GPU) */
+
 /* TesseraContextConfig::fallback */
 #define TESSERA_FALLBACK_STRICT 0x0000u      /* fail unless every requested attribute is met */
 #define TESSERA_FALLBACK_BEST_EFFORT 0x0001u /* relax soft attributes (samples, bits); report result */
@@ -159,7 +174,11 @@ typedef struct TesseraContextConfig {
     int32_t depthBits, stencilBits;
     int32_t samples;          /* 0 = no multisampling */
     TesseraContext shareWith; /* TESSERA_NULL_HANDLE = none */
-    uint64_t reserved[8];     /* must be zero; reserved for future use */
+    /* Added in 0.7.0, taken out of the reserved space (the size did not change): zero = no request. */
+    uint64_t adapterLuid;   /* Windows: DXGI adapter LUID as (HighPart << 32) | LowPart; see TESSERA_GPU_* */
+    uint32_t gpuPreference; /* TESSERA_GPU_*; not combinable with adapterLuid */
+    uint32_t reserved32;    /* must be zero */
+    uint64_t reserved[6];   /* must be zero; reserved for future use */
 } TesseraContextConfig;
 
 /* Zeroed config with structSize set: `TesseraContextConfig cfg = tesseraDefaultContextConfig();`

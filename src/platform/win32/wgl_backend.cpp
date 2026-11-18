@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "adapter.hpp"
 #include "core/boundary.hpp"
 #include "core/library.hpp"
 #include "core/log.hpp"
@@ -515,6 +516,10 @@ class WglBackend final : public Backend {
         return "wgl";
     }
 
+    bool supportsAdapterSelection() const noexcept override {
+        return true;
+    }
+
     TesseraResult createContext(const TesseraContextConfig& c,
                                 const std::shared_ptr<ContextObject>& shareWith,
                                 std::shared_ptr<ContextObject>& out) override {
@@ -658,6 +663,23 @@ class WglBackend final : public Backend {
         // Never negotiable, whatever the fallback policy: API, minimum version, profile.
         if (const char* why = hardRequirementViolation(c, ctx->info))
             return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, why);
+
+        // A request for a specific GPU: Windows decides which GPU's OpenGL driver we got, so check rather
+        // than assume.
+        if (adapterRequested(c)) {
+            AdapterInfo wanted;
+            std::string why;
+            if (!resolveAdapter(c, wanted, why))
+                return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, why);
+            std::string ignored;
+            const std::string mismatch =
+                verifyAdapter(wanted, enumerateAdapters(ignored), ctx->info.vendor, ctx->info.renderer);
+            if (!mismatch.empty()) {
+                if (c.adapterLuid != 0 || c.fallback == TESSERA_FALLBACK_STRICT)
+                    return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, mismatch);
+                logf(TESSERA_LOG_WARN, "WGL: %s", mismatch.c_str());
+            }
+        }
 
         // Strict mode promises exactly what was asked for: verify the parts the driver may have loosened.
         if (c.fallback == TESSERA_FALLBACK_STRICT && !contextSatisfies(c, ctx->info))

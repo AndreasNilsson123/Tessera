@@ -671,6 +671,9 @@ static void testAttributeMatrix() {
 static void testPrewarm() {
     interop::prewarm(glxHooks());
 }
+static void testAdapterRequests() {
+    interop::adapterRequestsRefused(glxHooks());
+}
 static void testProbe() {
     ForeignContext foreign; // a context from "another library" must survive every probe
     robust::Hooks h = glxHooks();
@@ -823,6 +826,7 @@ int main() {
         {"attribute matrix", testAttributeMatrix},
         {"pre-warmed contexts", testPrewarm},
         {"probe", testProbe},
+        {"GPU requests are refused", testAdapterRequests},
         {"native handles", testNativeHandles},
         {"window attach", testWindowAttach},
         {"terminate / re-init", testTerminateAndReinit},

@@ -193,7 +193,6 @@ void Runtime::registerBackend(std::shared_ptr<Backend> backend) {
 TesseraResult Runtime::createNative(const TesseraContextConfig& config,
                                     const std::shared_ptr<ContextObject>& share, const Attempt& attempt,
                                     std::shared_ptr<ContextObject>& created) {
-    (void)config;
     std::vector<std::shared_ptr<Backend>> backends;
     {
         std::lock_guard<std::mutex> lock(lifecycle_);
@@ -202,11 +201,19 @@ TesseraResult Runtime::createNative(const TesseraContextConfig& config,
 
     TesseraResult result = TESSERA_ERROR_UNSUPPORTED;
     created.reset();
+    const bool adapter = config.adapterLuid != 0 || config.gpuPreference != TESSERA_GPU_DEFAULT;
     for (const auto& backend : backends) {
+        if (adapter && !backend->supportsAdapterSelection())
+            continue; // never serve a GPU request from a backend that cannot honour it
         result = attempt(*backend, share, created);
         if (result != TESSERA_ERROR_UNSUPPORTED)
             break;
     }
+    if (adapter && result == TESSERA_ERROR_UNSUPPORTED && !created)
+        return fail(
+            TESSERA_ERROR_UNSUPPORTED,
+            "choosing a GPU through the configuration is only implemented for WGL (Windows); on EGL use "
+            "TESSERA_EGL_DEVICE");
     if (result == TESSERA_ERROR_UNSUPPORTED && backends.empty())
         return fail(TESSERA_ERROR_UNSUPPORTED, "no OpenGL backend is available in this build/platform");
     if (result != TESSERA_SUCCESS)
@@ -255,7 +262,8 @@ bool sameRequest(const TesseraContextConfig& a, const TesseraContextConfig& b) {
            a.profile == b.profile && a.flags == b.flags && a.surface == b.surface &&
            a.fallback == b.fallback && a.redBits == b.redBits && a.greenBits == b.greenBits &&
            a.blueBits == b.blueBits && a.alphaBits == b.alphaBits && a.depthBits == b.depthBits &&
-           a.stencilBits == b.stencilBits && a.samples == b.samples;
+           a.stencilBits == b.stencilBits && a.samples == b.samples && a.adapterLuid == b.adapterLuid &&
+           a.gpuPreference == b.gpuPreference;
 }
 constexpr std::size_t kMaxPooled = 64;
 } // namespace
@@ -381,7 +389,10 @@ TesseraResult Runtime::probe(const TesseraContextConfig& config, TesseraProbeRep
     }
     TesseraResult result = TESSERA_ERROR_UNSUPPORTED;
     std::shared_ptr<ContextObject> created;
+    const bool adapter = config.adapterLuid != 0 || config.gpuPreference != TESSERA_GPU_DEFAULT;
     for (const auto& backend : backends) {
+        if (adapter && !backend->supportsAdapterSelection())
+            continue;
         std::snprintf(report.backend, sizeof report.backend, "%s", backend->name());
         created.reset();
         result = backend->createContext(config, nullptr, created);

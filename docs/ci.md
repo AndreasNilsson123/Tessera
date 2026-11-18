@@ -66,3 +66,9 @@ with JDKs 17, 19, 21, 22, 25 and 28.
   `TESSERA_SOAK_CYCLES` (per thread, default 1500, about a minute) or `TESSERA_SOAK_SECONDS` (e.g. 86400) scale it. The
   informational GPU CI jobs run the default size.
 
+## Fault injection
+
+`fault_wgl` (Windows) and `fault_glx` / `fault_egl` (Linux, one backend per process) run `tests/test_fault.cpp`: the backends'
+driver entry points are wrapped, each failable call is failed once and then every call from there on, and the public-API scenarios
+(plain, pbuffer, sharing, core + debug, MSAA/sRGB ladder, no surface, recreate) must neither crash nor leak native objects nor
+disturb the other library's context. Label `gpu;fault`, about a minute each.

@@ -75,6 +75,13 @@ TesseraResult normalizeConfig(const TesseraContextConfig* in, TesseraContextConf
     if (out.samples < 0 || out.samples > 64)
         return bad("samples out of range 0..64");
 
+    if (out.gpuPreference > TESSERA_GPU_LOW_POWER)
+        return bad("unknown gpuPreference");
+    if (out.adapterLuid != 0 && out.gpuPreference != TESSERA_GPU_DEFAULT)
+        return bad("adapterLuid and gpuPreference cannot be combined");
+    if (out.reserved32 != 0)
+        return bad("reserved fields must be zero");
+
     for (uint64_t r : out.reserved)
         if (r != 0)
             return bad("reserved fields must be zero");

@@ -191,10 +191,10 @@ inline void nativeHandles(const robust::Hooks& h, const HandleExpectations& e) {
     EXPECT(tesseraGetNativeHandles(0xBAD, &nh), TESSERA_ERROR_INVALID_HANDLE);
     unsigned char raw[sizeof(TesseraNativeHandles) + 16];
     std::memset(raw, 0xCD, sizeof raw);
-    auto* small = reinterpret_cast<TesseraNativeHandles*>(raw);
-    small->structSize = 8; // structSize + kind only
-    EXPECT(tesseraGetNativeHandles(ctx, small), TESSERA_SUCCESS);
-    CHECK(small->structSize == 8 && small->kind == e.kind);
+    auto* narrow = reinterpret_cast<TesseraNativeHandles*>(raw);
+    narrow->structSize = 8; // structSize + kind only
+    EXPECT(tesseraGetNativeHandles(ctx, narrow), TESSERA_SUCCESS);
+    CHECK(narrow->structSize == 8 && narrow->kind == e.kind);
     CHECK(raw[8] == 0xCD && raw[9] == 0xCD); // nothing written beyond what the caller's struct holds
 
     EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
@@ -252,6 +252,34 @@ inline void probe(const robust::Hooks& h) {
     }
     if (real)
         EXPECT(tesseraDestroyContext(real), TESSERA_SUCCESS);
+}
+
+// ---------------------------------------------------------------- GPU requests on backends that cannot
+// honour them
+
+// Only WGL can check an adapter request; every other backend must refuse it instead of silently using
+// whatever GPU it picks.
+inline void adapterRequestsRefused(const robust::Hooks& h) {
+    TesseraContextConfig cfg = h.base;
+    cfg.fallback = TESSERA_FALLBACK_BEST_EFFORT;
+    cfg.gpuPreference = TESSERA_GPU_HIGH_PERFORMANCE;
+    TesseraContext ctx = 0;
+    EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_ERROR_UNSUPPORTED);
+    CHECK(ctx == TESSERA_NULL_HANDLE);
+    CHECK(std::strstr(tesseraGetLastErrorMessage(), "only implemented for WGL") != nullptr);
+    cfg.gpuPreference = TESSERA_GPU_DEFAULT;
+    cfg.adapterLuid = 0x1234;
+    EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_ERROR_UNSUPPORTED);
+    TesseraProbeReport rep = tesseraDefaultProbeReport();
+    EXPECT(tesseraProbe(&cfg, &rep), TESSERA_ERROR_UNSUPPORTED);
+    CHECK(rep.result == TESSERA_ERROR_UNSUPPORTED);
+    EXPECT(tesseraPrewarmContexts(&cfg, 1), TESSERA_ERROR_UNSUPPORTED);
+    CHECK(tesseraPooledContextCount() == 0);
+    // The same request without the GPU fields works.
+    cfg.adapterLuid = 0;
+    EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_SUCCESS);
+    if (ctx)
+        EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
 }
 
 } // namespace interop

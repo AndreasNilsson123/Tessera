@@ -45,7 +45,7 @@ set_tests_properties(fuzz PROPERTIES TIMEOUT 300)
 # WGL integration test: public API only, against the real DLL, with a raw WGL context as the "other library".
 if(WIN32 AND TESSERA_BUILD_SHARED)
     add_executable(test_wgl test_wgl.cpp)
-    target_link_libraries(test_wgl PRIVATE Tessera::tessera opengl32 gdi32 user32)
+    target_link_libraries(test_wgl PRIVATE Tessera::tessera opengl32 gdi32 user32 dxgi)
     tessera_apply_options(test_wgl)
     add_custom_command(TARGET test_wgl POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:tessera> $<TARGET_FILE_DIR:test_wgl>)

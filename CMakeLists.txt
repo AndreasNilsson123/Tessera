@@ -57,6 +57,7 @@ if(WIN32)
     list(APPEND TESSERA_CORE_SOURCES
         src/platform/win32/window_host.cpp
         src/platform/win32/wgl_api.cpp
+        src/platform/win32/adapter.cpp
         src/platform/win32/wgl_backend.cpp)
 endif()
 if(UNIX AND NOT APPLE)

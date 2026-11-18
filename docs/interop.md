@@ -49,6 +49,24 @@ Only never-used contexts are pooled, so nothing leaks between users. Max 64; emp
 `TESSERA_EGL_DEVICE=<index | /dev/dri/renderD128 | 0000:01:00.0>` (see `environment.md`). A choice that matches nothing is an
 error, never a different GPU.
 
+## Choosing a GPU
+
+Windows: `cfg.gpuPreference = TESSERA_GPU_HIGH_PERFORMANCE` (or `_LOW_POWER`), or `cfg.adapterLuid = <DXGI LUID>`.
+
+A process cannot make Windows load a different GPU's OpenGL driver (that is per application in Windows' graphics settings, or the host
+EXE exports `NvOptimusEnablement` / `AmdPowerXpressRequestHighPerformance`), so this is a **check, not a switch**: Tessera resolves
+the adapter through DXGI and verifies that the OpenGL driver it got belongs to it by PCI vendor. A mismatch fails with
+`NO_MATCHING_CONFIG` and a message naming both; two adapters of the same vendor cannot be told apart and are reported as
+unverifiable. An explicit LUID is always a hard requirement; a preference is a failure in strict mode and a logged warning in
+best-effort mode. Other backends return `UNSUPPORTED` for a non-default value (EGL: `TESSERA_EGL_DEVICE`). Java:
+`ContextConfig.builder().gpuPreference(...)` / `.adapterLuid(...)`. It does not use `WGL_NV_gpu_affinity` or
+`WGL_AMD_gpu_association` (workstation cards only; untestable here).
+
+## No drawable at all (`TESSERA_SURFACE_NONE`)
+
+EGL and GLX make the context current without any drawable (GLX falls back to a hidden window on a driver that refuses). WGL cannot:
+`wglMakeCurrent` needs a DC, so WGL keeps an internal 1x1 window and still reports `SURFACE_NONE` (nothing is exposed to render to).
+
 ## Not provided
 
 dma-buf export, IOSurface, Vulkan memory objects/semaphores (use the handles above), Wayland/`NSView` attach, UUID device

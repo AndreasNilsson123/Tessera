@@ -765,6 +765,9 @@ static void testAttributeMatrix() {
 static void testPrewarm() {
     interop::prewarm(eglHooks());
 }
+static void testAdapterRequests() {
+    interop::adapterRequestsRefused(eglHooks());
+}
 static void testProbe() {
     ForeignContext foreign; // a context from "another library" must survive every probe
     robust::Hooks h = eglHooks();
@@ -858,6 +861,7 @@ int main() {
         {"attribute matrix", testAttributeMatrix},
         {"pre-warmed contexts", testPrewarm},
         {"probe", testProbe},
+        {"GPU requests are refused", testAdapterRequests},
         {"native handles", testNativeHandles},
         {"terminate leaves the shared display alive", testTerminateKeepsSharedDisplayAlive},
         {"device selection", testDeviceSelection},

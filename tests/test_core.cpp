@@ -1176,6 +1176,30 @@ static void testNoGrowthWithManyContexts() {
 }
 #endif
 
+static void testAdapterRequestsAgainstFake() {
+    TesseraContextConfig cfg = tesseraDefaultContextConfig();
+    cfg.api = TESSERA_API_OPENGL;
+    cfg.gpuPreference = TESSERA_GPU_LOW_POWER;
+    TesseraContext ctx = 0;
+    EXPECT(tesseraCreateContext(&cfg, &ctx),
+           TESSERA_ERROR_UNSUPPORTED); // the fake backend cannot choose a GPU
+    CHECK(ctx == TESSERA_NULL_HANDLE && g_liveRobust == 0);
+    cfg.gpuPreference = 7;
+    EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_ERROR_INVALID_ARGUMENT);
+    cfg.gpuPreference = TESSERA_GPU_HIGH_PERFORMANCE;
+    cfg.adapterLuid = 5;
+    EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_ERROR_INVALID_ARGUMENT); // both at once
+    cfg.gpuPreference = 0;
+    EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_ERROR_UNSUPPORTED);
+    TesseraContextConfig pooled = tesseraDefaultContextConfig();
+    pooled.api = TESSERA_API_OPENGL;
+    EXPECT(tesseraPrewarmContexts(&pooled, 1), TESSERA_SUCCESS);
+    EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_ERROR_UNSUPPORTED);
+    CHECK(tesseraPooledContextCount() >= 1); // the default pool entry is not used for a GPU request
+    TesseraContext plain = makeRobust(pooled);
+    EXPECT(tesseraDestroyContext(plain), TESSERA_SUCCESS);
+}
+
 static void testLifecycleRobustness() {
     CHECK(tesseraInit() == TESSERA_SUCCESS);
     tessera::Runtime::instance().registerBackend(std::make_shared<RobustFakeBackend>());
@@ -1188,6 +1212,7 @@ static void testLifecycleRobustness() {
     testXErrorScopeStaleInstall();
 #endif
     testProbe();
+    testAdapterRequestsAgainstFake();
 #ifndef TESSERA_RSS_TEST_OFF
     testNoGrowthWithManyContexts();
 #endif

@@ -323,6 +323,39 @@ public final class SelfTest {
         check(Context.current() == null, "failed attaches leave nothing current");
     }
 
+    static void gpuSelection() {
+        final boolean windows = System.getProperty("os.name", "").toLowerCase().contains("win");
+        final ContextConfig.Builder base = ContextConfig.builder().fallback(ContextConfig.Fallback.BEST_EFFORT);
+        final ContextConfig high = base.gpuPreference(ContextConfig.GpuPreference.HIGH_PERFORMANCE).build();
+        check(high.gpuPreference() == ContextConfig.GpuPreference.HIGH_PERFORMANCE && high.adapterLuid() == 0, "preference kept");
+        final ContextConfig luid = ContextConfig.builder().adapterLuid(0x1234567800000001L).build();
+        check(luid.adapterLuid() == 0x1234567800000001L && luid.toNative()[15] == 1 && luid.toNative()[16] == 0x12345678, "64-bit LUID split into two ints");
+
+        final TesseraException both = expect(TesseraException.class, "preference and LUID together", () -> Context.create(
+                ContextConfig.builder().gpuPreference(ContextConfig.GpuPreference.LOW_POWER).adapterLuid(5).build()).close());
+        if (both != null) {
+            check(both.result() == Result.INVALID_ARGUMENT, "both -> INVALID_ARGUMENT, was " + both.result());
+        }
+        if (windows) {
+            // An unknown adapter is refused with a reason; a preference either works or is refused, never a wrong GPU.
+            final ProbeReport bogus = Tessera.probe(luid);
+            check(bogus.result() == Result.NO_MATCHING_CONFIG && bogus.message().contains("LUID"), "unknown LUID: " + bogus);
+            final ProbeReport p = Tessera.probe(high);
+            check(p.result() == Result.SUCCESS || p.result() == Result.NO_MATCHING_CONFIG, "preference: " + p);
+            if (p.succeeded()) {
+                try (Context c = Context.create(high)) {
+                    check(c.info().renderer().equals(p.info().renderer()), "same GPU as the probe");
+                }
+            }
+        } else {
+            final TesseraException unsupported = expect(TesseraException.class, "GPU request off Windows", () -> Context.create(high).close());
+            if (unsupported != null) {
+                check(unsupported.result() == Result.UNSUPPORTED, "UNSUPPORTED off Windows, was " + unsupported.result());
+            }
+            check(Tessera.probe(high).result() == Result.UNSUPPORTED, "probe agrees");
+        }
+    }
+
     static void sharing() {
         final Context a = Context.create(plain());
         try (Context b = Context.create(ContextConfig.builder().fallback(ContextConfig.Fallback.BEST_EFFORT).shareWith(a).build())) {
@@ -420,11 +453,11 @@ public final class SelfTest {
                 + " on Java " + Runtime.version() + (bindingNote() == null ? "" : " (" + bindingNote() + ")"));
 
         final String[] names = {"config and info", "thread rules", "close from another thread", "garbage-collection safety net", "logging",
-                "reset and recreate", "sharing", "probe and pre-warming", "native handles", "window attach (validation)", "virtual threads",
+                "reset and recreate", "sharing", "probe and pre-warming", "native handles", "window attach (validation)", "GPU selection", "virtual threads",
                 "classloaders"};
         final Body[] bodies = {SelfTest::configAndInfo, SelfTest::threadRules, SelfTest::closeFromAnotherThread, SelfTest::cleanerSafetyNet,
                 SelfTest::logging, SelfTest::resetAndRecreate, SelfTest::sharing, SelfTest::probeAndPool, SelfTest::nativeHandles,
-                SelfTest::windowAttachValidation, SelfTest::virtualThreadsAreRefused, SelfTest::classLoaders};
+                SelfTest::windowAttachValidation, SelfTest::gpuSelection, SelfTest::virtualThreadsAreRefused, SelfTest::classLoaders};
         for (int i = 0; i < bodies.length; i++) {
             if (noLoaders && names[i].equals("classloaders")) {
                 continue;

@@ -98,15 +98,15 @@ Everything here was implemented-but-untested, deliberately skipped, or needs som
 - [ ] Robust access, reset notification, `KHR_no_error`, release-flush and context priority on drivers that grant them (WGL, GLX `_robustness`/`_no_error`, EGL flush control).
 - [ ] DWM swap-interval quirks; `GLX_EXT/MESA/SGI_swap_control` on a server that advertises them.
 - [ ] Share-order validation on WGL (not implemented) and context priority (not implemented).
-- [ ] Fault-injection of the WGL, GLX and EGL failure paths (done for CGL only; the others are covered by the matrix and earlier tests).
-- [ ] The Linux memory growth seen in the soak (+23-27 MB per ~1800 cycles with 3 threads, +2.5 MB with 1): LeakSanitizer shows no Tessera leak, but reachable growth (ours or Mesa's per-thread caches) is not ruled out. Compare against a driver that is not Mesa-on-D3D12, or instrument the handle table/groups/zombies sizes.
+- [x] Fault-injection of the WGL, GLX and EGL failure paths (`tests/test_fault.cpp`): every failable driver call that goes through the backends' function tables (93 / 218 / 301 on WGL / GLX / EGL) is failed once and then every call from there on, against the real driver through the public API, checking result codes, handles, the other library's context and native-object leaks (contexts, pbuffers, windows, colormaps). **It found no bug.** A mutation (skipping a release) makes it report 183 problems, so it does detect leaks; also clean under ASan/UBSan. Not injectable: direct Win32 calls (`CreateWindowEx`, `SetPixelFormat`) and asynchronous X errors.
+- [x] The Linux memory growth seen in the soak: **not Tessera's.** With a fake backend Tessera is flat over 270,000 contexts on 3 threads (guard in `test_core`); the same create/use/destroy loop written straight against libX11/libGL grows the same way on Mesa's D3D12 driver with 3 threads (about 2 KB per context, 6.5 MB per 3000 contexts) and not on llvmpipe or with one thread. Not tested: a non-Mesa driver.
 - [x] CI: the workflow has run; see the status above. Open: the macOS jobs, and a scheduled (nightly) soak.
 
 ### 10.3 Not implemented (known gaps)
 
-- [ ] Drawable-less `SURFACE_NONE` on WGL and GLX (currently an internal 1x1 window).
+- [~] Drawable-less `SURFACE_NONE`: **GLX done** (the context is made current without any drawable; verified on Mesa D3D12 and llvmpipe including offscreen FBO rendering; a hidden window is the fallback for a driver that refuses, exercised by the fault sweep). **WGL is impossible**: `wglMakeCurrent(NULL, rc)` fails with `ERROR_INVALID_HANDLE` on the NVIDIA driver, so WGL keeps its internal 1x1 window (documented in `tessera.h`).
 - [ ] Detecting whether the host already called `XInitThreads`.
-- [ ] Multi-GPU selection on Windows (`WGL_NV_gpu_affinity`, `WGL_AMD_gpu_association`, DXGI preference); document that `NvOptimusEnablement` must be exported by the host EXE.
+- [~] GPU selection on Windows (ABI 0.7.0, `adapterLuid` / `gpuPreference`, Java `gpuPreference()` / `adapterLuid()`): **verification, not switching.** A process cannot make Windows load a different GPU's OpenGL driver, so Tessera resolves the adapter through DXGI (`EnumAdapterByGpuPreference`) and checks that the OpenGL driver it got belongs to it by PCI vendor; a mismatch (or several adapters of one vendor, which cannot be told apart) fails with `NO_MATCHING_CONFIG` instead of silently using another GPU. Other backends refuse the request (`UNSUPPORTED`; EGL has `TESSERA_EGL_DEVICE`). Tested here on the one real adapter plus the Basic Render Driver (mutation-checked). **Not implemented:** actually targeting a GPU with `WGL_NV_gpu_affinity` / `WGL_AMD_gpu_association` (this GeForce exposes neither, so it could not be tested); **not tested:** a hybrid Intel+NVIDIA/AMD machine, where the check matters most. Document for hosts: `NvOptimusEnablement` / `AmdPowerXpressRequestHighPerformance` must be exported by the EXE.
 - [ ] ANGLE / Mesa-on-Windows through the EGL backend: the EGL backend is built on Linux only, and the Windows loader is restricted to System32 by design (loading ANGLE from an application directory needs `LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR` handling and a test). Same for Metal-backed ANGLE on macOS (CGL is deprecated).
 - [ ] Interop beyond the handles: dma-buf export/import with fences (Linux), IOSurface (macOS), Vulkan `GL_EXT_memory_object` + semaphores. Each needs a consumer to test against.
 - [ ] Window attach for EGL (window surfaces), Wayland `wl_surface`, macOS `NSView`. (Windows and X11 are done.)
@@ -128,7 +128,7 @@ Everything here was implemented-but-untested, deliberately skipped, or needs som
 - [ ] Minimum GL and GLES version floor (3.2 core? 2.1 compat? GLES 2.0?).
 - [ ] Do we ship our own ANGLE/Mesa builds, or only detect system ones?
 - [ ] Real package/group names, license, release cadence.
-- [ ] **Freeze ABI v1.** Deliberately not done: the ABI changed as recently as 0.5.0 and only one GPU vendor has been tested. Freezing is a one-line version change; living with a wrong freeze is not. Suggested gate: 10.1 (at least AMD or Intel on Windows, and macOS) plus the decisions above plus CI green on a real remote.
+- [ ] **Freeze ABI v1.** Deliberately not done: the ABI changed as recently as 0.7.0 and only one GPU vendor has been tested. Freezing is a one-line version change; living with a wrong freeze is not. Suggested gate: 10.1 (at least AMD or Intel on Windows, and macOS) plus the decisions above plus CI green on a real remote.
 
 **Exit for 1.0:** the 10.1 items that have hardware available are green and recorded in `docs/compat.md`; 10.5 decided; CI has run green at least once; ABI frozen and tagged.
 

@@ -69,7 +69,7 @@ void TESSERA_CALL logTrampoline(int32_t level, const char* message, void* /*user
         vm->DetachCurrentThread();
 }
 
-constexpr jint kConfigInts = 14;
+constexpr jint kConfigInts = 17;
 constexpr jint kInfoInts = 13;
 
 // cfg: api, major, minor, profile, flags, surface, fallback, red, green, blue, alpha, depth, stencil, samples
@@ -89,6 +89,9 @@ TesseraContextConfig configFrom(const jint* v, TesseraContext share) {
     c.depthBits = v[11];
     c.stencilBits = v[12];
     c.samples = v[13];
+    c.gpuPreference = static_cast<uint32_t>(v[14]);
+    c.adapterLuid =
+        (static_cast<uint64_t>(static_cast<uint32_t>(v[16])) << 32) | static_cast<uint32_t>(v[15]);
     c.shareWith = share;
     return c;
 }
@@ -153,22 +156,7 @@ TESSERA_JNI(jint, nCreateContext)(JNIEnv* env, jclass, jintArray cfg, jlong shar
         return TESSERA_ERROR_INVALID_ARGUMENT;
     jint v[kConfigInts];
     env->GetIntArrayRegion(cfg, 0, kConfigInts, v);
-    TesseraContextConfig c = tesseraDefaultContextConfig();
-    c.api = static_cast<uint32_t>(v[0]);
-    c.versionMajor = v[1];
-    c.versionMinor = v[2];
-    c.profile = static_cast<uint32_t>(v[3]);
-    c.flags = static_cast<uint32_t>(v[4]);
-    c.surface = static_cast<uint32_t>(v[5]);
-    c.fallback = static_cast<uint32_t>(v[6]);
-    c.redBits = v[7];
-    c.greenBits = v[8];
-    c.blueBits = v[9];
-    c.alphaBits = v[10];
-    c.depthBits = v[11];
-    c.stencilBits = v[12];
-    c.samples = v[13];
-    c.shareWith = static_cast<TesseraContext>(share);
+    const TesseraContextConfig c = configFrom(v, static_cast<TesseraContext>(share));
     TesseraContext handle = TESSERA_NULL_HANDLE;
     const TesseraResult r = tesseraCreateContext(&c, &handle);
     const jlong result = static_cast<jlong>(handle);
