@@ -234,9 +234,16 @@ if(TARGET tessera_java_lwjgl AND TESSERA_JAVAFX_JARS)
             set(_fx_pipelines es2 sw)
         endif()
         foreach(_pipeline ${_fx_pipelines})
+            # JavaFX only accepts GPUs on its own allow-list for es2 ("Failed Graphics Hardware Qualifier check") and rejects
+            # Mesa's software and D3D12-over-WSL renderers, which are all a CI runner or WSL has. prism.forceGPU skips that
+            # list; the pipeline is still JavaFX's real OpenGL one (the test output shows ES2Pipeline and its frame counts).
+            set(_fx_extra "")
+            if(_pipeline STREQUAL "es2")
+                set(_fx_extra -Dprism.forceGPU=true)
+            endif()
             tessera_java_test(java_javafx_${_pipeline} dev.tessera.javafx.FxCoexistence BINDING jni NATIVE_LIB
                 CLASSPATH ${_fx_cp} MODULE_PATH ${TESSERA_JAVAFX_JARS}
-                JVM_OPTIONS -Dprism.order=${_pipeline} -Dprism.verbose=true ${_native_access})
+                JVM_OPTIONS -Dprism.order=${_pipeline} -Dprism.verbose=true ${_fx_extra} ${_native_access})
             set_tests_properties(java_javafx_${_pipeline} PROPERTIES LABELS "gpu;java;javafx" TIMEOUT 120)
             if(NOT _pipeline STREQUAL "sw")
                 set_tests_properties(java_javafx_${_pipeline} PROPERTIES FAIL_REGULAR_EXPRESSION "Fallback to Prism SW pipeline")

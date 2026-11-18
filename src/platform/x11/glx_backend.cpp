@@ -41,8 +41,18 @@ class GlxShared {
     PfnSwapIntervalMesa swapIntervalMesa = nullptr;
     PfnSwapIntervalSgi swapIntervalSgi = nullptr;
 
+    /*
+     * A connection that opened successfully is never closed (it lives in the process-wide `keptConnections()` list below and
+     * is reused by the next backend instance for the same DISPLAY). Closing the last connection makes Mesa dlclose its DRI
+     * driver, and a thread that still has a context current from that driver (or merely used it) runs the driver's
+     * pthread-key destructors at its own exit, in code that is no longer mapped: SIGSEGV in __nptl_deallocate_tsd. Found by
+     * the Java shutdown test (a context current on a parked thread when tesseraTerminate ran). The EGL backend makes the
+     * same choice for the same reason (never eglTerminate, ADR 0006). Only a connection that failed to open is closed.
+     */
+    bool keepOpen = false;
+    std::string displayName; // $DISPLAY at the time of opening: a different value means a different server
     ~GlxShared() {
-        if (dpy) api->xlib.XCloseDisplay(dpy);
+        if (dpy && !keepOpen) api->xlib.XCloseDisplay(dpy);
     }
 
     bool has(const char* extension) const {
@@ -62,6 +72,10 @@ class GlxShared {
             }
         });
 
+        {
+            const char* name = std::getenv("DISPLAY");
+            displayName = name ? name : "";
+        }
         dpy = api->xlib.XOpenDisplay(nullptr);
         if (!dpy) {
             const char* name = std::getenv("DISPLAY");
@@ -97,6 +111,7 @@ class GlxShared {
         swapIntervalSgi = reinterpret_cast<PfnSwapIntervalSgi>(proc("glXSwapIntervalSGI"));
         logf(TESSERA_LOG_DEBUG, "GLX %d.%d, %zu extensions, ARB_create_context=%d", major, minor, exts_.size(),
              createContextAttribs != nullptr);
+        keepOpen = true;
         return true;
     }
 
@@ -524,9 +539,21 @@ class GlxBackend final : public Backend {
             error = "libX11 and libGL are not available on this system";
             return nullptr;
         }
-        auto s = std::make_shared<GlxShared>();
-        s->api = api;
-        if (!s->open(error)) return nullptr;
+        // Reuse the connection a previous backend instance opened for the same display (see GlxShared::keepOpen).
+        static std::mutex keptMutex;
+        static std::vector<std::shared_ptr<GlxShared>>* const kept = new std::vector<std::shared_ptr<GlxShared>>(); // never freed
+        std::lock_guard<std::mutex> keptLock(keptMutex);
+        const char* display = std::getenv("DISPLAY");
+        const std::string wanted = display ? display : "";
+        std::shared_ptr<GlxShared> s;
+        for (const auto& k : *kept)
+            if (k->displayName == wanted && k->api == api) s = k;
+        if (!s) {
+            s = std::make_shared<GlxShared>();
+            s->api = api;
+            if (!s->open(error)) return nullptr;
+            kept->push_back(s);
+        }
         shared_ = s;
         return shared_;
     }

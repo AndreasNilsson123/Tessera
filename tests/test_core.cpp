@@ -21,6 +21,9 @@
 #include "core/handle_table.hpp"
 #include "core/library.hpp"
 #include "core/runtime.hpp"
+#if defined(__linux__)
+#include "platform/x11/glx_api.hpp"
+#endif
 #include "platform/common/gl_query.hpp"
 #include "core/thread_affinity.hpp"
 
@@ -816,6 +819,58 @@ static void testResourceWarnings() {
     CHECK(g_liveRobust == 0);
 }
 
+#if defined(__linux__)
+// ---- the scoped X error handler must survive another library leaving it installed ------------------------------------
+static int g_hostHandlerCalls = 0;
+static int hostXHandler(tessera::x11::Display*, tessera::x11::XErrorEvent*) {
+    ++g_hostHandlerCalls;
+    return 0;
+}
+
+static void testXErrorScopeStaleInstall() {
+    const tessera::x11::LinuxApi* api = tessera::x11::linuxApi();
+    if (!api) {
+        std::puts("  (libX11/libGL not available, skipped)");
+        return;
+    }
+    using tessera::x11::XErrorHandler;
+    const XErrorHandler original = api->xlib.XSetErrorHandler(&hostXHandler); // the "host application" installs its handler
+    {
+        tessera::x11::XErrorScope scope(*api, nullptr);
+        // While we are active, another library pushes its own handler: it receives OUR handler as the one to restore later.
+        XErrorHandler ours = api->xlib.XSetErrorHandler(&hostXHandler);
+        (void)api->xlib.XSetErrorHandler(ours);
+        (void)ours;
+    }
+    // After the scope ended the host handler is back. Now the other library "pops" late and reinstalls what it was given.
+    XErrorHandler installed = api->xlib.XSetErrorHandler(&hostXHandler);
+    CHECK(installed == &hostXHandler);
+    // Emulate the leak: install our own handler again via a scope's constructor path, then abandon it without restoring.
+    XErrorHandler leaked = nullptr;
+    {
+        tessera::x11::XErrorScope scope(*api, nullptr);
+        leaked = api->xlib.XSetErrorHandler(&hostXHandler); // = scopedHandler while the scope is active
+        (void)api->xlib.XSetErrorHandler(leaked);
+    }
+    CHECK(leaked != nullptr && leaked != &hostXHandler);
+    api->xlib.XSetErrorHandler(leaked); // the late restore: scopedHandler is now installed with no scope active
+
+    {
+        tessera::x11::XErrorScope scope(*api, nullptr); // used to record scopedHandler as "previous" and recurse forever
+        XErrorHandler current = api->xlib.XSetErrorHandler(&hostXHandler);
+        CHECK(current == leaked);
+        (void)api->xlib.XSetErrorHandler(current);
+        tessera::x11::XErrorEvent ev = {};
+        g_hostHandlerCalls = 0;
+        current(reinterpret_cast<tessera::x11::Display*>(0x1234), &ev); // an error on somebody else's display
+        CHECK(g_hostHandlerCalls == 1); // forwarded to the real host handler exactly once, no recursion
+    }
+    // And the stale install is cleaned up: the host handler, not ours, is what the scope restored.
+    XErrorHandler after = api->xlib.XSetErrorHandler(original);
+    CHECK(after == &hostXHandler);
+}
+#endif
+
 static void testPoolAndNativeApi() {
     TesseraContextConfig cfg = tesseraDefaultContextConfig();
     cfg.api = TESSERA_API_OPENGL;
@@ -924,7 +979,7 @@ static void testProbe() {
     CHECK(rep.result == TESSERA_ERROR_INVALID_ARGUMENT && std::strstr(rep.message, "share") != nullptr);
 
     // A caller with a smaller report struct gets only what fits.
-    unsigned char raw[16 + 8];
+    unsigned char raw[sizeof(TesseraProbeReport) + 16];
     std::memset(raw, 0xCD, sizeof raw);
     auto* small = reinterpret_cast<TesseraProbeReport*>(raw);
     small->structSize = 8;
@@ -959,6 +1014,9 @@ static void testLifecycleRobustness() {
     testDeferredDestruction();
     testResourceWarnings();
     testPoolAndNativeApi();
+#if defined(__linux__)
+    testXErrorScopeStaleInstall();
+#endif
     testProbe();
     CHECK(tesseraTerminate() == TESSERA_SUCCESS);
 }

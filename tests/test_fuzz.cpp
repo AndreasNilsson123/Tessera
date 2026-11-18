@@ -115,8 +115,8 @@ Exact configImage() {
         std::memcpy(&c, e.data.get(), sizeof c);
         c.structSize = static_cast<uint32_t>(sizeof c);
         c.api = pick(4) ? TESSERA_API_OPENGL : interesting();
-        c.versionMajor = pick(3) ? pick(5) : static_cast<int32_t>(interesting());
-        c.versionMinor = pick(3) ? pick(7) : static_cast<int32_t>(interesting());
+        c.versionMajor = pick(3) ? static_cast<int32_t>(pick(5)) : static_cast<int32_t>(interesting());
+        c.versionMinor = pick(3) ? static_cast<int32_t>(pick(7)) : static_cast<int32_t>(interesting());
         c.samples = pick(3) ? static_cast<int32_t>(pick(9)) : static_cast<int32_t>(interesting());
         c.flags = pick(2) ? (rnd() & 0x7ff) : static_cast<uint32_t>(rnd());
         c.shareWith = pick(4) ? TESSERA_NULL_HANDLE : rnd();

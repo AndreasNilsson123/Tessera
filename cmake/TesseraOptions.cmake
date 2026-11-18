@@ -23,6 +23,9 @@ function(tessera_apply_options target)
         else()
             target_compile_options(${target} PRIVATE -fsanitize=${TESSERA_SANITIZE} -fno-omit-frame-pointer)
             target_link_options(${target} PRIVATE -fsanitize=${TESSERA_SANITIZE})
+            # Clang links the UBSan C++ runtime (vptr / function checks) only when the C++ driver does the final link; a plain-C
+            # executable that loads our instrumented library would otherwise fail with undefined __ubsan_* references.
+            set_target_properties(${target} PROPERTIES LINKER_LANGUAGE CXX)
         endif()
     endif()
 endfunction()

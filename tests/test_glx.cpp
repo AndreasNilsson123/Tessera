@@ -480,6 +480,31 @@ static void testTerminateAndReinit() {
     if (again) EXPECT(tesseraDestroyContext(again), TESSERA_SUCCESS);
 }
 
+// A thread still has a Tessera context current when tesseraTerminate runs, and exits afterwards. Closing the library's X
+// connection at terminate used to let Mesa unload its driver under that thread; its exit then called a destructor in unmapped
+// code (SIGSEGV in __nptl_deallocate_tsd). Found by the Java shutdown test (java_shutdown, 15/15 failures on Mesa D3D12 before
+// the fix, 0/15 after). This native version does NOT reproduce the crash without the fix, so it only guards the scenario's basic behaviour.
+static void testTerminateWithBusyThread() {
+    TesseraContextConfig cfg = baseConfig();
+    std::atomic<bool> current{false}, release{false};
+    std::thread busy([&] {
+        TesseraContext c = 0;
+        EXPECT(tesseraCreateContext(&cfg, &c), TESSERA_SUCCESS);
+        if (c) EXPECT(tesseraMakeCurrent(c), TESSERA_SUCCESS);
+        current = true;
+        while (!release.load()) std::this_thread::yield();
+        // exits with the context still current: the library's exit hook and the driver's thread-exit destructors both run
+    });
+    while (!current.load()) std::this_thread::yield();
+    EXPECT(tesseraTerminate(), TESSERA_SUCCESS);
+    release = true;
+    busy.join(); // would crash the whole process before the fix (the library must not re-initialise first: that reloads the driver)
+    EXPECT(tesseraInit(), TESSERA_SUCCESS);
+    TesseraContext again = 0;
+    EXPECT(tesseraCreateContext(&cfg, &again), TESSERA_SUCCESS);
+    if (again) EXPECT(tesseraDestroyContext(again), TESSERA_SUCCESS);
+}
+
 static robust::Hooks glxHooks() {
     robust::Hooks h;
     h.base = baseConfig();
@@ -645,6 +670,7 @@ int main() {
         {"native handles", testNativeHandles},
         {"window attach", testWindowAttach},
         {"terminate / re-init", testTerminateAndReinit},
+        {"terminate with a busy thread", testTerminateWithBusyThread},
     };
     for (const Section& sec : sections) {
         std::puts(sec.name);

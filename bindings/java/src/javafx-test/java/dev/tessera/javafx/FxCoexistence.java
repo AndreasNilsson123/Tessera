@@ -193,6 +193,13 @@ public final class FxCoexistence {
             System.exit(1);
         }
 
+        if (Boolean.getBoolean("fxtest.control")) {
+            // Control run for diagnosing crashes: JavaFX alone, Tessera creates no context. If this crashes, Tessera is not involved.
+            Thread.sleep(3000);
+            System.out.println("FxCoexistence: control run finished (" + fxPulses.get() + " pulses)");
+            System.exit(0);
+        }
+
         final AtomicBoolean running = new AtomicBoolean(true);
         final List<Thread> threads = new ArrayList<>();
         final Thread render = new Thread(() -> renderLoop(image), "tessera-render");

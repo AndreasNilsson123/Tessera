@@ -75,6 +75,12 @@ std::mutex g_scopeMutex;
 std::atomic<Display*> g_scopeDisplay{nullptr};
 std::atomic<int> g_scopeError{0};
 std::atomic<XErrorHandler> g_scopePrevious{nullptr};
+// The last handler seen that was not ours: the host's. The handler slot is process-global and other libraries (GTK, JavaFX)
+// push and pop their own handlers without knowing about ours, so a late "restore" by one of them can leave scopedHandler
+// installed after our scope ended. The next scope would then record scopedHandler as its "previous" and chain to itself
+// forever (found by the JavaFX es2 coexistence test: stack overflow, SIGSEGV). So a previous handler that is ours is
+// replaced by the real host handler remembered here.
+std::atomic<XErrorHandler> g_hostHandler{nullptr};
 
 int scopedHandler(Display* display, XErrorEvent* event) {
     if (display != nullptr && display == g_scopeDisplay.load()) {
@@ -83,6 +89,8 @@ int scopedHandler(Display* display, XErrorEvent* event) {
         return 0;
     }
     XErrorHandler previous = g_scopePrevious.load();
+    if (previous == &scopedHandler) previous = g_hostHandler.load(); // never chain to ourselves
+    if (previous == &scopedHandler) return 0;
     return previous ? previous(display, event) : 0;
 }
 
@@ -100,6 +108,8 @@ XErrorScope::XErrorScope(const LinuxApi& api, Display* display) : api_(api), dis
     g_scopeError.store(0);
     g_scopeDisplay.store(display);
     previous_ = api_.xlib.XSetErrorHandler(&scopedHandler);
+    if (previous_ == &scopedHandler) previous_ = g_hostHandler.load(); // a stale install of ours: see g_hostHandler
+    else g_hostHandler.store(previous_);
     g_scopePrevious.store(previous_);
 }
 
