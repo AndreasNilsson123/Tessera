@@ -88,6 +88,42 @@ public final class Context implements AutoCloseable {
         return new Context(out[0], config);
     }
 
+    /**
+     * Creates a context that renders into a window <b>you</b> own (Windows: an {@code HWND}; Linux/X11: a {@code Window} id on
+     * the X server of {@code $DISPLAY}). Anywhere else this fails with {@link Result#UNSUPPORTED}. Present with
+     * {@link #swapBuffers()}; {@link ContextInfo#surface()} reports {@link ContextConfig.Surface#WINDOW}.
+     *
+     * <p>The window is borrowed: Tessera never destroys, resizes, shows or hides it, and it must outlive every use of the
+     * context (destroy the context first). If the window already has a pixel format it is adopted and, with
+     * {@link ContextConfig.Fallback#STRICT}, checked against the request. A Windows window's pixel format can be set only once
+     * in its lifetime, so Tessera sets one only if you pass {@code allowSettingPixelFormat = true}, because only you know the
+     * window is fresh; otherwise a window without a pixel format is refused with {@link Result#INVALID_ARGUMENT} and left
+     * untouched.
+     *
+     * @param config the surface must be {@link ContextConfig.Surface#DEFAULT}
+     */
+    public static Context createForWindow(ContextConfig config, long nativeWindow, boolean allowSettingPixelFormat) {
+        Objects.requireNonNull(config, "config");
+        final NativeApi api = Tessera.apiInitialized();
+        final Context share = config.shareWith();
+        final long shareHandle = share == null ? 0L : share.handle();
+        final long[] out = new long[1];
+        Tessera.check(api, api.createContextForWindow(config.toNative(), shareHandle, nativeWindow, allowSettingPixelFormat ? 1 : 0, out));
+        return new Context(out[0], config);
+    }
+
+    /**
+     * The operating-system objects behind this context, for interop with other libraries; borrowed, valid until this context
+     * is closed (see {@link NativeHandles}).
+     */
+    public NativeHandles nativeHandles() {
+        final NativeApi api = Tessera.api();
+        final int[] kind = new int[1];
+        final long[] handles = new long[NativeHandles.COUNT];
+        Tessera.check(api, api.nativeHandles(handle(), kind, handles));
+        return new NativeHandles(kind[0], handles);
+    }
+
     long handle() {
         if (state.closed.get()) {
             throw new IllegalStateException("the context is closed");

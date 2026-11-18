@@ -3,6 +3,7 @@ package dev.tessera.lwjgl;
 import dev.tessera.Context;
 import dev.tessera.ContextConfig;
 import dev.tessera.ContextInfo;
+import dev.tessera.NativeHandles;
 import dev.tessera.TesseraException;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.opengl.GL11C;
@@ -106,6 +107,19 @@ public final class LwjglTest {
                     + GL11C.glGetString(GL11C.GL_VERSION));
             check(GL11C.glGetString(GL11C.GL_RENDERER).equals(info.renderer()), "glGetString(GL_RENDERER)");
             check(GL11C.glGetInteger(GL30C.GL_MAJOR_VERSION) >= 3, "glGetInteger(GL_MAJOR_VERSION)");
+
+            // The handles Tessera hands out are the objects the driver considers current: LWJGL's own WGL/GLX bindings agree.
+            System.out.println("native handles are the real objects");
+            final NativeHandles handles = ctx.nativeHandles();
+            if (handles.kind() == NativeHandles.Kind.WGL) {
+                check(org.lwjgl.opengl.WGL.wglGetCurrentContext() == handles.get(0), "wglGetCurrentContext == handles[0]");
+                check(org.lwjgl.opengl.WGL.wglGetCurrentDC() == handles.get(1), "wglGetCurrentDC == handles[1]");
+            } else if (handles.kind() == NativeHandles.Kind.GLX) {
+                check(org.lwjgl.opengl.GLX.glXGetCurrentContext() == handles.get(1), "glXGetCurrentContext == handles[1]");
+                check(org.lwjgl.opengl.GLX.glXGetCurrentDrawable() == handles.get(2), "glXGetCurrentDrawable == handles[2]");
+            } else {
+                System.out.println("  (" + handles.kind() + ": no LWJGL binding to compare with)");
+            }
 
             System.out.println("clear and read back");
             final int[] cleared = renderAndRead(false);

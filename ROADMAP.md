@@ -114,7 +114,7 @@ Everything here was implemented-but-untested, deliberately skipped, or needs som
 
 ### 10.4 Release engineering
 
-- [ ] **Java bindings for the Phase 8 and probe calls** (`getNativeHandles`, `prewarm`, window attach, `probe`) and tests; choose the real package name (`dev.tessera` is a placeholder); consider a `module-info`.
+- [x] **Java bindings for the Phase 8 and probe calls** (`Context.nativeHandles`, `Tessera.prewarm`, `Context.createForWindow`, `Tessera.probe`; JNI and FFM): tested on Windows (both bindings, plus LWJGL identity checks against `WGL`) and on Linux (JNI, `GLX` identity check). Window attach is covered by argument validation only in Java (a real window needs a toolkit; the native tests cover it). Still open in this item: choose the real package name (`dev.tessera` is a placeholder); consider a `module-info`.
 - [ ] **Maven Central artifact** with per-platform natives (the jar currently embeds only the natives of the machine that built it), signing, javadoc/sources jars.
 - [ ] **vcpkg and Conan recipes** (the CMake package itself is verified).
 - [ ] Generated API reference (the header comments are the reference today).
@@ -139,12 +139,12 @@ Everything here was implemented-but-untested, deliberately skipped, or needs som
 New capabilities worth considering, with a recommendation. Items 1 and 2 are done; the rest are not started. Ordered by value per effort.
 
 1. ~~**`tessera-diag` command-line tool**~~ **Done** (`docs/diag.md`): text and JSON report, per-backend strict-request matrix, runs on Windows (WGL) and Linux (GLX, EGL under WSLg); macOS/CGL untested like the rest of CGL.
-2. ~~**Capability probe API**~~ **Done**: `tesseraProbe` (ABI 0.6.0), tested on WGL/GLX/EGL with a foreign context current, on the fake backend, fuzzed, and under ASan/UBSan/TSan. Not done: a Java binding for it.
+2. ~~**Capability probe API**~~ **Done**: `tesseraProbe` (ABI 0.6.0), tested on WGL/GLX/EGL with a foreign context current, on the fake backend, fuzzed, and under ASan/UBSan/TSan. Java: `Tessera.probe` (JNI and FFM).
 3. **Software/headless fallback backend** (OSMesa or a bundled llvmpipe/WARP path): guarantees `createContext` works on machines with no GPU or broken drivers (CI runners, remote desktops, containers). Related to the "do we ship Mesa" decision.
 4. **Windows multi-GPU selection** (10.3) exposed as a config field (`adapterPreference`: default / high-performance / low-power / by LUID), with the same "never silently another GPU" rule used for EGL.
 5. **Context-loss recovery helper**: a callback or event when a context is lost, plus an opt-in "recreate and re-share" helper, so applications do not each write the same polling loop.
 6. **Frame pacing helpers** for window-attached contexts: swap-interval negotiation reported back (what was applied), adaptive-sync availability, and a vsync-off benchmark mode. Only for attached windows; Tessera's own hidden drawables do not present.
-7. **Pool improvements**: automatic background refill with a user-supplied thread (or a callback), per-configuration pool sizes, a Java API. Only never-used contexts, as before.
+7. **Pool improvements**: automatic background refill with a user-supplied thread (or a callback), per-configuration pool sizes. Only never-used contexts, as before.
 8. **Metal/ANGLE path on macOS** and **ANGLE on Windows/Linux** as an alternative GLES provider (10.3), once a loader policy is decided.
 9. **More language bindings** over the C ABI, cheap because it is stable and struct-size-prefixed: C#/.NET (P/Invoke), Rust (`-sys` crate), Python (`ctypes`/`cffi`). Only worth it if there is a consumer; the Java layer is the template.
 10. **Wayland-native window attach** and **EGL window surfaces** (10.3), if the answer to "on-screen in 1.0?" is yes.

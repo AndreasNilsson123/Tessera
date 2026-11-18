@@ -21,6 +21,37 @@ try (Context ctx = Context.create(config)) {
 was really obtained. Nothing is read back from the request: every flag, size, version and profile in `ContextInfo` comes from
 the driver.
 
+## Probing and pre-warming
+
+```java
+ProbeReport r = Tessera.probe(config);          // "would this work here, and what would I get?"
+if (r.succeeded()) System.out.println(r.info() + " via " + r.backend());
+else System.out.println(r.result() + ": " + r.message());
+
+Tessera.prewarm(config, 4);                     // call from a background thread; blocks until 4 contexts exist
+Context ctx = Context.create(config);           // an identical request takes a pre-warmed one (~0.01 ms instead of ~30 ms)
+```
+
+A probe really creates, inspects and destroys a context, so cache the answer; it never throws for a request that cannot be met
+(only for an invalid configuration). Only never-used contexts are pooled, so a pooled context is indistinguishable from a
+fresh one; the pool holds at most 64 and is emptied at shutdown. See `diag.md` and `interop.md`.
+
+## Interop and rendering into your own window
+
+```java
+NativeHandles h = ctx.nativeHandles();          // borrowed: valid until ctx is closed; never destroy them
+if (h.kind() == NativeHandles.Kind.WGL) { long hglrc = h.get(0), hdc = h.get(1); /* e.g. WGL_NV_DX_interop2 */ }
+
+Context onScreen = Context.createForWindow(config, hwndOrXWindow, /* allowSettingPixelFormat */ false);
+```
+
+`NativeHandles` documents which entry means what per platform (WGL, GLX, EGL, CGL). Tested against LWJGL's own `WGL` and `GLX`
+bindings: the handles are the objects the driver reports as current (Windows handles are 32-bit values and may appear
+sign-extended). `createForWindow` borrows a window you own (Windows `HWND`, X11 `Window`; `UNSUPPORTED` elsewhere): Tessera never
+destroys, resizes or shows it, and sets a Windows pixel format only if you say the window is fresh (`ADR 0010`). The Java tests
+cover argument validation only: creating a real native window needs a toolkit, and the native tests (`test_wgl`, `test_glx`)
+cover the actual attach.
+
 ## Threads
 
 - A context is current on at most one thread. `makeCurrent()` on another thread while it is held throws

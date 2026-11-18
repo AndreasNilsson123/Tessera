@@ -40,7 +40,9 @@ public final class ContextConfig {
     }
 
     public enum Surface {
-        DEFAULT(0), HIDDEN_WINDOW(1), PBUFFER(2), NONE(3);
+        DEFAULT(0), HIDDEN_WINDOW(1), PBUFFER(2), NONE(3),
+        /** Reported for contexts made by {@link Context#createForWindow}; not a value to request. */
+        WINDOW(4);
         final int nativeValue;
 
         Surface(int v) {

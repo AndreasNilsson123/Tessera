@@ -4,6 +4,7 @@ import dev.tessera.internal.NativeApi;
 import dev.tessera.internal.Natives;
 
 import java.lang.reflect.Method;
+import java.util.Objects;
 
 /**
  * Entry point: native library lifecycle, logging and function lookup. Most programs only need {@link Context}.
@@ -68,6 +69,50 @@ public final class Tessera {
                 l.log(Logger.Level.of(level), message);
             }
         });
+    }
+
+    /**
+     * Creates {@code count} contexts for {@code config} now and keeps them ready: a later {@link Context#create} with an
+     * identical request (and no share parent) takes one instead of paying the driver's creation cost (tens of milliseconds
+     * each). Only never-used contexts are pooled, so what you get is indistinguishable from a fresh one. At most 64 are pooled in
+     * total. Blocks until all exist: call it from a background thread. The pool is emptied when the library terminates.
+     */
+    public static void prewarm(ContextConfig config, int count) {
+        Objects.requireNonNull(config, "config");
+        if (config.shareWith() != null) {
+            throw new IllegalArgumentException("pre-warmed contexts cannot share with a specific context");
+        }
+        final NativeApi api = apiInitialized();
+        check(api, api.prewarm(config.toNative(), count));
+    }
+
+    /** Contexts currently waiting in the pre-warm pool (all configurations). */
+    public static int pooledContextCount() {
+        return apiInitialized().pooledCount();
+    }
+
+    /**
+     * Asks "would this request work here, and what would I get?" without keeping anything: a context is really created,
+     * inspected and destroyed. A request that cannot be met does not throw; look at {@link ProbeReport#result()}. (An invalid
+     * configuration, such as reset notification without robust access, throws {@link TesseraException} with {@link Result#INVALID_ARGUMENT}.) The caller's
+     * own current context is undisturbed. Costs one context creation, so cache the answer.
+     */
+    public static ProbeReport probe(ContextConfig config) {
+        Objects.requireNonNull(config, "config");
+        if (config.shareWith() != null) {
+            throw new IllegalArgumentException("a probe cannot share objects with a context");
+        }
+        final NativeApi api = apiInitialized();
+        final int[] ints = new int[13];
+        final String[] strings = new String[5];
+        final int code = api.probe(config.toNative(), ints, strings);
+        if (strings[3] == null) {
+            check(api, code); // rejected before the probe ran
+            throw new IllegalStateException("probe returned without a report");
+        }
+        final Result result = Result.of(code);
+        final ContextInfo info = result == Result.SUCCESS ? new ContextInfo(ints, new String[] {strings[0], strings[1], strings[2]}) : null;
+        return new ProbeReport(result, info, strings[3], strings[4]);
     }
 
     /**

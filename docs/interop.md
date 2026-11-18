@@ -52,4 +52,4 @@ error, never a different GPU.
 ## Not provided
 
 dma-buf export, IOSurface, Vulkan memory objects/semaphores (use the handles above), Wayland/`NSView` attach, UUID device
-selection, Java bindings for these calls.
+selection.

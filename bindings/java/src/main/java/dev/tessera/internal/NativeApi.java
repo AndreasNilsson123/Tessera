@@ -46,6 +46,22 @@ public interface NativeApi {
 
     int recreate(long handle, long[] outHandle, int[] outFlags);
 
+    /** kind (1 WGL, 2 GLX, 3 EGL, 4 CGL), then up to six handles (see tessera.h for the meaning per kind). */
+    int nativeHandles(long handle, int[] kindOut1, long[] handlesOut6);
+
+    int prewarm(int[] cfg, int count);
+
+    int pooledCount();
+
+    /** Like {@link #createContext} for a caller's window; {@code flags} bit 0 = allow setting the pixel format. */
+    int createContextForWindow(int[] cfg, long shareWith, long window, int flags, long[] outHandle);
+
+    /**
+     * Returns the probe's result code. infoInts as in {@link #contextInfo}; strings: vendor, renderer, version, backend, message.
+     * The report is filled whether or not the request could be met; if the arguments themselves were rejected the strings stay null.
+     */
+    int probe(int[] cfg, int[] infoInts, String[] strings5);
+
     /** Message for the last failure on the calling thread. Only meaningful right after a failing call, on the same thread. */
     String lastError();
 

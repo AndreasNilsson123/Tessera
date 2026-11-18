@@ -72,6 +72,43 @@ void TESSERA_CALL logTrampoline(int32_t level, const char* message, void* /*user
 constexpr jint kConfigInts = 14;
 constexpr jint kInfoInts = 13;
 
+// cfg: api, major, minor, profile, flags, surface, fallback, red, green, blue, alpha, depth, stencil, samples
+TesseraContextConfig configFrom(const jint* v, TesseraContext share) {
+    TesseraContextConfig c = tesseraDefaultContextConfig();
+    c.api = static_cast<uint32_t>(v[0]);
+    c.versionMajor = v[1];
+    c.versionMinor = v[2];
+    c.profile = static_cast<uint32_t>(v[3]);
+    c.flags = static_cast<uint32_t>(v[4]);
+    c.surface = static_cast<uint32_t>(v[5]);
+    c.fallback = static_cast<uint32_t>(v[6]);
+    c.redBits = v[7];
+    c.greenBits = v[8];
+    c.blueBits = v[9];
+    c.alphaBits = v[10];
+    c.depthBits = v[11];
+    c.stencilBits = v[12];
+    c.samples = v[13];
+    c.shareWith = share;
+    return c;
+}
+
+void infoToInts(const TesseraContextInfo& info, jint* v) {
+    v[0] = static_cast<jint>(info.api);
+    v[1] = info.versionMajor;
+    v[2] = info.versionMinor;
+    v[3] = static_cast<jint>(info.profile);
+    v[4] = static_cast<jint>(info.flags);
+    v[5] = static_cast<jint>(info.surface);
+    v[6] = info.samples;
+    v[7] = info.redBits;
+    v[8] = info.greenBits;
+    v[9] = info.blueBits;
+    v[10] = info.alphaBits;
+    v[11] = info.depthBits;
+    v[12] = info.stencilBits;
+}
+
 } // namespace
 
 extern "C" {
@@ -136,6 +173,77 @@ TESSERA_JNI(jint, nCreateContext)(JNIEnv* env, jclass, jintArray cfg, jlong shar
     const TesseraResult r = tesseraCreateContext(&c, &handle);
     const jlong result = static_cast<jlong>(handle);
     env->SetLongArrayRegion(out, 0, 1, &result);
+    return r;
+}
+
+TESSERA_JNI(jint, nCreateContextForWindow)
+(JNIEnv* env, jclass, jintArray cfg, jlong share, jlong window, jint flags, jlongArray out) {
+    if (!cfg || !out || env->GetArrayLength(cfg) < kConfigInts || env->GetArrayLength(out) < 1)
+        return TESSERA_ERROR_INVALID_ARGUMENT;
+    jint v[kConfigInts];
+    env->GetIntArrayRegion(cfg, 0, kConfigInts, v);
+    const TesseraContextConfig c = configFrom(v, static_cast<TesseraContext>(share));
+    TesseraContext handle = TESSERA_NULL_HANDLE;
+    const TesseraResult r = tesseraCreateContextForWindow(&c, static_cast<uint64_t>(window),
+                                                          static_cast<uint32_t>(flags), &handle);
+    const jlong result = static_cast<jlong>(handle);
+    env->SetLongArrayRegion(out, 0, 1, &result);
+    return r;
+}
+
+TESSERA_JNI(jint, nNativeHandles)(JNIEnv* env, jclass, jlong ctx, jintArray kindOut, jlongArray handlesOut) {
+    if (!kindOut || !handlesOut || env->GetArrayLength(kindOut) < 1 || env->GetArrayLength(handlesOut) < 6)
+        return TESSERA_ERROR_INVALID_ARGUMENT;
+    TesseraNativeHandles h = tesseraDefaultNativeHandles();
+    const TesseraResult r = tesseraGetNativeHandles(static_cast<TesseraContext>(ctx), &h);
+    if (r != TESSERA_SUCCESS)
+        return r;
+    const jint kind = static_cast<jint>(h.kind);
+    env->SetIntArrayRegion(kindOut, 0, 1, &kind);
+    jlong values[6];
+    for (int i = 0; i < 6; ++i)
+        values[i] = static_cast<jlong>(h.handles[i]);
+    env->SetLongArrayRegion(handlesOut, 0, 6, values);
+    return TESSERA_SUCCESS;
+}
+
+TESSERA_JNI(jint, nPrewarm)(JNIEnv* env, jclass, jintArray cfg, jint count) {
+    if (!cfg || env->GetArrayLength(cfg) < kConfigInts)
+        return TESSERA_ERROR_INVALID_ARGUMENT;
+    jint v[kConfigInts];
+    env->GetIntArrayRegion(cfg, 0, kConfigInts, v);
+    const TesseraContextConfig c = configFrom(v, TESSERA_NULL_HANDLE);
+    return tesseraPrewarmContexts(&c, count);
+}
+
+TESSERA_JNI(jint, nPooledCount)(JNIEnv*, jclass) {
+    return tesseraPooledContextCount();
+}
+
+// infoInts as nContextInfo; strings: vendor, renderer, version, backend, message
+TESSERA_JNI(jint, nProbe)(JNIEnv* env, jclass, jintArray cfg, jintArray infoInts, jobjectArray strings) {
+    if (!cfg || !infoInts || !strings || env->GetArrayLength(cfg) < kConfigInts ||
+        env->GetArrayLength(infoInts) < kInfoInts || env->GetArrayLength(strings) < 5)
+        return TESSERA_ERROR_INVALID_ARGUMENT;
+    jint v[kConfigInts];
+    env->GetIntArrayRegion(cfg, 0, kConfigInts, v);
+    const TesseraContextConfig c = configFrom(v, TESSERA_NULL_HANDLE);
+    TesseraProbeReport report = tesseraDefaultProbeReport();
+    const TesseraResult r = tesseraProbe(&c, &report);
+    if (r == TESSERA_ERROR_INVALID_ARGUMENT && report.backend[0] == '\0' && report.message[0] == '\0')
+        return r; // rejected before the probe ran: the report was not filled in
+    jint out[kInfoInts];
+    infoToInts(report.info, out);
+    env->SetIntArrayRegion(infoInts, 0, kInfoInts, out);
+    const char* texts[5] = {report.info.vendor, report.info.renderer, report.info.version, report.backend,
+                            report.message};
+    for (jsize i = 0; i < 5; ++i) {
+        jstring s = toJString(env, texts[i]);
+        if (!s)
+            return TESSERA_ERROR_OUT_OF_MEMORY; // an OutOfMemoryError is pending
+        env->SetObjectArrayElement(strings, i, s);
+        env->DeleteLocalRef(s);
+    }
     return r;
 }
 

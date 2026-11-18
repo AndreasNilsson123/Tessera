@@ -35,10 +35,15 @@ final class FfmNativeApi implements NativeApi {
             INFO_SURFACE = 24, INFO_SAMPLES = 28, INFO_RED = 32, INFO_GREEN = 36, INFO_BLUE = 40, INFO_ALPHA = 44, INFO_DEPTH = 48,
             INFO_STENCIL = 52, INFO_VENDOR = 56, INFO_RENDERER = 184, INFO_VERSION = 312;
 
+    // TesseraNativeHandles (88 bytes): structSize, kind, handles[6] at 8, reserved[4]
+    private static final long NH_SIZE = 88, NH_KIND = 4, NH_HANDLES = 8;
+    // TesseraProbeReport (832 bytes): structSize, result, info (a TesseraContextInfo) at 8, backend[32] at 512, message[256] at 544
+    private static final long PROBE_SIZE = 832, PROBE_RESULT = 4, PROBE_INFO = 8, PROBE_BACKEND = 512, PROBE_MESSAGE = 544;
+
     private static volatile LogSink sink;
 
     private final MethodHandle hInit, hTerminate, hAbi, hVersion, hCreate, hDestroy, hInfo, hMakeCurrent, hCurrent, hProc, hSwap,
-            hSwapInterval, hReset, hRecreate, hLastError, hResultString, hSetLog;
+            hSwapInterval, hReset, hRecreate, hLastError, hResultString, hSetLog, hNativeHandles, hPrewarm, hPooled, hCreateForWindow, hProbe;
     private final MemorySegment logStub;
 
     public FfmNativeApi(Path library) {
@@ -58,6 +63,12 @@ final class FfmNativeApi implements NativeApi {
         hSwapInterval = down(linker, lookup, "tesseraSetSwapInterval", FunctionDescriptor.of(INT, LONG, INT));
         hReset = down(linker, lookup, "tesseraGetResetStatus", FunctionDescriptor.of(INT, LONG, ValueLayout.ADDRESS));
         hRecreate = down(linker, lookup, "tesseraRecreateContext", FunctionDescriptor.of(INT, LONG, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+        hNativeHandles = down(linker, lookup, "tesseraGetNativeHandles", FunctionDescriptor.of(INT, LONG, ValueLayout.ADDRESS));
+        hPrewarm = down(linker, lookup, "tesseraPrewarmContexts", FunctionDescriptor.of(INT, ValueLayout.ADDRESS, INT));
+        hPooled = down(linker, lookup, "tesseraPooledContextCount", FunctionDescriptor.of(INT));
+        hCreateForWindow = down(linker, lookup, "tesseraCreateContextForWindow",
+                FunctionDescriptor.of(INT, ValueLayout.ADDRESS, LONG, INT, ValueLayout.ADDRESS));
+        hProbe = down(linker, lookup, "tesseraProbe", FunctionDescriptor.of(INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
         hLastError = down(linker, lookup, "tesseraGetLastErrorMessage", FunctionDescriptor.of(ValueLayout.ADDRESS));
         hResultString = down(linker, lookup, "tesseraResultString", FunctionDescriptor.of(ValueLayout.ADDRESS, INT));
         hSetLog = down(linker, lookup, "tesseraSetLogCallback", FunctionDescriptor.ofVoid(ValueLayout.ADDRESS, ValueLayout.ADDRESS));
@@ -146,29 +157,124 @@ final class FfmNativeApi implements NativeApi {
         }
     }
 
+    private static MemorySegment config(Arena arena, int[] cfg, long shareWith) {
+        final MemorySegment c = arena.allocate(CONFIG_SIZE, 8);
+        c.set(INT, CFG_STRUCT_SIZE, (int) CONFIG_SIZE);
+        c.set(INT, CFG_API, cfg[0]);
+        c.set(INT, CFG_MAJOR, cfg[1]);
+        c.set(INT, CFG_MINOR, cfg[2]);
+        c.set(INT, CFG_PROFILE, cfg[3]);
+        c.set(INT, CFG_FLAGS, cfg[4]);
+        c.set(INT, CFG_SURFACE, cfg[5]);
+        c.set(INT, CFG_FALLBACK, cfg[6]);
+        c.set(INT, CFG_RED, cfg[7]);
+        c.set(INT, CFG_GREEN, cfg[8]);
+        c.set(INT, CFG_BLUE, cfg[9]);
+        c.set(INT, CFG_ALPHA, cfg[10]);
+        c.set(INT, CFG_DEPTH, cfg[11]);
+        c.set(INT, CFG_STENCIL, cfg[12]);
+        c.set(INT, CFG_SAMPLES, cfg[13]);
+        c.set(LONG, CFG_SHARE_WITH, shareWith);
+        return c;
+    }
+
+    private static void readInfo(MemorySegment info, long base, int[] ints, String[] strings) {
+        ints[0] = info.get(INT, base + INFO_API);
+        ints[1] = info.get(INT, base + INFO_MAJOR);
+        ints[2] = info.get(INT, base + INFO_MINOR);
+        ints[3] = info.get(INT, base + INFO_PROFILE);
+        ints[4] = info.get(INT, base + INFO_FLAGS);
+        ints[5] = info.get(INT, base + INFO_SURFACE);
+        ints[6] = info.get(INT, base + INFO_SAMPLES);
+        ints[7] = info.get(INT, base + INFO_RED);
+        ints[8] = info.get(INT, base + INFO_GREEN);
+        ints[9] = info.get(INT, base + INFO_BLUE);
+        ints[10] = info.get(INT, base + INFO_ALPHA);
+        ints[11] = info.get(INT, base + INFO_DEPTH);
+        ints[12] = info.get(INT, base + INFO_STENCIL);
+        strings[0] = ascii(info.getString(base + INFO_VENDOR));
+        strings[1] = ascii(info.getString(base + INFO_RENDERER));
+        strings[2] = ascii(info.getString(base + INFO_VERSION));
+    }
+
     @Override
     public int createContext(int[] cfg, long shareWith, long[] outHandle) {
         try (Arena arena = Arena.ofConfined()) {
-            final MemorySegment c = arena.allocate(CONFIG_SIZE, 8);
-            c.set(INT, CFG_STRUCT_SIZE, (int) CONFIG_SIZE);
-            c.set(INT, CFG_API, cfg[0]);
-            c.set(INT, CFG_MAJOR, cfg[1]);
-            c.set(INT, CFG_MINOR, cfg[2]);
-            c.set(INT, CFG_PROFILE, cfg[3]);
-            c.set(INT, CFG_FLAGS, cfg[4]);
-            c.set(INT, CFG_SURFACE, cfg[5]);
-            c.set(INT, CFG_FALLBACK, cfg[6]);
-            c.set(INT, CFG_RED, cfg[7]);
-            c.set(INT, CFG_GREEN, cfg[8]);
-            c.set(INT, CFG_BLUE, cfg[9]);
-            c.set(INT, CFG_ALPHA, cfg[10]);
-            c.set(INT, CFG_DEPTH, cfg[11]);
-            c.set(INT, CFG_STENCIL, cfg[12]);
-            c.set(INT, CFG_SAMPLES, cfg[13]);
-            c.set(LONG, CFG_SHARE_WITH, shareWith);
+            final MemorySegment c = config(arena, cfg, shareWith);
             final MemorySegment out = arena.allocate(8, 8);
             final int r = (int) hCreate.invokeExact(c, out);
             outHandle[0] = out.get(LONG, 0);
+            return r;
+        } catch (Throwable t) {
+            throw failed(t);
+        }
+    }
+
+    @Override
+    public int createContextForWindow(int[] cfg, long shareWith, long window, int flags, long[] outHandle) {
+        try (Arena arena = Arena.ofConfined()) {
+            final MemorySegment c = config(arena, cfg, shareWith);
+            final MemorySegment out = arena.allocate(8, 8);
+            final int r = (int) hCreateForWindow.invokeExact(c, window, flags, out);
+            outHandle[0] = out.get(LONG, 0);
+            return r;
+        } catch (Throwable t) {
+            throw failed(t);
+        }
+    }
+
+    @Override
+    public int nativeHandles(long handle, int[] kindOut1, long[] handlesOut6) {
+        try (Arena arena = Arena.ofConfined()) {
+            final MemorySegment h = arena.allocate(NH_SIZE, 8);
+            h.set(INT, 0, (int) NH_SIZE);
+            final int r = (int) hNativeHandles.invokeExact(handle, h);
+            if (r != 0) {
+                return r;
+            }
+            kindOut1[0] = h.get(INT, NH_KIND);
+            for (int i = 0; i < 6; i++) {
+                handlesOut6[i] = h.get(LONG, NH_HANDLES + 8L * i);
+            }
+            return 0;
+        } catch (Throwable t) {
+            throw failed(t);
+        }
+    }
+
+    @Override
+    public int prewarm(int[] cfg, int count) {
+        try (Arena arena = Arena.ofConfined()) {
+            return (int) hPrewarm.invokeExact(config(arena, cfg, 0L), count);
+        } catch (Throwable t) {
+            throw failed(t);
+        }
+    }
+
+    @Override
+    public int pooledCount() {
+        try {
+            return (int) hPooled.invokeExact();
+        } catch (Throwable t) {
+            throw failed(t);
+        }
+    }
+
+    @Override
+    public int probe(int[] cfg, int[] infoInts, String[] strings5) {
+        try (Arena arena = Arena.ofConfined()) {
+            final MemorySegment report = arena.allocate(PROBE_SIZE, 8);
+            report.set(INT, 0, (int) PROBE_SIZE);
+            report.set(INT, PROBE_INFO + INFO_STRUCT_SIZE, (int) INFO_SIZE);
+            final int r = (int) hProbe.invokeExact(config(arena, cfg, 0L), report);
+            final String backend = ascii(report.getString(PROBE_BACKEND));
+            final String message = ascii(report.getString(PROBE_MESSAGE));
+            if (r == -2 && backend.isEmpty() && message.isEmpty()) {
+                return r; // INVALID_ARGUMENT before the probe ran: the report was not filled in
+            }
+            readInfo(report, PROBE_INFO, infoInts, strings5);
+            strings5[3] = backend;
+            strings5[4] = message;
             return r;
         } catch (Throwable t) {
             throw failed(t);

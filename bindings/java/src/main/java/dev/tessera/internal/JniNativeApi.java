@@ -88,6 +88,31 @@ public final class JniNativeApi implements NativeApi {
     }
 
     @Override
+    public int nativeHandles(long handle, int[] kindOut1, long[] handlesOut6) {
+        return nNativeHandles(handle, kindOut1, handlesOut6);
+    }
+
+    @Override
+    public int prewarm(int[] cfg, int count) {
+        return nPrewarm(cfg, count);
+    }
+
+    @Override
+    public int pooledCount() {
+        return nPooledCount();
+    }
+
+    @Override
+    public int createContextForWindow(int[] cfg, long shareWith, long window, int flags, long[] outHandle) {
+        return nCreateContextForWindow(cfg, shareWith, window, flags, outHandle);
+    }
+
+    @Override
+    public int probe(int[] cfg, int[] infoInts, String[] strings5) {
+        return nProbe(cfg, infoInts, strings5);
+    }
+
+    @Override
     public String lastError() {
         return nLastError();
     }
@@ -115,6 +140,16 @@ public final class JniNativeApi implements NativeApi {
             }
         }
     }
+
+    private static native int nNativeHandles(long handle, int[] kindOut1, long[] handlesOut6);
+
+    private static native int nPrewarm(int[] cfg, int count);
+
+    private static native int nPooledCount();
+
+    private static native int nCreateContextForWindow(int[] cfg, long shareWith, long window, int flags, long[] outHandle);
+
+    private static native int nProbe(int[] cfg, int[] infoInts, String[] strings5);
 
     private static native int nInit();
 
