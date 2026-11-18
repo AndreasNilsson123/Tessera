@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -1114,6 +1115,67 @@ static void testProbe() {
     tessera::Runtime::instance().registerBackend(std::make_shared<RobustFakeBackend>());
 }
 
+#if defined(__linux__) && !defined(__SANITIZE_ADDRESS__) && !defined(__SANITIZE_THREAD__)
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+#define TESSERA_RSS_TEST_OFF 1
+#endif
+#endif
+#else
+#define TESSERA_RSS_TEST_OFF 1
+#endif
+
+#ifndef TESSERA_RSS_TEST_OFF
+static long residentKb() {
+    std::ifstream status("/proc/self/status");
+    std::string line;
+    while (std::getline(status, line))
+        if (line.rfind("VmRSS:", 0) == 0)
+            return std::atol(line.c_str() + 6);
+    return -1;
+}
+
+// Tessera's own bookkeeping (handle table, share groups, zombies, thread tokens, pool) must not grow with the
+// number of contexts created and destroyed. A fake backend takes every driver out of the picture: when the
+// soak test showed resident memory growing on Linux, this is what showed it was Mesa's Direct3D12 driver (the
+// same loop against raw libGL grows the same way) and not us.
+static void testNoGrowthWithManyContexts() {
+    TesseraContextConfig cfg = tesseraDefaultContextConfig();
+    cfg.api = TESSERA_API_OPENGL;
+    const auto work = [&cfg](int cycles) {
+        for (int i = 0; i < cycles; ++i) {
+            TesseraContext a = 0, b = 0, c = 0;
+            tesseraCreateContext(&cfg, &a);
+            TesseraContextConfig sharing = cfg;
+            sharing.shareWith = a;
+            tesseraCreateContext(&sharing, &b);
+            tesseraCreateContext(&cfg, &c);
+            tesseraMakeCurrent(a);
+            tesseraMakeCurrent(b);
+            tesseraMakeCurrent(TESSERA_NULL_HANDLE);
+            tesseraDestroyContext(a);
+            tesseraDestroyContext(b);
+            tesseraDestroyContext(c);
+        }
+    };
+    const auto run = [&work](int cycles) {
+        std::vector<std::thread> threads;
+        for (int t = 0; t < 3; ++t)
+            threads.emplace_back(work, cycles);
+        for (auto& t : threads)
+            t.join();
+    };
+    run(5000); // warm-up: allocator arenas, thread-local state
+    const long before = residentKb();
+    run(30000); // 270,000 contexts
+    const long after = residentKb();
+    std::printf("  resident memory %ld KB -> %ld KB over 270000 contexts\n", before, after);
+    CHECK(after - before < 2048); // a leak of even 8 bytes per context would be ~2 MB; the real figure is ~0
+    CHECK(g_liveRobust == 0 && tessera::Runtime::instance().liveContexts() == 0 &&
+          tessera::Runtime::instance().pendingDestructions() == 0);
+}
+#endif
+
 static void testLifecycleRobustness() {
     CHECK(tesseraInit() == TESSERA_SUCCESS);
     tessera::Runtime::instance().registerBackend(std::make_shared<RobustFakeBackend>());
@@ -1126,6 +1188,9 @@ static void testLifecycleRobustness() {
     testXErrorScopeStaleInstall();
 #endif
     testProbe();
+#ifndef TESSERA_RSS_TEST_OFF
+    testNoGrowthWithManyContexts();
+#endif
     CHECK(tesseraTerminate() == TESSERA_SUCCESS);
 }
 
