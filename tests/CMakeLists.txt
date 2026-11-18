@@ -64,6 +64,26 @@ if(WIN32 AND TESSERA_BUILD_SHARED)
     set_tests_properties(wgl PROPERTIES LABELS "gpu" TIMEOUT 180)
 endif()
 
+# Fault injection against the real backends (the counterpart of the CGL fake-driver sweep): wraps the driver entry points the
+# backends call, fails each one in turn, and checks error codes, leaks and the other library's context. White-box (links the core
+# objects); needs a real driver, exits 77 without one. One backend per process on Linux.
+if(WIN32 OR (UNIX AND NOT APPLE))
+    add_executable(test_fault test_fault.cpp $<TARGET_OBJECTS:tessera_core>)
+    target_include_directories(test_fault PRIVATE ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/include)
+    target_compile_definitions(test_fault PRIVATE TESSERA_STATIC)
+    target_link_libraries(test_fault PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+    if(WIN32)
+        target_link_libraries(test_fault PRIVATE gdi32 user32)
+        add_test(NAME fault_wgl COMMAND test_fault)
+        set_tests_properties(fault_wgl PROPERTIES LABELS "gpu;fault" TIMEOUT 1500 SKIP_RETURN_CODE 77)
+    else()
+        add_test(NAME fault_glx COMMAND test_fault glx)
+        add_test(NAME fault_egl COMMAND test_fault egl)
+        set_tests_properties(fault_glx fault_egl PROPERTIES LABELS "gpu;fault" TIMEOUT 1500 SKIP_RETURN_CODE 77)
+    endif()
+    tessera_apply_options(test_fault)
+endif()
+
 # Create/use/destroy loops with leak tracking (handles, GDI/USER objects, fds, memory). Real driver; exits 77 without one.
 # Scale with TESSERA_SOAK_CYCLES / TESSERA_SOAK_SECONDS (see the file header); the default is a ~1 minute smoke run.
 if(TESSERA_BUILD_SHARED AND (WIN32 OR (UNIX AND NOT APPLE)))
