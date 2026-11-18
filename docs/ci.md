@@ -38,8 +38,11 @@ CI job lowers `vm.mmap_rnd_bits`.
 - The `glx`/`egl` tests under TSan report races inside NVIDIA's WSL driver (uninstrumented, none with Tessera code on the accessing side); GPU tests are therefore excluded from the sanitizer presets.
 - Never run yet: the workflow itself (no remote exists), clang builds, macOS, the `lint`, `gl-linux-software`, `cgl-macos` and `java-linux` jobs, and the runner image names
   (`windows-2022`, `ubuntu-24.04`, `macos-14`). Expect to adjust on first push.
-- `lint` is informational because the existing code was not produced by clang-format; blocking it needs a one-time
-  reformat commit.
+- `lint`: the code base is formatted with clang-format 18.1.8 (the version CI pins; checked with
+  `git ls-files '*.c' '*.cpp' '*.h' '*.hpp' | xargs clang-format --dry-run --Werror`, 0 violations). Run clang-format before
+  committing. Do not let it reorder Windows headers: `<windows.h>` must precede `<psapi.h>` (guarded with
+  `// clang-format off`). The clang-tidy step of the job has not been reproduced locally and may still report findings, so the
+  job stays informational.
 - No x86-64 macOS job, and no GPU job: real-driver coverage comes from local runs until a self-hosted runner exists.
 
 ## Java

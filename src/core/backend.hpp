@@ -20,22 +20,35 @@ class ContextObject {
      * talk to the driver. unbindCurrent must leave the thread alone if this context is not the native
      * current one (some other library may have changed it since). A native "context lost" condition should
      * be reported as TESSERA_ERROR_CONTEXT_LOST so the core can mark the context lost. */
-    virtual TesseraResult bindCurrent() noexcept { return TESSERA_ERROR_UNSUPPORTED; }
+    virtual TesseraResult bindCurrent() noexcept {
+        return TESSERA_ERROR_UNSUPPORTED;
+    }
     virtual void unbindCurrent() noexcept {}
-    virtual TesseraResult swapBuffers() noexcept { return TESSERA_ERROR_UNSUPPORTED; }
+    virtual TesseraResult swapBuffers() noexcept {
+        return TESSERA_ERROR_UNSUPPORTED;
+    }
     /* Called only while the context is current on the calling thread. */
-    virtual TesseraResult setSwapInterval(int32_t /*interval*/) noexcept { return TESSERA_ERROR_UNSUPPORTED; }
+    virtual TesseraResult setSwapInterval(int32_t /*interval*/) noexcept {
+        return TESSERA_ERROR_UNSUPPORTED;
+    }
 
-    /* Polls the driver for a GPU reset (glGetGraphicsResetStatus). Called with the context current on the calling
-     * thread. `out` is a TESSERA_RESET_* value. UNSUPPORTED if the context has no reset notification. */
-    virtual TesseraResult queryResetStatus(int32_t& /*out*/) noexcept { return TESSERA_ERROR_UNSUPPORTED; }
+    /* Polls the driver for a GPU reset (glGetGraphicsResetStatus). Called with the context current on the
+     * calling thread. `out` is a TESSERA_RESET_* value. UNSUPPORTED if the context has no reset notification.
+     */
+    virtual TesseraResult queryResetStatus(int32_t& /*out*/) noexcept {
+        return TESSERA_ERROR_UNSUPPORTED;
+    }
 
-    /* Fills `out` (kind and handles; structSize is handled by the caller). Borrowed objects, see tessera.h. */
-    virtual TesseraResult nativeHandles(TesseraNativeHandles& /*out*/) const noexcept { return TESSERA_ERROR_UNSUPPORTED; }
+    /* Fills `out` (kind and handles; structSize is handled by the caller). Borrowed objects, see tessera.h.
+     */
+    virtual TesseraResult nativeHandles(TesseraNativeHandles& /*out*/) const noexcept {
+        return TESSERA_ERROR_UNSUPPORTED;
+    }
 
     ContextAffinity affinity;
 
-    // ---- bookkeeping owned by the core (set by Runtime right after creation; backends leave it alone) -------
+    // ---- bookkeeping owned by the core (set by Runtime right after creation; backends leave it alone)
+    // -------
     TesseraContextConfig request = {}; // what this context was created from, for tesseraRecreateContext
     uint64_t shareGroup = 0;           // contexts sharing objects have the same group id
     std::atomic<bool> lost{false};
@@ -56,14 +69,18 @@ class Backend {
     virtual TesseraResult createContext(const TesseraContextConfig& config,
                                         const std::shared_ptr<ContextObject>& shareWith,
                                         std::shared_ptr<ContextObject>& out) = 0;
-    /* Renders into a caller-owned window; see tesseraCreateContextForWindow. UNSUPPORTED by default (without side effects). */
-    virtual TesseraResult createContextForWindow(const TesseraContextConfig& /*config*/, uint64_t /*nativeWindow*/, uint32_t /*flags*/,
+    /* Renders into a caller-owned window; see tesseraCreateContextForWindow. UNSUPPORTED by default (without
+     * side effects). */
+    virtual TesseraResult createContextForWindow(const TesseraContextConfig& /*config*/,
+                                                 uint64_t /*nativeWindow*/, uint32_t /*flags*/,
                                                  const std::shared_ptr<ContextObject>& /*shareWith*/,
                                                  std::shared_ptr<ContextObject>& /*out*/) {
         return TESSERA_ERROR_UNSUPPORTED;
     }
     /* Null if unknown. May be called with or without a context current. */
-    virtual void* getProcAddress(const char* /*name*/) noexcept { return nullptr; }
+    virtual void* getProcAddress(const char* /*name*/) noexcept {
+        return nullptr;
+    }
 };
 
 } // namespace tessera

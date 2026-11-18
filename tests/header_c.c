@@ -13,10 +13,14 @@ int main(void) {
     TesseraContextConfig cfg = tesseraDefaultContextConfig();
     TesseraContextInfo info = tesseraDefaultContextInfo();
 
-    if (major != TESSERA_VERSION_MAJOR || minor != TESSERA_VERSION_MINOR || patch != TESSERA_VERSION_PATCH) return 1;
-    if (tesseraGetAbiVersion() != TESSERA_ABI_VERSION) return 2;
-    if (cfg.structSize != sizeof(TesseraContextConfig) || info.structSize != sizeof(TesseraContextInfo)) return 3;
-    if (cfg.api != 0 || cfg.shareWith != TESSERA_NULL_HANDLE) return 4;
+    if (major != TESSERA_VERSION_MAJOR || minor != TESSERA_VERSION_MINOR || patch != TESSERA_VERSION_PATCH)
+        return 1;
+    if (tesseraGetAbiVersion() != TESSERA_ABI_VERSION)
+        return 2;
+    if (cfg.structSize != sizeof(TesseraContextConfig) || info.structSize != sizeof(TesseraContextInfo))
+        return 3;
+    if (cfg.api != 0 || cfg.shareWith != TESSERA_NULL_HANDLE)
+        return 4;
 
     puts("header_c: OK");
     return 0;

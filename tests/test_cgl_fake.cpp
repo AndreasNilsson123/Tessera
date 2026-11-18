@@ -1,7 +1,8 @@
-// Runs the macOS (CGL) backend against tests/fake_cgl.cpp on any platform with dlopen. This checks the backend's own
-// logic - attribute building, the negotiation ladder, strict vs best-effort, sharing rules, state restoration, release
-// order and leaks. It does NOT check that Apple's real CGL accepts these attributes or behaves like the fake: that needs
-// a Mac (the macOS CI job runs the same backend against the real framework, but has no such test yet).
+// Runs the macOS (CGL) backend against tests/fake_cgl.cpp on any platform with dlopen. This checks the
+// backend's own logic - attribute building, the negotiation ladder, strict vs best-effort, sharing rules,
+// state restoration, release order and leaks. It does NOT check that Apple's real CGL accepts these
+// attributes or behaves like the fake: that needs a Mac (the macOS CI job runs the same backend against the
+// real framework, but has no such test yet).
 #include <tessera/tessera.h>
 
 #include <dlfcn.h>
@@ -20,21 +21,22 @@
 using namespace tessera::cgl;
 
 static int g_failures = 0;
-#define CHECK(cond)                                                                                      \
-    do {                                                                                                 \
-        if (!(cond)) {                                                                                   \
-            std::fprintf(stderr, "%s:%d: CHECK failed: %s\n", __FILE__, __LINE__, #cond);                \
-            ++g_failures;                                                                                \
-        }                                                                                                \
+#define CHECK(cond)                                                                                          \
+    do {                                                                                                     \
+        if (!(cond)) {                                                                                       \
+            std::fprintf(stderr, "%s:%d: CHECK failed: %s\n", __FILE__, __LINE__, #cond);                    \
+            ++g_failures;                                                                                    \
+        }                                                                                                    \
     } while (0)
-#define EXPECT(call, want)                                                                               \
-    do {                                                                                                 \
-        const TesseraResult got_ = (call);                                                               \
-        if (got_ != (want)) {                                                                            \
-            std::fprintf(stderr, "%s:%d: %s -> %s, expected %s (%s)\n", __FILE__, __LINE__, #call,       \
-                         tesseraResultString(got_), tesseraResultString(want), tesseraGetLastErrorMessage()); \
-            ++g_failures;                                                                                \
-        }                                                                                                \
+#define EXPECT(call, want)                                                                                   \
+    do {                                                                                                     \
+        const TesseraResult got_ = (call);                                                                   \
+        if (got_ != (want)) {                                                                                \
+            std::fprintf(stderr, "%s:%d: %s -> %s, expected %s (%s)\n", __FILE__, __LINE__, #call,           \
+                         tesseraResultString(got_), tesseraResultString(want),                               \
+                         tesseraGetLastErrorMessage());                                                      \
+            ++g_failures;                                                                                    \
+        }                                                                                                    \
     } while (0)
 
 using GlGenTextures = void (*)(int, unsigned*);
@@ -60,10 +62,13 @@ static bool loadFake() {
     }
     return bind(lib, "CGLChoosePixelFormat", g_cgl.CGLChoosePixelFormat) &&
            bind(lib, "CGLReleasePixelFormat", g_cgl.CGLReleasePixelFormat) &&
-           bind(lib, "CGLCreateContext", g_cgl.CGLCreateContext) && bind(lib, "CGLDestroyContext", g_cgl.CGLDestroyContext) &&
+           bind(lib, "CGLCreateContext", g_cgl.CGLCreateContext) &&
+           bind(lib, "CGLDestroyContext", g_cgl.CGLDestroyContext) &&
            bind(lib, "CGLSetCurrentContext", g_cgl.CGLSetCurrentContext) &&
-           bind(lib, "CGLGetCurrentContext", g_cgl.CGLGetCurrentContext) && bind(lib, "fake_cgl_live_contexts", g_liveContexts) &&
-           bind(lib, "fake_cgl_live_pixel_formats", g_livePixelFormats) && bind(lib, "fake_cgl_choose_calls", g_chooseCalls) &&
+           bind(lib, "CGLGetCurrentContext", g_cgl.CGLGetCurrentContext) &&
+           bind(lib, "fake_cgl_live_contexts", g_liveContexts) &&
+           bind(lib, "fake_cgl_live_pixel_formats", g_livePixelFormats) &&
+           bind(lib, "fake_cgl_choose_calls", g_chooseCalls) &&
            bind(lib, "fake_cgl_set_fail_at", g_setFailAt) && bind(lib, "fake_cgl_calls", g_fakeCalls);
 }
 
@@ -81,8 +86,8 @@ static TesseraContextConfig coreConfig() {
 
 static void noLeaks(int line) {
     if (g_liveContexts() != 0 || g_livePixelFormats() != 0) {
-        std::fprintf(stderr, "%s:%d: leak: %d context(s), %d pixel format(s) still alive\n", __FILE__, line, g_liveContexts(),
-                     g_livePixelFormats());
+        std::fprintf(stderr, "%s:%d: leak: %d context(s), %d pixel format(s) still alive\n", __FILE__, line,
+                     g_liveContexts(), g_livePixelFormats());
         ++g_failures;
     }
 }
@@ -93,18 +98,21 @@ static void testLegacyDefault() {
     TesseraContextConfig cfg = baseConfig();
     TesseraContext ctx = 0;
     EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_SUCCESS);
-    if (!ctx) return;
+    if (!ctx)
+        return;
     TesseraContextInfo info = tesseraDefaultContextInfo();
     EXPECT(tesseraGetContextInfo(ctx, &info), TESSERA_SUCCESS);
     CHECK(info.api == TESSERA_API_OPENGL);
     CHECK(info.versionMajor == 2 && info.versionMinor == 1);
     CHECK(info.profile == TESSERA_PROFILE_COMPATIBILITY);
     CHECK(info.surface == TESSERA_SURFACE_NONE); // CGL contexts have no drawable
-    CHECK(info.redBits == 8 && info.greenBits == 8 && info.blueBits == 8); // 32-bit colour incl. 8 alpha -> 8 per channel
+    CHECK(info.redBits == 8 && info.greenBits == 8 &&
+          info.blueBits == 8); // 32-bit colour incl. 8 alpha -> 8 per channel
     CHECK(info.alphaBits == 8);
     CHECK(info.depthBits == 24);
     CHECK(std::strcmp(info.renderer, "Fake CGL Renderer") == 0);
-    CHECK(g_livePixelFormats() == 0); // the format was released right after the context took its own reference
+    CHECK(g_livePixelFormats() ==
+          0); // the format was released right after the context took its own reference
     CHECK(g_cgl.CGLGetCurrentContext() == nullptr); // creating leaves nothing current
     EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
     noLeaks(__LINE__);
@@ -119,7 +127,7 @@ static void testCoreProfiles() {
         tesseraGetContextInfo(ctx, &info);
         CHECK(info.profile == TESSERA_PROFILE_CORE);
         CHECK(info.versionMajor == 4 && info.versionMinor == 1); // the newest profile is tried first
-        CHECK(info.flags & TESSERA_FLAG_FORWARD_COMPATIBLE);     // core contexts on macOS are forward-compatible
+        CHECK(info.flags & TESSERA_FLAG_FORWARD_COMPATIBLE); // core contexts on macOS are forward-compatible
         tesseraDestroyContext(ctx);
     }
 
@@ -159,13 +167,15 @@ static void testRefusals() {
     TesseraContext ctx = 0;
     TesseraContextConfig es = baseConfig();
     es.api = TESSERA_API_OPENGL_ES;
-    EXPECT(tesseraCreateContext(&es, &ctx), TESSERA_ERROR_UNSUPPORTED); // leaves the request to other backends
+    EXPECT(tesseraCreateContext(&es, &ctx),
+           TESSERA_ERROR_UNSUPPORTED); // leaves the request to other backends
 
     auto noMatch = [&](TesseraContextConfig c, const char* why) {
         c.fallback = TESSERA_FALLBACK_STRICT;
         const TesseraResult r = tesseraCreateContext(&c, &ctx);
         if (r != TESSERA_ERROR_NO_MATCHING_CONFIG) {
-            std::fprintf(stderr, "strict %s -> %s, expected no matching configuration\n", why, tesseraResultString(r));
+            std::fprintf(stderr, "strict %s -> %s, expected no matching configuration\n", why,
+                         tesseraResultString(r));
             ++g_failures;
         }
     };
@@ -186,7 +196,8 @@ static void testRefusals() {
     v22.versionMinor = 2;
     noMatch(v22, "legacy 2.2");
 
-    // Context flags macOS cannot provide: refused in strict mode, dropped (and reported absent) in best-effort mode.
+    // Context flags macOS cannot provide: refused in strict mode, dropped (and reported absent) in
+    // best-effort mode.
     const uint32_t unsupported[] = {TESSERA_FLAG_DEBUG, TESSERA_FLAG_ROBUST_ACCESS, TESSERA_FLAG_NO_ERROR,
                                     TESSERA_FLAG_RELEASE_FLUSH, TESSERA_FLAG_SRGB};
     for (uint32_t flag : unsupported) {
@@ -210,7 +221,8 @@ static void testRefusals() {
     fwdCore.flags = TESSERA_FLAG_FORWARD_COMPATIBLE;
     fwdCore.fallback = TESSERA_FALLBACK_STRICT;
     EXPECT(tesseraCreateContext(&fwdCore, &ctx), TESSERA_SUCCESS);
-    if (ctx) tesseraDestroyContext(ctx);
+    if (ctx)
+        tesseraDestroyContext(ctx);
     noLeaks(__LINE__);
 }
 
@@ -239,19 +251,22 @@ static void testPixelFormatNegotiation() {
     }
     unsetenv("FAKE_CGL_MAX_SAMPLES");
 
-    // A format that exists only on an offline (not display-driving) GPU is found by the second, offline-allowing try.
+    // A format that exists only on an offline (not display-driving) GPU is found by the second,
+    // offline-allowing try.
     setenv("FAKE_CGL_NEEDS_OFFLINE", "1", 1);
     const int before = g_chooseCalls();
     EXPECT(tesseraCreateContext(&msaa, &ctx), TESSERA_SUCCESS);
     CHECK(g_chooseCalls() - before >= 2);
-    if (ctx) tesseraDestroyContext(ctx);
+    if (ctx)
+        tesseraDestroyContext(ctx);
     unsetenv("FAKE_CGL_NEEDS_OFFLINE");
     // ... but the cheap, display-GPU-only attempt wins when it works (no needless wake-up of a discrete GPU).
     const int before2 = g_chooseCalls();
     TesseraContextConfig plain = baseConfig();
     EXPECT(tesseraCreateContext(&plain, &ctx), TESSERA_SUCCESS);
     CHECK(g_chooseCalls() - before2 == 1);
-    if (ctx) tesseraDestroyContext(ctx);
+    if (ctx)
+        tesseraDestroyContext(ctx);
 
     // Float colour.
     TesseraContextConfig fl = baseConfig();
@@ -290,7 +305,8 @@ static void testMakeCurrentAndProcs() {
     TesseraContextConfig cfg = baseConfig();
     TesseraContext ctx = 0;
     EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_SUCCESS);
-    if (!ctx) return;
+    if (!ctx)
+        return;
 
     EXPECT(tesseraMakeCurrent(ctx), TESSERA_SUCCESS);
     CHECK(tesseraGetCurrentContext() == ctx);
@@ -361,7 +377,8 @@ static void testSharing() {
     TesseraContextConfig legacy = baseConfig();
     TesseraContext a = 0, b = 0;
     EXPECT(tesseraCreateContext(&legacy, &a), TESSERA_SUCCESS);
-    if (!a) return;
+    if (!a)
+        return;
     legacy.shareWith = a;
     EXPECT(tesseraCreateContext(&legacy, &b), TESSERA_SUCCESS);
     if (!b) {
@@ -393,7 +410,8 @@ static void testSharing() {
     // Parent first: the child keeps working (it holds its own reference to the parent).
     EXPECT(tesseraDestroyContext(a), TESSERA_SUCCESS);
     EXPECT(tesseraMakeCurrent(b), TESSERA_SUCCESS);
-    if (isTexture) CHECK(isTexture(tex));
+    if (isTexture)
+        CHECK(isTexture(tex));
     EXPECT(tesseraDestroyContext(b), TESSERA_SUCCESS);
     noLeaks(__LINE__);
 
@@ -403,8 +421,10 @@ static void testSharing() {
     EXPECT(tesseraCreateContext(&cp, &p), TESSERA_SUCCESS);
     cp.shareWith = p;
     EXPECT(tesseraCreateContext(&cp, &c), TESSERA_SUCCESS);
-    if (c) tesseraDestroyContext(c);
-    if (p) tesseraDestroyContext(p);
+    if (c)
+        tesseraDestroyContext(c);
+    if (p)
+        tesseraDestroyContext(p);
     noLeaks(__LINE__);
 }
 
@@ -433,12 +453,18 @@ static void testThreadsAndConcurrency() {
             for (int i = 0; i < 50; ++i) {
                 TesseraContextConfig c = baseConfig();
                 TesseraContext h = 0;
-                if (tesseraCreateContext(&c, &h) != TESSERA_SUCCESS) { ++failures; continue; }
-                if (tesseraMakeCurrent(h) != TESSERA_SUCCESS) ++failures;
-                if (tesseraDestroyContext(h) != TESSERA_SUCCESS) ++failures;
+                if (tesseraCreateContext(&c, &h) != TESSERA_SUCCESS) {
+                    ++failures;
+                    continue;
+                }
+                if (tesseraMakeCurrent(h) != TESSERA_SUCCESS)
+                    ++failures;
+                if (tesseraDestroyContext(h) != TESSERA_SUCCESS)
+                    ++failures;
             }
         });
-    for (auto& t : threads) t.join();
+    for (auto& t : threads)
+        t.join();
     CHECK(failures == 0);
     noLeaks(__LINE__);
 }
@@ -456,8 +482,9 @@ static void testTerminateDestroysLeaks() {
     noLeaks(__LINE__);
 }
 
-// Fails every native call position of a create in turn. After each injected fault: no leaked contexts or pixel
-// formats, the other library's context still current, a sensible error code, and no handle returned on failure.
+// Fails every native call position of a create in turn. After each injected fault: no leaked contexts or
+// pixel formats, the other library's context still current, a sensible error code, and no handle returned on
+// failure.
 static void testFaultInjection() {
     // The "other library": a raw legacy context current on this thread throughout.
     const int32_t rawAttribs[] = {99, 0x1000, 0};
@@ -477,7 +504,8 @@ static void testFaultInjection() {
     TesseraContextConfig legacy = baseConfig();
     TesseraContextConfig core = coreConfig();
     TesseraContextConfig msaa = baseConfig();
-    msaa.samples = 64; // many pixel-format attempts: lots of call positions, and graceful degradation when one fails
+    msaa.samples =
+        64; // many pixel-format attempts: lots of call positions, and graceful degradation when one fails
     msaa.fallback = TESSERA_FALLBACK_BEST_EFFORT;
     TesseraContextConfig fl = baseConfig();
     fl.flags = TESSERA_FLAG_FLOAT_COLOR;
@@ -503,7 +531,8 @@ static void testFaultInjection() {
         g_setFailAt(0);
         EXPECT(tesseraCreateContext(&cfg, &h), TESSERA_SUCCESS);
         const int calls = g_fakeCalls();
-        if (h) tesseraDestroyContext(h);
+        if (h)
+            tesseraDestroyContext(h);
 
         int clean = 0, survived = 0;
         for (int at = 1; at <= calls; ++at) {
@@ -520,23 +549,31 @@ static void testFaultInjection() {
             } else {
                 ++clean;
                 CHECK(h == TESSERA_NULL_HANDLE);
-                CHECK(r == TESSERA_ERROR_OUT_OF_MEMORY || r == TESSERA_ERROR_PLATFORM || r == TESSERA_ERROR_NO_MATCHING_CONFIG);
+                CHECK(r == TESSERA_ERROR_OUT_OF_MEMORY || r == TESSERA_ERROR_PLATFORM ||
+                      r == TESSERA_ERROR_NO_MATCHING_CONFIG);
                 CHECK(tesseraGetLastErrorMessage()[0] != '\0');
             }
             if (g_liveContexts() != baseline || g_livePixelFormats() != 0) {
-                std::fprintf(stderr, "%s:%d: leak after a fault at native call %d/%d of '%s': %d context(s) (expected %d), %d pixel format(s)\n",
-                             __FILE__, __LINE__, at, calls, sc.name, g_liveContexts(), baseline, g_livePixelFormats());
+                std::fprintf(stderr,
+                             "%s:%d: leak after a fault at native call %d/%d of '%s': %d context(s) "
+                             "(expected %d), %d pixel format(s)\n",
+                             __FILE__, __LINE__, at, calls, sc.name, g_liveContexts(), baseline,
+                             g_livePixelFormats());
                 ++g_failures;
             }
             if (g_cgl.CGLGetCurrentContext() != foreign) {
-                std::fprintf(stderr, "%s:%d: the other library's context was disturbed by a fault at native call %d/%d of '%s'\n",
+                std::fprintf(stderr,
+                             "%s:%d: the other library's context was disturbed by a fault at native call "
+                             "%d/%d of '%s'\n",
                              __FILE__, __LINE__, at, calls, sc.name);
                 ++g_failures;
             }
         }
-        std::printf("  %-34s %2d native calls: %2d faults failed cleanly, %2d survived\n", sc.name, calls, clean, survived);
+        std::printf("  %-34s %2d native calls: %2d faults failed cleanly, %2d survived\n", sc.name, calls,
+                    clean, survived);
         CHECK(clean > 0); // at least the pixel-format and context-creation calls must be fatal
-        if (parent) tesseraDestroyContext(parent);
+        if (parent)
+            tesseraDestroyContext(parent);
     }
 
     // Faults while tearing down: the failing destroy/release must not crash or leave the runtime unusable.
@@ -550,7 +587,8 @@ static void testFaultInjection() {
     g_cgl.CGLSetCurrentContext(nullptr);
     TesseraContext after = 0;
     EXPECT(tesseraCreateContext(&cfg, &after), TESSERA_SUCCESS); // still fully functional
-    if (after) tesseraDestroyContext(after);
+    if (after)
+        tesseraDestroyContext(after);
 
     g_cgl.CGLSetCurrentContext(nullptr);
     g_cgl.CGLDestroyContext(foreign);
@@ -561,7 +599,8 @@ static void testFaultInjection() {
 static int runUnavailableLibrary(const char* path) {
     setenv("TESSERA_CGL_LIBRARY", path, 1);
     tessera::Runtime::disableBuiltinBackendsForTesting();
-    if (tesseraInit() != TESSERA_SUCCESS) return 1;
+    if (tesseraInit() != TESSERA_SUCCESS)
+        return 1;
     tessera::Runtime::instance().registerBackend(makeCglBackend());
     TesseraContextConfig cfg = baseConfig();
     TesseraContext ctx = 0;
@@ -569,12 +608,14 @@ static int runUnavailableLibrary(const char* path) {
     CHECK(ctx == TESSERA_NULL_HANDLE);
     CHECK(tesseraGetProcAddress("glGetString") == nullptr);
     tesseraTerminate();
-    if (g_failures == 0) std::printf("test_cgl_fake (%s): OK\n", path);
+    if (g_failures == 0)
+        std::printf("test_cgl_fake (%s): OK\n", path);
     return g_failures == 0 ? 0 : 1;
 }
 
 int main(int argc, char** argv) {
-    if (argc > 1 && std::strcmp(argv[1], "--missing-library") == 0) return runUnavailableLibrary("/nonexistent/OpenGL");
+    if (argc > 1 && std::strcmp(argv[1], "--missing-library") == 0)
+        return runUnavailableLibrary("/nonexistent/OpenGL");
     if (argc > 1 && std::strcmp(argv[1], "--wrong-library") == 0) {
 #if defined(__APPLE__)
         return runUnavailableLibrary("/usr/lib/libSystem.B.dylib");
@@ -583,7 +624,8 @@ int main(int argc, char** argv) {
 #endif
     }
     setenv("TESSERA_CGL_LIBRARY", FAKE_CGL_PATH, 1);
-    if (!loadFake()) return 77;
+    if (!loadFake())
+        return 77;
 
     // Only the backend under test: the real platform backends (GLX/EGL/WGL) must not answer for it.
     tessera::Runtime::disableBuiltinBackendsForTesting();
@@ -593,7 +635,10 @@ int main(int argc, char** argv) {
     }
     tessera::Runtime::instance().registerBackend(makeCglBackend());
 
-    struct Section { const char* name; void (*fn)(); };
+    struct Section {
+        const char* name;
+        void (*fn)();
+    };
     const Section sections[] = {
         {"legacy default context", testLegacyDefault},
         {"core profiles", testCoreProfiles},
@@ -612,6 +657,7 @@ int main(int argc, char** argv) {
     }
 
     tesseraTerminate();
-    if (g_failures == 0) std::puts("test_cgl_fake: OK");
+    if (g_failures == 0)
+        std::puts("test_cgl_fake: OK");
     return g_failures == 0 ? 0 : 1;
 }

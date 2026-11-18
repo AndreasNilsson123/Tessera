@@ -1,9 +1,11 @@
-// Zero-copy handoff between OpenGL and Direct3D 11 through a Tessera context, using only what Tessera exposes: the native
-// handles and tesseraGetProcAddress (which resolves the WGL_NV_DX_interop2 entry points). Tessera has no interop API of its
-// own on purpose: the extension is the API, and the missing piece was access to the native objects.
+// Zero-copy handoff between OpenGL and Direct3D 11 through a Tessera context, using only what Tessera
+// exposes: the native handles and tesseraGetProcAddress (which resolves the WGL_NV_DX_interop2 entry points).
+// Tessera has no interop API of its own on purpose: the extension is the API, and the missing piece was
+// access to the native objects.
 //
-// OpenGL renders into a texture that is really a D3D11 texture; D3D11 then reads the same memory back and checks the colour.
-// Needs an NVIDIA-style WGL_NV_DX_interop2 driver and a D3D11 adapter on the same GPU. Exits 77 (skipped) otherwise.
+// OpenGL renders into a texture that is really a D3D11 texture; D3D11 then reads the same memory back and
+// checks the colour. Needs an NVIDIA-style WGL_NV_DX_interop2 driver and a D3D11 adapter on the same GPU.
+// Exits 77 (skipped) otherwise.
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -21,21 +23,22 @@
 #include <cstring>
 
 static int g_failures = 0;
-#define CHECK(cond)                                                                                      \
-    do {                                                                                                 \
-        if (!(cond)) {                                                                                   \
-            std::fprintf(stderr, "%s:%d: CHECK failed: %s\n", __FILE__, __LINE__, #cond);                \
-            ++g_failures;                                                                                \
-        }                                                                                                \
+#define CHECK(cond)                                                                                          \
+    do {                                                                                                     \
+        if (!(cond)) {                                                                                       \
+            std::fprintf(stderr, "%s:%d: CHECK failed: %s\n", __FILE__, __LINE__, #cond);                    \
+            ++g_failures;                                                                                    \
+        }                                                                                                    \
     } while (0)
-#define EXPECT(call, want)                                                                               \
-    do {                                                                                                 \
-        const TesseraResult got_ = (call);                                                               \
-        if (got_ != (want)) {                                                                            \
-            std::fprintf(stderr, "%s:%d: %s -> %s, expected %s (%s)\n", __FILE__, __LINE__, #call,       \
-                         tesseraResultString(got_), tesseraResultString(want), tesseraGetLastErrorMessage()); \
-            ++g_failures;                                                                                \
-        }                                                                                                \
+#define EXPECT(call, want)                                                                                   \
+    do {                                                                                                     \
+        const TesseraResult got_ = (call);                                                                   \
+        if (got_ != (want)) {                                                                                \
+            std::fprintf(stderr, "%s:%d: %s -> %s, expected %s (%s)\n", __FILE__, __LINE__, #call,           \
+                         tesseraResultString(got_), tesseraResultString(want),                               \
+                         tesseraGetLastErrorMessage());                                                      \
+            ++g_failures;                                                                                    \
+        }                                                                                                    \
     } while (0)
 
 template <class T> struct Com {
@@ -44,10 +47,15 @@ template <class T> struct Com {
     Com(const Com&) = delete;
     Com& operator=(const Com&) = delete;
     ~Com() {
-        if (p) p->Release();
+        if (p)
+            p->Release();
     }
-    T** operator&() { return &p; }
-    T* operator->() const { return p; }
+    T** operator&() {
+        return &p;
+    }
+    T* operator->() const {
+        return p;
+    }
 };
 
 // WGL_NV_DX_interop2
@@ -68,28 +76,37 @@ using PfnClearColor = void(WINAPI*)(float, float, float, float);
 using PfnClear = void(WINAPI*)(unsigned);
 using PfnFinish = void(WINAPI*)();
 
-template <class Fn> static Fn proc(const char* name) { return reinterpret_cast<Fn>(tesseraGetProcAddress(name)); }
+template <class Fn> static Fn proc(const char* name) {
+    return reinterpret_cast<Fn>(tesseraGetProcAddress(name));
+}
 
 // Picks the DXGI adapter that is the same GPU as the OpenGL context (a laptop usually has two).
 static IDXGIAdapter1* matchingAdapter(const char* glVendor) {
     unsigned wanted = 0;
-    if (std::strstr(glVendor, "NVIDIA")) wanted = 0x10DE;
-    else if (std::strstr(glVendor, "ATI") || std::strstr(glVendor, "AMD")) wanted = 0x1002;
-    else if (std::strstr(glVendor, "Intel")) wanted = 0x8086;
+    if (std::strstr(glVendor, "NVIDIA"))
+        wanted = 0x10DE;
+    else if (std::strstr(glVendor, "ATI") || std::strstr(glVendor, "AMD"))
+        wanted = 0x1002;
+    else if (std::strstr(glVendor, "Intel"))
+        wanted = 0x8086;
     Com<IDXGIFactory1> factory;
-    if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(&factory)))) return nullptr;
+    if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(&factory))))
+        return nullptr;
     for (UINT i = 0;; ++i) {
         IDXGIAdapter1* a = nullptr;
-        if (factory->EnumAdapters1(i, &a) == DXGI_ERROR_NOT_FOUND) return nullptr;
+        if (factory->EnumAdapters1(i, &a) == DXGI_ERROR_NOT_FOUND)
+            return nullptr;
         DXGI_ADAPTER_DESC1 d = {};
         a->GetDesc1(&d);
-        if (wanted != 0 && d.VendorId == wanted && !(d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) return a;
+        if (wanted != 0 && d.VendorId == wanted && !(d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE))
+            return a;
         a->Release();
     }
 }
 
 int main() {
-    if (tesseraInit() != TESSERA_SUCCESS) return 1;
+    if (tesseraInit() != TESSERA_SUCCESS)
+        return 1;
     TesseraContextConfig cfg = tesseraDefaultContextConfig();
     cfg.api = TESSERA_API_OPENGL;
     cfg.flags = TESSERA_FLAG_DOUBLE_BUFFER;
@@ -114,8 +131,10 @@ int main() {
     auto unregisterObject = proc<PfnUnregister>("wglDXUnregisterObjectNV");
     auto lockObjects = proc<PfnLock>("wglDXLockObjectsNV");
     auto unlockObjects = proc<PfnLock>("wglDXUnlockObjectsNV");
-    if (!openDevice || !closeDevice || !registerObject || !unregisterObject || !lockObjects || !unlockObjects) {
-        std::fprintf(stderr, "test_dxinterop: WGL_NV_DX_interop2 is not available on this driver, skipping\n");
+    if (!openDevice || !closeDevice || !registerObject || !unregisterObject || !lockObjects ||
+        !unlockObjects) {
+        std::fprintf(stderr,
+                     "test_dxinterop: WGL_NV_DX_interop2 is not available on this driver, skipping\n");
         return 77;
     }
     auto genTextures = proc<PfnGenTextures>("glGenTextures");
@@ -128,8 +147,8 @@ int main() {
     auto clearColor = proc<PfnClearColor>("glClearColor");
     auto clear = proc<PfnClear>("glClear");
     auto finish = proc<PfnFinish>("glFinish");
-    CHECK(genTextures && deleteTextures && genFramebuffers && deleteFramebuffers && bindFramebuffer && framebufferTexture2D &&
-          checkFramebufferStatus && clearColor && clear && finish);
+    CHECK(genTextures && deleteTextures && genFramebuffers && deleteFramebuffers && bindFramebuffer &&
+          framebufferTexture2D && checkFramebufferStatus && clearColor && clear && finish);
 
     // A D3D11 device on the same GPU.
     Com<IDXGIAdapter1> adapter;
@@ -140,7 +159,8 @@ int main() {
     }
     Com<ID3D11Device> device;
     Com<ID3D11DeviceContext> d3d;
-    if (FAILED(D3D11CreateDevice(adapter.p, D3D_DRIVER_TYPE_UNKNOWN, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &device, nullptr, &d3d))) {
+    if (FAILED(D3D11CreateDevice(adapter.p, D3D_DRIVER_TYPE_UNKNOWN, nullptr, 0, nullptr, 0,
+                                 D3D11_SDK_VERSION, &device, nullptr, &d3d))) {
         std::fprintf(stderr, "test_dxinterop: cannot create a D3D11 device, skipping\n");
         return 77;
     }
@@ -162,18 +182,22 @@ int main() {
     stagingDesc.BindFlags = 0;
     stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
     Com<ID3D11Texture2D> staging;
-    if (FAILED(device->CreateTexture2D(&stagingDesc, nullptr, &staging))) return 1;
+    if (FAILED(device->CreateTexture2D(&stagingDesc, nullptr, &staging)))
+        return 1;
 
     // Hand the D3D11 texture to OpenGL.
     HANDLE glDevice = openDevice(device.p);
     if (!glDevice) {
-        std::fprintf(stderr, "test_dxinterop: wglDXOpenDeviceNV failed (error 0x%lx): this GPU/driver pairing does not support it, skipping\n",
+        std::fprintf(stderr,
+                     "test_dxinterop: wglDXOpenDeviceNV failed (error 0x%lx): this GPU/driver pairing does "
+                     "not support it, skipping\n",
                      static_cast<unsigned long>(GetLastError()));
         return 77;
     }
     unsigned glTexture = 0;
     genTextures(1, &glTexture);
-    HANDLE object = registerObject(glDevice, shared.p, glTexture, 0x0DE1 /*GL_TEXTURE_2D*/, 0x0001 /*WGL_ACCESS_READ_WRITE_NV*/);
+    HANDLE object = registerObject(glDevice, shared.p, glTexture, 0x0DE1 /*GL_TEXTURE_2D*/,
+                                   0x0001 /*WGL_ACCESS_READ_WRITE_NV*/);
     CHECK(object != nullptr);
     unsigned fbo = 0;
     genFramebuffers(1, &fbo);
@@ -196,10 +220,14 @@ int main() {
             CHECK(false);
             return;
         }
-        const unsigned char* row = static_cast<const unsigned char*>(mapped.pData) + 10 * mapped.RowPitch + 10 * 4;
-        const int er = static_cast<int>(r * 255 + 0.5f), eg = static_cast<int>(g * 255 + 0.5f), eb = static_cast<int>(b * 255 + 0.5f);
-        std::printf("  %s: D3D11 sees (%d,%d,%d,%d), OpenGL drew (%d,%d,%d,255)\n", label, row[0], row[1], row[2], row[3], er, eg, eb);
-        CHECK(std::abs(row[0] - er) <= 1 && std::abs(row[1] - eg) <= 1 && std::abs(row[2] - eb) <= 1 && row[3] == 255);
+        const unsigned char* row =
+            static_cast<const unsigned char*>(mapped.pData) + 10 * mapped.RowPitch + 10 * 4;
+        const int er = static_cast<int>(r * 255 + 0.5f), eg = static_cast<int>(g * 255 + 0.5f),
+                  eb = static_cast<int>(b * 255 + 0.5f);
+        std::printf("  %s: D3D11 sees (%d,%d,%d,%d), OpenGL drew (%d,%d,%d,255)\n", label, row[0], row[1],
+                    row[2], row[3], er, eg, eb);
+        CHECK(std::abs(row[0] - er) <= 1 && std::abs(row[1] - eg) <= 1 && std::abs(row[2] - eb) <= 1 &&
+              row[3] == 255);
         d3d->Unmap(staging.p, 0);
     };
     roundTrip(0.2f, 0.4f, 0.6f, "first handoff ");
@@ -215,6 +243,7 @@ int main() {
     EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
     tesseraTerminate();
 
-    if (g_failures == 0) std::puts("test_dxinterop: OK");
+    if (g_failures == 0)
+        std::puts("test_dxinterop: OK");
     return g_failures == 0 ? 0 : 1;
 }

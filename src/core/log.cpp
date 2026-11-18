@@ -36,7 +36,8 @@ void logf(int32_t level, const char* fmt, ...) noexcept {
         cb = s.callback;
         ud = s.userData;
     }
-    if (!cb) return;
+    if (!cb)
+        return;
 
     char buffer[512];
     va_list args;

@@ -1,8 +1,8 @@
 // Integration tests for the EGL backend, through the public C API only (the backend is forced with
 // TESSERA_BACKEND=egl). Needs an EGL implementation with a headless platform (Mesa surfaceless, or a vendor
-// EGL with EGL_EXT_platform_device). Raw EGL contexts created here play the role of "other libraries in the same
-// process" whose per-thread EGL state Tessera must leave exactly as it found it. Exits 77 (ctest: skipped) when
-// EGL is not available.
+// EGL with EGL_EXT_platform_device). Raw EGL contexts created here play the role of "other libraries in the
+// same process" whose per-thread EGL state Tessera must leave exactly as it found it. Exits 77 (ctest:
+// skipped) when EGL is not available.
 #include <tessera/tessera.h>
 
 #include <dirent.h>
@@ -21,25 +21,26 @@
 using namespace tessera::egl;
 
 static int g_failures = 0;
-#define CHECK(cond)                                                                                      \
-    do {                                                                                                 \
-        if (!(cond)) {                                                                                   \
-            std::fprintf(stderr, "%s:%d: CHECK failed: %s\n", __FILE__, __LINE__, #cond);                \
-            ++g_failures;                                                                                \
-        }                                                                                                \
+#define CHECK(cond)                                                                                          \
+    do {                                                                                                     \
+        if (!(cond)) {                                                                                       \
+            std::fprintf(stderr, "%s:%d: CHECK failed: %s\n", __FILE__, __LINE__, #cond);                    \
+            ++g_failures;                                                                                    \
+        }                                                                                                    \
     } while (0)
-#define EXPECT(call, want)                                                                               \
-    do {                                                                                                 \
-        const TesseraResult got_ = (call);                                                               \
-        if (got_ != (want)) {                                                                            \
-            std::fprintf(stderr, "%s:%d: %s -> %s, expected %s (%s)\n", __FILE__, __LINE__, #call,       \
-                         tesseraResultString(got_), tesseraResultString(want), tesseraGetLastErrorMessage()); \
-            ++g_failures;                                                                                \
-        }                                                                                                \
+#define EXPECT(call, want)                                                                                   \
+    do {                                                                                                     \
+        const TesseraResult got_ = (call);                                                                   \
+        if (got_ != (want)) {                                                                                \
+            std::fprintf(stderr, "%s:%d: %s -> %s, expected %s (%s)\n", __FILE__, __LINE__, #call,           \
+                         tesseraResultString(got_), tesseraResultString(want),                               \
+                         tesseraGetLastErrorMessage());                                                      \
+            ++g_failures;                                                                                    \
+        }                                                                                                    \
     } while (0)
 
-#include "robustness_common.hpp"
 #include "interop_common.hpp"
+#include "robustness_common.hpp"
 
 using GlGetString = const unsigned char* (*)(unsigned);
 using GlGenTextures = void (*)(int, unsigned*);
@@ -57,19 +58,25 @@ template <class Fn> static bool bind(void* lib, const char* name, Fn& out) {
 
 static bool loadRaw() {
     void* lib = dlopen("libEGL.so.1", RTLD_NOW | RTLD_LOCAL);
-    if (!lib) return false;
-    const bool ok = bind(lib, "eglQueryString", g_e.eglQueryString) && bind(lib, "eglGetError", g_e.eglGetError) &&
-                    bind(lib, "eglGetDisplay", g_e.eglGetDisplay) && bind(lib, "eglInitialize", g_e.eglInitialize) &&
-                    bind(lib, "eglBindAPI", g_e.eglBindAPI) && bind(lib, "eglQueryAPI", g_e.eglQueryAPI) &&
-                    bind(lib, "eglChooseConfig", g_e.eglChooseConfig) && bind(lib, "eglCreateContext", g_e.eglCreateContext) &&
-                    bind(lib, "eglDestroyContext", g_e.eglDestroyContext) && bind(lib, "eglMakeCurrent", g_e.eglMakeCurrent) &&
-                    bind(lib, "eglGetCurrentContext", g_e.eglGetCurrentContext) &&
-                    bind(lib, "eglGetCurrentSurface", g_e.eglGetCurrentSurface) &&
-                    bind(lib, "eglCreatePbufferSurface", g_e.eglCreatePbufferSurface) &&
-                    bind(lib, "eglDestroySurface", g_e.eglDestroySurface) &&
-                    bind(lib, "eglGetProcAddress", g_e.eglGetProcAddress);
-    if (!ok) return false;
-    g_e.eglGetPlatformDisplayEXT = reinterpret_cast<decltype(g_e.eglGetPlatformDisplayEXT)>(g_e.eglGetProcAddress("eglGetPlatformDisplayEXT"));
+    if (!lib)
+        return false;
+    const bool ok =
+        bind(lib, "eglQueryString", g_e.eglQueryString) && bind(lib, "eglGetError", g_e.eglGetError) &&
+        bind(lib, "eglGetDisplay", g_e.eglGetDisplay) && bind(lib, "eglInitialize", g_e.eglInitialize) &&
+        bind(lib, "eglBindAPI", g_e.eglBindAPI) && bind(lib, "eglQueryAPI", g_e.eglQueryAPI) &&
+        bind(lib, "eglChooseConfig", g_e.eglChooseConfig) &&
+        bind(lib, "eglCreateContext", g_e.eglCreateContext) &&
+        bind(lib, "eglDestroyContext", g_e.eglDestroyContext) &&
+        bind(lib, "eglMakeCurrent", g_e.eglMakeCurrent) &&
+        bind(lib, "eglGetCurrentContext", g_e.eglGetCurrentContext) &&
+        bind(lib, "eglGetCurrentSurface", g_e.eglGetCurrentSurface) &&
+        bind(lib, "eglCreatePbufferSurface", g_e.eglCreatePbufferSurface) &&
+        bind(lib, "eglDestroySurface", g_e.eglDestroySurface) &&
+        bind(lib, "eglGetProcAddress", g_e.eglGetProcAddress);
+    if (!ok)
+        return false;
+    g_e.eglGetPlatformDisplayEXT = reinterpret_cast<decltype(g_e.eglGetPlatformDisplayEXT)>(
+        g_e.eglGetProcAddress("eglGetPlatformDisplayEXT"));
     return true;
 }
 
@@ -84,19 +91,32 @@ struct ForeignContext {
         api = apiEnum;
         onSharedSurfaceless = sharedSurfaceless;
         if (sharedSurfaceless) {
-            if (!g_e.eglGetPlatformDisplayEXT) return false;
+            if (!g_e.eglGetPlatformDisplayEXT)
+                return false;
             dpy = g_e.eglGetPlatformDisplayEXT(kPlatformSurfaceless, nullptr, nullptr);
         } else {
             dpy = g_e.eglGetDisplay(nullptr); // what a toolkit would use
         }
         EGLint major = 0, minor = 0;
-        if (!dpy || !g_e.eglInitialize(dpy, &major, &minor)) return false;
-        if (!g_e.eglBindAPI(api)) return false;
-        const EGLint attribs[] = {kSurfaceType, kPbufferBit, kRenderableType, api == kOpenGlEsApi ? kOpenGlEs2Bit : kOpenGlBit,
-                                  kRedSize, 8, kGreenSize, 8, kBlueSize, 8, kNone};
+        if (!dpy || !g_e.eglInitialize(dpy, &major, &minor))
+            return false;
+        if (!g_e.eglBindAPI(api))
+            return false;
+        const EGLint attribs[] = {kSurfaceType,
+                                  kPbufferBit,
+                                  kRenderableType,
+                                  api == kOpenGlEsApi ? kOpenGlEs2Bit : kOpenGlBit,
+                                  kRedSize,
+                                  8,
+                                  kGreenSize,
+                                  8,
+                                  kBlueSize,
+                                  8,
+                                  kNone};
         EGLConfig cfg = nullptr;
         EGLint n = 0;
-        if (!g_e.eglChooseConfig(dpy, attribs, &cfg, 1, &n) || n == 0) return false;
+        if (!g_e.eglChooseConfig(dpy, attribs, &cfg, 1, &n) || n == 0)
+            return false;
         const EGLint ctxAttribs[] = {kContextMajorVersion, 2, kNone};
         ctx = g_e.eglCreateContext(dpy, cfg, nullptr, api == kOpenGlEsApi ? ctxAttribs : ctxAttribs + 2);
         const EGLint pb[] = {kWidth, 1, kHeight, 1, kNone};
@@ -123,11 +143,15 @@ struct ForeignContext {
         return r;
     }
     void destroy() {
-        if (!dpy) return;
+        if (!dpy)
+            return;
         g_e.eglBindAPI(api);
-        if (g_e.eglGetCurrentContext() == ctx) g_e.eglMakeCurrent(dpy, nullptr, nullptr, nullptr);
-        if (ctx) g_e.eglDestroyContext(dpy, ctx);
-        if (surf) g_e.eglDestroySurface(dpy, surf);
+        if (g_e.eglGetCurrentContext() == ctx)
+            g_e.eglMakeCurrent(dpy, nullptr, nullptr, nullptr);
+        if (ctx)
+            g_e.eglDestroyContext(dpy, ctx);
+        if (surf)
+            g_e.eglDestroySurface(dpy, surf);
         *this = ForeignContext{};
         // Never eglTerminate here either: the display is shared with whoever else asked for it.
     }
@@ -149,7 +173,8 @@ static TesseraContextConfig esConfig(int major = 0) {
 static int openFdCount() {
     int n = 0;
     if (DIR* d = opendir("/proc/self/fd")) {
-        while (readdir(d)) ++n;
+        while (readdir(d))
+            ++n;
         closedir(d);
     }
     return n;
@@ -161,14 +186,16 @@ static void testBasicCreateAndInfo() {
     TesseraContextConfig cfg = baseConfig();
     TesseraContext ctx = 0;
     EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_SUCCESS);
-    if (!ctx) return;
+    if (!ctx)
+        return;
 
     TesseraContextInfo info = tesseraDefaultContextInfo();
     EXPECT(tesseraGetContextInfo(ctx, &info), TESSERA_SUCCESS);
-    std::printf("  default context: %s | %s | GL %s\n    api=%u %d.%d profile=%u flags=0x%x rgba=%d%d%d%d d=%d s=%d samples=%d surface=%u\n",
-                info.vendor, info.renderer, info.version, info.api, info.versionMajor, info.versionMinor, info.profile,
-                info.flags, info.redBits, info.greenBits, info.blueBits, info.alphaBits, info.depthBits,
-                info.stencilBits, info.samples, info.surface);
+    std::printf("  default context: %s | %s | GL %s\n    api=%u %d.%d profile=%u flags=0x%x rgba=%d%d%d%d "
+                "d=%d s=%d samples=%d surface=%u\n",
+                info.vendor, info.renderer, info.version, info.api, info.versionMajor, info.versionMinor,
+                info.profile, info.flags, info.redBits, info.greenBits, info.blueBits, info.alphaBits,
+                info.depthBits, info.stencilBits, info.samples, info.surface);
     CHECK(info.api == TESSERA_API_OPENGL);
     CHECK(info.profile == TESSERA_PROFILE_COMPATIBILITY);
     CHECK(info.versionMajor >= 1);
@@ -221,13 +248,14 @@ static void foreignUntouched(EGLenum foreignApi, bool sharedDisplay, const char*
     EXPECT(tesseraCreateContext(&absurd, &none), TESSERA_ERROR_NO_MATCHING_CONFIG);
     intact(__LINE__); // failing create
 
-    // Making our context current replaces the thread's context for OUR api only; the foreign one for the other api
-    // (and, with the same api, its binding) must survive our release.
+    // Making our context current replaces the thread's context for OUR api only; the foreign one for the
+    // other api (and, with the same api, its binding) must survive our release.
     EXPECT(tesseraMakeCurrent(glCtx), TESSERA_SUCCESS);
     EXPECT(tesseraSwapBuffers(glCtx), TESSERA_SUCCESS);
     CHECK(g_e.eglQueryAPI() == foreignApi); // our make-current did not leave our API bound
-    // Whether the other API's context survives while ours is current is up to the EGL implementation: the spec says one
-    // current context per API, Mesa keeps one per thread. Either is fine; what Tessera owes is restoring the API binding.
+    // Whether the other API's context survives while ours is current is up to the EGL implementation: the
+    // spec says one current context per API, Mesa keeps one per thread. Either is fine; what Tessera owes is
+    // restoring the API binding.
     EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS);
     CHECK(g_e.eglQueryAPI() == foreignApi);
 
@@ -244,7 +272,7 @@ static void foreignUntouched(EGLenum foreignApi, bool sharedDisplay, const char*
     EXPECT(tesseraMakeCurrent(glCtx), TESSERA_SUCCESS);
     EXPECT(tesseraMakeCurrent(esCtx), TESSERA_SUCCESS);
     CHECK(tesseraGetCurrentContext() == esCtx);
-    EXPECT(tesseraMakeCurrent(glCtx), TESSERA_SUCCESS);  // the earlier one is free again: nothing is stuck
+    EXPECT(tesseraMakeCurrent(glCtx), TESSERA_SUCCESS); // the earlier one is free again: nothing is stuck
     EXPECT(tesseraMakeCurrent(esCtx), TESSERA_SUCCESS);
     EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS);
     foreign.makeCurrent();
@@ -266,7 +294,8 @@ static void testMakeCurrentAndProcs() {
     TesseraContextConfig cfg = baseConfig();
     TesseraContext ctx = 0;
     EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_SUCCESS);
-    if (!ctx) return;
+    if (!ctx)
+        return;
     TesseraContextInfo info = tesseraDefaultContextInfo();
     tesseraGetContextInfo(ctx, &info);
 
@@ -275,13 +304,15 @@ static void testMakeCurrentAndProcs() {
 
     auto glGetString = reinterpret_cast<GlGetString>(tesseraGetProcAddress("glGetString"));
     CHECK(glGetString != nullptr);
-    if (glGetString) CHECK(std::strcmp(reinterpret_cast<const char*>(glGetString(0x1F01)), info.renderer) == 0);
+    if (glGetString)
+        CHECK(std::strcmp(reinterpret_cast<const char*>(glGetString(0x1F01)), info.renderer) == 0);
     CHECK(tesseraGetProcAddress("tesseraNotAFunction") == nullptr);
     CHECK(tesseraGetProcAddress(nullptr) == nullptr);
-    if (info.versionMajor >= 2) CHECK(tesseraGetProcAddress("glGenBuffers") != nullptr);
+    if (info.versionMajor >= 2)
+        CHECK(tesseraGetProcAddress("glGenBuffers") != nullptr);
 
     EXPECT(tesseraSetSwapInterval(ctx, 1), TESSERA_ERROR_UNSUPPORTED); // pbuffer: nothing to swap
-    EXPECT(tesseraSwapBuffers(ctx), TESSERA_SUCCESS);                    // harmless no-op
+    EXPECT(tesseraSwapBuffers(ctx), TESSERA_SUCCESS);                  // harmless no-op
 
     EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS);
     CHECK(tesseraGetCurrentContext() == TESSERA_NULL_HANDLE);
@@ -295,7 +326,8 @@ static void testThreadRules() {
     TesseraContextConfig cfg = baseConfig();
     TesseraContext ctx = 0;
     EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_SUCCESS);
-    if (!ctx) return;
+    if (!ctx)
+        return;
 
     EXPECT(tesseraMakeCurrent(ctx), TESSERA_SUCCESS);
     std::thread([&] {
@@ -373,8 +405,8 @@ static void testConfigNegotiation() {
     if (r == TESSERA_SUCCESS) {
         TesseraContextInfo info = tesseraDefaultContextInfo();
         tesseraGetContextInfo(ctx, &info);
-        std::printf("  core request -> GL %d.%d profile=%u flags=0x%x\n", info.versionMajor, info.versionMinor,
-                    info.profile, info.flags);
+        std::printf("  core request -> GL %d.%d profile=%u flags=0x%x\n", info.versionMajor,
+                    info.versionMinor, info.profile, info.flags);
         CHECK(info.profile == TESSERA_PROFILE_CORE);
         CHECK(info.versionMajor > 3 || (info.versionMajor == 3 && info.versionMinor >= 3));
         CHECK(info.flags & TESSERA_FLAG_DEBUG);
@@ -441,7 +473,8 @@ static void testConfigNegotiation() {
         tesseraDestroyContext(ctx);
     }
 
-    // Optional capabilities: either granted and reported, or refused with a specific code (never silently wrong).
+    // Optional capabilities: either granted and reported, or refused with a specific code (never silently
+    // wrong).
     TesseraContextConfig srgb = baseConfig();
     srgb.flags |= TESSERA_FLAG_SRGB;
     srgb.fallback = TESSERA_FALLBACK_STRICT;
@@ -483,7 +516,8 @@ static void testSharing() {
     TesseraContextConfig cfg = baseConfig();
     TesseraContext a = 0, b = 0;
     EXPECT(tesseraCreateContext(&cfg, &a), TESSERA_SUCCESS);
-    if (!a) return;
+    if (!a)
+        return;
     cfg.shareWith = a;
     EXPECT(tesseraCreateContext(&cfg, &b), TESSERA_SUCCESS);
     if (!b) {
@@ -515,7 +549,8 @@ static void testSharing() {
 
     EXPECT(tesseraDestroyContext(a), TESSERA_SUCCESS);
     EXPECT(tesseraMakeCurrent(b), TESSERA_SUCCESS);
-    if (isTexture) CHECK(isTexture(tex));
+    if (isTexture)
+        CHECK(isTexture(tex));
     EXPECT(tesseraDestroyContext(b), TESSERA_SUCCESS); // destroyed while current on this thread
     CHECK(tesseraGetCurrentContext() == TESSERA_NULL_HANDLE);
 }
@@ -528,13 +563,20 @@ static void testConcurrentCreation() {
             for (int i = 0; i < 15; ++i) {
                 TesseraContextConfig cfg = (t % 2) ? esConfig() : baseConfig();
                 TesseraContext ctx = 0;
-                if (tesseraCreateContext(&cfg, &ctx) != TESSERA_SUCCESS) { ++failures; continue; }
-                if (tesseraMakeCurrent(ctx) != TESSERA_SUCCESS) ++failures;
-                if (tesseraSwapBuffers(ctx) != TESSERA_SUCCESS) ++failures;
-                if (tesseraDestroyContext(ctx) != TESSERA_SUCCESS) ++failures;
+                if (tesseraCreateContext(&cfg, &ctx) != TESSERA_SUCCESS) {
+                    ++failures;
+                    continue;
+                }
+                if (tesseraMakeCurrent(ctx) != TESSERA_SUCCESS)
+                    ++failures;
+                if (tesseraSwapBuffers(ctx) != TESSERA_SUCCESS)
+                    ++failures;
+                if (tesseraDestroyContext(ctx) != TESSERA_SUCCESS)
+                    ++failures;
             }
         });
-    for (auto& t : threads) t.join();
+    for (auto& t : threads)
+        t.join();
     CHECK(failures == 0);
 }
 
@@ -543,7 +585,10 @@ static void testNoLeaks() {
     auto cycle = [&](int n) {
         for (int i = 0; i < n; ++i) {
             TesseraContext ctx = 0;
-            if (tesseraCreateContext(&cfg, &ctx) != TESSERA_SUCCESS) { ++g_failures; return; }
+            if (tesseraCreateContext(&cfg, &ctx) != TESSERA_SUCCESS) {
+                ++g_failures;
+                return;
+            }
             tesseraMakeCurrent(ctx);
             tesseraDestroyContext(ctx);
         }
@@ -561,7 +606,8 @@ static void testTerminateKeepsSharedDisplayAlive() {
     // EGL displays are shared and not reference counted, so Tessera must never eglTerminate them.
     ForeignContext foreign;
     const bool haveShared = foreign.create(kOpenGlEsApi, true);
-    if (haveShared) foreign.makeCurrent();
+    if (haveShared)
+        foreign.makeCurrent();
 
     TesseraContextConfig cfg = baseConfig();
     TesseraContext leaked = 0;
@@ -580,7 +626,8 @@ static void testTerminateKeepsSharedDisplayAlive() {
     EXPECT(tesseraInit(), TESSERA_SUCCESS);
     TesseraContext again = 0;
     EXPECT(tesseraCreateContext(&cfg, &again), TESSERA_SUCCESS);
-    if (again) EXPECT(tesseraDestroyContext(again), TESSERA_SUCCESS);
+    if (again)
+        EXPECT(tesseraDestroyContext(again), TESSERA_SUCCESS);
     if (haveShared) {
         foreign.makeCurrent();
         CHECK(foreign.isCurrent());
@@ -596,29 +643,40 @@ static void testDeviceSelection() {
     const std::string savedPlatform = oldPlatform ? oldPlatform : "";
     const std::string savedDevice = oldDevice ? oldDevice : "";
 
-    const auto tryWith = [&](const char* platform, const char* device, TesseraResult want, const char* messagePart) {
+    const auto tryWith = [&](const char* platform, const char* device, TesseraResult want,
+                             const char* messagePart) {
         EXPECT(tesseraInit(), TESSERA_SUCCESS);
-        if (platform) setenv("TESSERA_EGL_PLATFORM", platform, 1); else unsetenv("TESSERA_EGL_PLATFORM");
-        if (device) setenv("TESSERA_EGL_DEVICE", device, 1); else unsetenv("TESSERA_EGL_DEVICE");
-        EXPECT(tesseraTerminate(), TESSERA_SUCCESS); // the backend re-reads the environment when it is rebuilt
+        if (platform)
+            setenv("TESSERA_EGL_PLATFORM", platform, 1);
+        else
+            unsetenv("TESSERA_EGL_PLATFORM");
+        if (device)
+            setenv("TESSERA_EGL_DEVICE", device, 1);
+        else
+            unsetenv("TESSERA_EGL_DEVICE");
+        EXPECT(tesseraTerminate(),
+               TESSERA_SUCCESS); // the backend re-reads the environment when it is rebuilt
         EXPECT(tesseraInit(), TESSERA_SUCCESS);
         TesseraContextConfig cfg = baseConfig();
         TesseraContext ctx = 0;
         const TesseraResult r = tesseraCreateContext(&cfg, &ctx);
         if (want == TESSERA_SUCCESS && r == TESSERA_ERROR_UNSUPPORTED) {
-            std::printf("  (%s / %s: not available here: %s)\n", platform ? platform : "-", device ? device : "-",
-                        tesseraGetLastErrorMessage());
+            std::printf("  (%s / %s: not available here: %s)\n", platform ? platform : "-",
+                        device ? device : "-", tesseraGetLastErrorMessage());
         } else {
             EXPECT(r, want);
-            if (messagePart) CHECK(std::strstr(tesseraGetLastErrorMessage(), messagePart) != nullptr);
+            if (messagePart)
+                CHECK(std::strstr(tesseraGetLastErrorMessage(), messagePart) != nullptr);
         }
-        if (ctx) EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
+        if (ctx)
+            EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
         EXPECT(tesseraTerminate(), TESSERA_SUCCESS);
     };
 
     // Things that match nothing are refused with a message that names the setting.
     tryWith("device", "99", TESSERA_ERROR_UNSUPPORTED, "TESSERA_EGL_DEVICE=99");
-    tryWith("device", "/dev/dri/renderD999", TESSERA_ERROR_UNSUPPORTED, "TESSERA_EGL_DEVICE=/dev/dri/renderD999");
+    tryWith("device", "/dev/dri/renderD999", TESSERA_ERROR_UNSUPPORTED,
+            "TESSERA_EGL_DEVICE=/dev/dri/renderD999");
     tryWith("device", "0000:ff:1f.7", TESSERA_ERROR_UNSUPPORTED, "TESSERA_EGL_DEVICE=0000:ff:1f.7");
     // A choice combined with a platform that cannot honour it.
     tryWith("surfaceless", "0", TESSERA_ERROR_UNSUPPORTED, "needs TESSERA_EGL_PLATFORM=device");
@@ -627,14 +685,20 @@ static void testDeviceSelection() {
     // With no platform forced, a choice implies the device platform instead of being ignored by surfaceless.
     tryWith(nullptr, "0", TESSERA_SUCCESS, nullptr);
 
-    if (oldPlatform) setenv("TESSERA_EGL_PLATFORM", savedPlatform.c_str(), 1); else unsetenv("TESSERA_EGL_PLATFORM");
-    if (oldDevice) setenv("TESSERA_EGL_DEVICE", savedDevice.c_str(), 1); else unsetenv("TESSERA_EGL_DEVICE");
+    if (oldPlatform)
+        setenv("TESSERA_EGL_PLATFORM", savedPlatform.c_str(), 1);
+    else
+        unsetenv("TESSERA_EGL_PLATFORM");
+    if (oldDevice)
+        setenv("TESSERA_EGL_DEVICE", savedDevice.c_str(), 1);
+    else
+        unsetenv("TESSERA_EGL_DEVICE");
     EXPECT(tesseraInit(), TESSERA_SUCCESS);
 }
 
 static void testHeadlessFallthrough() {
-    // The default backend order (GLX first, then EGL) on a machine with no X display: GLX reports UNSUPPORTED and the
-    // request is served by EGL's headless platform instead of failing.
+    // The default backend order (GLX first, then EGL) on a machine with no X display: GLX reports UNSUPPORTED
+    // and the request is served by EGL's headless platform instead of failing.
     EXPECT(tesseraTerminate(), TESSERA_SUCCESS);
     const char* oldBackend = getenv("TESSERA_BACKEND");
     const char* oldDisplay = getenv("DISPLAY");
@@ -661,8 +725,12 @@ static void testHeadlessFallthrough() {
     EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_ERROR_UNSUPPORTED);
     EXPECT(tesseraTerminate(), TESSERA_SUCCESS);
 
-    if (oldBackend) setenv("TESSERA_BACKEND", savedBackend.c_str(), 1); else unsetenv("TESSERA_BACKEND");
-    if (oldDisplay) setenv("DISPLAY", savedDisplay.c_str(), 1);
+    if (oldBackend)
+        setenv("TESSERA_BACKEND", savedBackend.c_str(), 1);
+    else
+        unsetenv("TESSERA_BACKEND");
+    if (oldDisplay)
+        setenv("DISPLAY", savedDisplay.c_str(), 1);
     EXPECT(tesseraInit(), TESSERA_SUCCESS);
 }
 
@@ -672,9 +740,15 @@ static robust::Hooks eglHooks() {
     h.nothingCurrentNatively = [] { return ForeignContext{}.nothingCurrent(kOpenGlApi); };
     return h;
 }
-static void testDeferredDestroy() { robust::deferredDestroy(eglHooks()); }
-static void testResetStatus() { robust::resetStatus(eglHooks()); }
-static void testDebugForwarding() { robust::debugForwarding(eglHooks()); }
+static void testDeferredDestroy() {
+    robust::deferredDestroy(eglHooks());
+}
+static void testResetStatus() {
+    robust::resetStatus(eglHooks());
+}
+static void testDebugForwarding() {
+    robust::debugForwarding(eglHooks());
+}
 static void testAttributeMatrix() {
     ForeignContext foreign;
     robust::Hooks h = eglHooks();
@@ -688,7 +762,9 @@ static void testAttributeMatrix() {
 
 // ---------------------------------------------------------------- Phase 8
 
-static void testPrewarm() { interop::prewarm(eglHooks()); }
+static void testPrewarm() {
+    interop::prewarm(eglHooks());
+}
 static void testProbe() {
     ForeignContext foreign; // a context from "another library" must survive every probe
     robust::Hooks h = eglHooks();
@@ -704,11 +780,14 @@ static void testNativeHandles() {
     interop::HandleExpectations e;
     e.kind = TESSERA_NATIVE_EGL;
     e.contextIndex = 1;
-    e.mustBeNonZero = {0, 1, 3, 4}; // EGLDisplay, EGLContext, EGLConfig, API (the surface is 0 when surfaceless)
-    e.nativeCurrent = {};           // eglGetCurrentContext is per bound API; the handle identity checks below are enough
+    e.mustBeNonZero = {0, 1, 3,
+                       4}; // EGLDisplay, EGLContext, EGLConfig, API (the surface is 0 when surfaceless)
+    e.nativeCurrent =
+        {}; // eglGetCurrentContext is per bound API; the handle identity checks below are enough
     interop::nativeHandles(eglHooks(), e);
 
-    // The EGLDisplay is the process's shared one, usable by other libraries (e.g. for EGL_EXT_image_dma_buf_import).
+    // The EGLDisplay is the process's shared one, usable by other libraries (e.g. for
+    // EGL_EXT_image_dma_buf_import).
     TesseraContextConfig cfg = baseConfig();
     TesseraContext ctx = 0;
     EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_SUCCESS);
@@ -748,7 +827,8 @@ int main() {
         TesseraContext probe = 0;
         const TesseraResult r = tesseraCreateContext(&cfg, &probe);
         if (r == TESSERA_ERROR_UNSUPPORTED) {
-            std::fprintf(stderr, "test_egl: no usable EGL display here, skipping: %s\n", tesseraGetLastErrorMessage());
+            std::fprintf(stderr, "test_egl: no usable EGL display here, skipping: %s\n",
+                         tesseraGetLastErrorMessage());
             return 77;
         }
         if (r != TESSERA_SUCCESS) {
@@ -759,7 +839,10 @@ int main() {
         tesseraDestroyContext(probe);
     }
 
-    struct Section { const char* name; void (*fn)(); };
+    struct Section {
+        const char* name;
+        void (*fn)();
+    };
     const Section sections[] = {
         {"basic create/info", testBasicCreateAndInfo},
         {"foreign EGL state untouched", testForeignContextUntouched},
@@ -786,6 +869,7 @@ int main() {
     }
 
     tesseraTerminate();
-    if (g_failures == 0) std::puts("test_egl: OK");
+    if (g_failures == 0)
+        std::puts("test_egl: OK");
     return g_failures == 0 ? 0 : 1;
 }

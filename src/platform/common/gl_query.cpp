@@ -15,29 +15,35 @@ constexpr unsigned kGlContextReleaseBehavior = 0x82FB;
 constexpr int kGlReleaseBehaviorFlush = 0x82FC;
 
 bool parseVersionImpl(const char* text, bool& isEs, int& major, int& minor) {
-    if (!text) return false;
+    if (!text)
+        return false;
     isEs = std::strncmp(text, "OpenGL ES", 9) == 0;
     const char* p = text;
     if (isEs) {
         p += 9;
-        if (std::strncmp(p, "-CM", 3) == 0 || std::strncmp(p, "-CL", 3) == 0) p += 3;
-        while (*p == ' ') ++p;
+        if (std::strncmp(p, "-CM", 3) == 0 || std::strncmp(p, "-CL", 3) == 0)
+            p += 3;
+        while (*p == ' ')
+            ++p;
     }
     // "<major>.<minor>..." - parsed by hand (locale-independent, no CRT scanf).
-    // At most four digits per component: no real version has more, and an unbounded accumulator would overflow
-    // (signed overflow is undefined behaviour) on a driver that returns something absurd.
+    // At most four digits per component: no real version has more, and an unbounded accumulator would
+    // overflow (signed overflow is undefined behaviour) on a driver that returns something absurd.
     auto number = [&p](int& out) {
-        if (*p < '0' || *p > '9') return false;
+        if (*p < '0' || *p > '9')
+            return false;
         int v = 0;
         int digits = 0;
         for (; *p >= '0' && *p <= '9'; ++p) {
-            if (++digits > 4) return false;
+            if (++digits > 4)
+                return false;
             v = v * 10 + (*p - '0');
         }
         out = v;
         return true;
     };
-    if (!number(major) || *p != '.') return false;
+    if (!number(major) || *p != '.')
+        return false;
     ++p;
     return number(minor);
 }
@@ -51,38 +57,45 @@ bool parseGlVersion(const char* text, bool& isEs, int& major, int& minor) noexce
 void copyString(char* dst, std::size_t cap, const char* src) noexcept {
     std::size_t i = 0;
     if (src)
-        for (; i + 1 < cap && src[i] != '\0'; ++i) dst[i] = src[i];
+        for (; i + 1 < cap && src[i] != '\0'; ++i)
+            dst[i] = src[i];
     dst[i] = '\0';
 }
 
 bool queryContextInfo(const GlQueryFns& gl, TesseraContextInfo& info) {
-    if (!gl.getString || !gl.getIntegerv || !gl.getError) return false;
+    if (!gl.getString || !gl.getIntegerv || !gl.getError)
+        return false;
 
     std::memset(&info, 0, sizeof info);
     info.structSize = sizeof info;
 
-    // glGetString hands back a pointer into driver-owned memory. Some drivers (Mesa's software rasteriser formats the
-    // result into one global buffer) are not safe when several threads ask at once, and the pointer may be rewritten
-    // while we copy from it. Tessera can at least keep its own threads from doing that to each other: query and copy
-    // under one process-wide lock. (Other libraries' threads are beyond our control.)
-    static std::mutex* const stringLock = new std::mutex(); // leaked on purpose: usable during static destruction
+    // glGetString hands back a pointer into driver-owned memory. Some drivers (Mesa's software rasteriser
+    // formats the result into one global buffer) are not safe when several threads ask at once, and the
+    // pointer may be rewritten while we copy from it. Tessera can at least keep its own threads from doing
+    // that to each other: query and copy under one process-wide lock. (Other libraries' threads are beyond
+    // our control.)
+    static std::mutex* const stringLock =
+        new std::mutex(); // leaked on purpose: usable during static destruction
     char versionText[sizeof info.version];
     {
         std::lock_guard<std::mutex> lock(*stringLock);
         copyString(versionText, sizeof versionText, reinterpret_cast<const char*>(gl.getString(kGlVersion)));
         copyString(info.vendor, sizeof info.vendor, reinterpret_cast<const char*>(gl.getString(kGlVendor)));
-        copyString(info.renderer, sizeof info.renderer, reinterpret_cast<const char*>(gl.getString(kGlRenderer)));
+        copyString(info.renderer, sizeof info.renderer,
+                   reinterpret_cast<const char*>(gl.getString(kGlRenderer)));
     }
     copyString(info.version, sizeof info.version, versionText);
 
     bool isEs = false;
     int major = 0, minor = 0;
-    if (!parseGlVersion(versionText, isEs, major, minor)) return false;
+    if (!parseGlVersion(versionText, isEs, major, minor))
+        return false;
     info.api = isEs ? TESSERA_API_OPENGL_ES : TESSERA_API_OPENGL;
     info.versionMajor = major;
     info.versionMinor = minor;
 
-    while (gl.getError() != 0) {} // drain anything pending from before us
+    while (gl.getError() != 0) {
+    } // drain anything pending from before us
 
     if (isEs) {
         info.profile = TESSERA_PROFILE_ANY;
@@ -99,31 +112,39 @@ bool queryContextInfo(const GlQueryFns& gl, TesseraContextInfo& info) {
     if (major >= 3) {
         int f = 0;
         gl.getIntegerv(kGlContextFlags, &f);
-        if (f & 0x1) flags |= TESSERA_FLAG_FORWARD_COMPATIBLE;
-        if (f & 0x2) flags |= TESSERA_FLAG_DEBUG;
+        if (f & 0x1)
+            flags |= TESSERA_FLAG_FORWARD_COMPATIBLE;
+        if (f & 0x2)
+            flags |= TESSERA_FLAG_DEBUG;
         if (f & 0x4) {
             flags |= TESSERA_FLAG_ROBUST_ACCESS;
             int strategy = 0;
             gl.getIntegerv(kGlResetStrategy, &strategy);
-            if (strategy == kLoseContextOnReset) flags |= TESSERA_FLAG_RESET_NOTIFICATION;
+            if (strategy == kLoseContextOnReset)
+                flags |= TESSERA_FLAG_RESET_NOTIFICATION;
         }
-        if (f & 0x8) flags |= TESSERA_FLAG_NO_ERROR;
-        while (gl.getError() != 0) {}
+        if (f & 0x8)
+            flags |= TESSERA_FLAG_NO_ERROR;
+        while (gl.getError() != 0) {
+        }
     }
-    // Release behaviour (GL 4.5 / KHR_context_flush_control). Left at -1 where the query does not exist, in which
-    // case nothing is claimed.
+    // Release behaviour (GL 4.5 / KHR_context_flush_control). Left at -1 where the query does not exist, in
+    // which case nothing is claimed.
     int release = -1;
     gl.getIntegerv(kGlContextReleaseBehavior, &release);
-    if (release == kGlReleaseBehaviorFlush) flags |= TESSERA_FLAG_RELEASE_FLUSH;
-    while (gl.getError() != 0) {}
+    if (release == kGlReleaseBehaviorFlush)
+        flags |= TESSERA_FLAG_RELEASE_FLUSH;
+    while (gl.getError() != 0) {
+    }
     info.flags = flags;
     return true;
 }
 
 GlResetStatusFn resolveResetStatus(const std::function<void*(const char*)>& getProc) {
-    for (const char* name : {"glGetGraphicsResetStatus", "glGetGraphicsResetStatusKHR", "glGetGraphicsResetStatusARB",
-                             "glGetGraphicsResetStatusEXT"}) {
-        if (void* p = getProc(name)) return reinterpret_cast<GlResetStatusFn>(p);
+    for (const char* name : {"glGetGraphicsResetStatus", "glGetGraphicsResetStatusKHR",
+                             "glGetGraphicsResetStatusARB", "glGetGraphicsResetStatusEXT"}) {
+        if (void* p = getProc(name))
+            return reinterpret_cast<GlResetStatusFn>(p);
     }
     return nullptr;
 }
@@ -132,14 +153,24 @@ TesseraResult queryResetStatusFrom(GlResetStatusFn fn, uint32_t grantedFlags, in
     out = TESSERA_RESET_NONE;
     constexpr uint32_t kNeeded = TESSERA_FLAG_ROBUST_ACCESS | TESSERA_FLAG_RESET_NOTIFICATION;
     if ((grantedFlags & kNeeded) != kNeeded)
-        return fail(TESSERA_ERROR_UNSUPPORTED,
-                    "the context was not created with TESSERA_FLAG_ROBUST_ACCESS | TESSERA_FLAG_RESET_NOTIFICATION");
-    if (!fn) return fail(TESSERA_ERROR_UNSUPPORTED, "glGetGraphicsResetStatus is not available");
+        return fail(
+            TESSERA_ERROR_UNSUPPORTED,
+            "the context was not created with TESSERA_FLAG_ROBUST_ACCESS | TESSERA_FLAG_RESET_NOTIFICATION");
+    if (!fn)
+        return fail(TESSERA_ERROR_UNSUPPORTED, "glGetGraphicsResetStatus is not available");
     switch (fn()) {
-    case 0: out = TESSERA_RESET_NONE; break;           // GL_NO_ERROR
-    case 0x8253: out = TESSERA_RESET_GUILTY; break;    // GL_GUILTY_CONTEXT_RESET
-    case 0x8254: out = TESSERA_RESET_INNOCENT; break;  // GL_INNOCENT_CONTEXT_RESET
-    default: out = TESSERA_RESET_UNKNOWN; break;       // GL_UNKNOWN_CONTEXT_RESET, or anything unexpected
+    case 0:
+        out = TESSERA_RESET_NONE;
+        break; // GL_NO_ERROR
+    case 0x8253:
+        out = TESSERA_RESET_GUILTY;
+        break; // GL_GUILTY_CONTEXT_RESET
+    case 0x8254:
+        out = TESSERA_RESET_INNOCENT;
+        break; // GL_INNOCENT_CONTEXT_RESET
+    default:
+        out = TESSERA_RESET_UNKNOWN;
+        break; // GL_UNKNOWN_CONTEXT_RESET, or anything unexpected
     }
     return TESSERA_SUCCESS;
 }
@@ -150,14 +181,15 @@ bool contextSatisfies(const TesseraContextConfig& c, const TesseraContextInfo& i
     const bool apiOk = i.api == c.api;
     const bool profileOk = c.profile == TESSERA_PROFILE_ANY || i.profile == c.profile;
     const bool samplesOk = i.samples >= c.samples;
-    const uint32_t checked = TESSERA_FLAG_DEBUG | TESSERA_FLAG_FORWARD_COMPATIBLE | TESSERA_FLAG_ROBUST_ACCESS |
-                             TESSERA_FLAG_RESET_NOTIFICATION | TESSERA_FLAG_NO_ERROR | TESSERA_FLAG_SRGB |
-                             TESSERA_FLAG_FLOAT_COLOR | TESSERA_FLAG_DOUBLE_BUFFER | TESSERA_FLAG_STEREO |
-                             TESSERA_FLAG_RELEASE_FLUSH;
+    const uint32_t checked = TESSERA_FLAG_DEBUG | TESSERA_FLAG_FORWARD_COMPATIBLE |
+                             TESSERA_FLAG_ROBUST_ACCESS | TESSERA_FLAG_RESET_NOTIFICATION |
+                             TESSERA_FLAG_NO_ERROR | TESSERA_FLAG_SRGB | TESSERA_FLAG_FLOAT_COLOR |
+                             TESSERA_FLAG_DOUBLE_BUFFER | TESSERA_FLAG_STEREO | TESSERA_FLAG_RELEASE_FLUSH;
     const uint32_t missing = c.flags & ~i.flags & checked;
     // Requested sizes are minimums ("0 = don't care"), exactly as the pixel-format APIs treat them.
     const bool sizesOk = i.redBits >= c.redBits && i.greenBits >= c.greenBits && i.blueBits >= c.blueBits &&
-                         i.alphaBits >= c.alphaBits && i.depthBits >= c.depthBits && i.stencilBits >= c.stencilBits;
+                         i.alphaBits >= c.alphaBits && i.depthBits >= c.depthBits &&
+                         i.stencilBits >= c.stencilBits;
     return versionOk && apiOk && profileOk && samplesOk && sizesOk && missing == 0;
 }
 

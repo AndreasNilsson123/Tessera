@@ -33,8 +33,10 @@ const EglApi* loadApi() noexcept {
         }
         EglFns& f = api->fn;
         const bool ok = load(api->lib, "eglQueryString", f.eglQueryString) &&
-                        load(api->lib, "eglGetError", f.eglGetError) && load(api->lib, "eglGetDisplay", f.eglGetDisplay) &&
-                        load(api->lib, "eglInitialize", f.eglInitialize) && load(api->lib, "eglBindAPI", f.eglBindAPI) &&
+                        load(api->lib, "eglGetError", f.eglGetError) &&
+                        load(api->lib, "eglGetDisplay", f.eglGetDisplay) &&
+                        load(api->lib, "eglInitialize", f.eglInitialize) &&
+                        load(api->lib, "eglBindAPI", f.eglBindAPI) &&
                         load(api->lib, "eglQueryAPI", f.eglQueryAPI) &&
                         load(api->lib, "eglChooseConfig", f.eglChooseConfig) &&
                         load(api->lib, "eglGetConfigAttrib", f.eglGetConfigAttrib) &&
@@ -55,9 +57,10 @@ const EglApi* loadApi() noexcept {
         }
         f.eglGetPlatformDisplayEXT = reinterpret_cast<decltype(f.eglGetPlatformDisplayEXT)>(
             f.eglGetProcAddress("eglGetPlatformDisplayEXT"));
-        f.eglQueryDevicesEXT = reinterpret_cast<decltype(f.eglQueryDevicesEXT)>(f.eglGetProcAddress("eglQueryDevicesEXT"));
-        f.eglQueryDeviceStringEXT =
-            reinterpret_cast<decltype(f.eglQueryDeviceStringEXT)>(f.eglGetProcAddress("eglQueryDeviceStringEXT"));
+        f.eglQueryDevicesEXT =
+            reinterpret_cast<decltype(f.eglQueryDevicesEXT)>(f.eglGetProcAddress("eglQueryDevicesEXT"));
+        f.eglQueryDeviceStringEXT = reinterpret_cast<decltype(f.eglQueryDeviceStringEXT)>(
+            f.eglGetProcAddress("eglQueryDeviceStringEXT"));
         return api;
     } catch (...) {
         return nullptr;
@@ -76,12 +79,14 @@ const EglApi* eglApi() noexcept {
 EglForeignOps::State EglForeignOps::capture() noexcept {
     State s;
     const EglApi* api = eglApi();
-    if (!api) return s;
+    if (!api)
+        return s;
     const EglFns& f = api->fn;
     s.boundApi = f.eglQueryAPI();
     for (int i = 0; i < 2; ++i) {
         // eglGetCurrentContext() answers for the thread's *bound* API, so bind each in turn.
-        if (!f.eglBindAPI(kApis[i])) continue; // this API is not available at all
+        if (!f.eglBindAPI(kApis[i]))
+            continue; // this API is not available at all
         Slot& slot = s.slots[i];
         slot.valid = true;
         slot.ctx = f.eglGetCurrentContext();
@@ -89,41 +94,51 @@ EglForeignOps::State EglForeignOps::capture() noexcept {
         slot.draw = f.eglGetCurrentSurface(kDraw);
         slot.read = f.eglGetCurrentSurface(kRead);
     }
-    if (s.boundApi != 0) f.eglBindAPI(s.boundApi);
+    if (s.boundApi != 0)
+        f.eglBindAPI(s.boundApi);
     return s;
 }
 
 void EglForeignOps::restore(const State& s) noexcept {
     const EglApi* api = eglApi();
-    if (!api) return;
+    if (!api)
+        return;
     const EglFns& f = api->fn;
     for (int i = 0; i < 2; ++i) {
         const Slot& slot = s.slots[i];
-        if (!slot.valid || !f.eglBindAPI(kApis[i])) continue;
+        if (!slot.valid || !f.eglBindAPI(kApis[i]))
+            continue;
         const EGLContext now = f.eglGetCurrentContext();
-        if (now == slot.ctx && f.eglGetCurrentSurface(kDraw) == slot.draw && f.eglGetCurrentSurface(kRead) == slot.read)
+        if (now == slot.ctx && f.eglGetCurrentSurface(kDraw) == slot.draw &&
+            f.eglGetCurrentSurface(kRead) == slot.read)
             continue; // already as found
         if (slot.ctx) {
             if (!f.eglMakeCurrent(slot.dpy, slot.draw, slot.read, slot.ctx)) {
-                logf(TESSERA_LOG_WARN, "could not restore the previous EGL context (error 0x%x); leaving the thread without one",
-                     static_cast<unsigned>(f.eglGetError()));
+                logf(
+                    TESSERA_LOG_WARN,
+                    "could not restore the previous EGL context (error 0x%x); leaving the thread without one",
+                    static_cast<unsigned>(f.eglGetError()));
                 // Never leave one of OUR contexts current on a thread that did not ask for it.
-                if (f.eglGetCurrentContext() != nullptr) f.eglMakeCurrent(f.eglGetCurrentDisplay(), nullptr, nullptr, nullptr);
+                if (f.eglGetCurrentContext() != nullptr)
+                    f.eglMakeCurrent(f.eglGetCurrentDisplay(), nullptr, nullptr, nullptr);
             }
         } else if (now) {
             // Nothing was current for this API before us: release whatever display now holds our context.
             f.eglMakeCurrent(f.eglGetCurrentDisplay(), nullptr, nullptr, nullptr);
         }
     }
-    if (s.boundApi != 0) f.eglBindAPI(s.boundApi);
+    if (s.boundApi != 0)
+        f.eglBindAPI(s.boundApi);
 }
 
-ScopedBindApi::ScopedBindApi(const EglApi& api, EGLenum bind) noexcept : api_(api), previous_(api.fn.eglQueryAPI()) {
+ScopedBindApi::ScopedBindApi(const EglApi& api, EGLenum bind) noexcept
+    : api_(api), previous_(api.fn.eglQueryAPI()) {
     api_.fn.eglBindAPI(bind);
 }
 
 ScopedBindApi::~ScopedBindApi() {
-    if (previous_ != 0) api_.fn.eglBindAPI(previous_);
+    if (previous_ != 0)
+        api_.fn.eglBindAPI(previous_);
 }
 
 } // namespace tessera::egl

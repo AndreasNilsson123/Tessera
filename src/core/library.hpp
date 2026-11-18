@@ -17,7 +17,9 @@ namespace tessera {
 class DynamicLibrary {
   public:
     DynamicLibrary() noexcept = default;
-    ~DynamicLibrary() { close(); }
+    ~DynamicLibrary() {
+        close();
+    }
 
     DynamicLibrary(DynamicLibrary&& other) noexcept : handle_(std::exchange(other.handle_, nullptr)) {}
     DynamicLibrary& operator=(DynamicLibrary&& other) noexcept {
@@ -36,7 +38,9 @@ class DynamicLibrary {
     /* Null if not found or the library is empty. */
     void* symbol(const char* name) const noexcept;
 
-    explicit operator bool() const noexcept { return handle_ != nullptr; }
+    explicit operator bool() const noexcept {
+        return handle_ != nullptr;
+    }
     void close() noexcept;
 
   private:

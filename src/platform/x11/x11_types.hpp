@@ -14,10 +14,10 @@
 
 namespace tessera::x11 {
 
-struct Display;           // opaque
-struct Visual;            // opaque
-struct GLXContextRec;     // opaque
-struct GLXFBConfigRec;    // opaque
+struct Display;        // opaque
+struct Visual;         // opaque
+struct GLXContextRec;  // opaque
+struct GLXFBConfigRec; // opaque
 
 using XID = unsigned long;
 using Window = XID;
@@ -72,7 +72,8 @@ struct XErrorEvent {
 
 using XErrorHandler = int (*)(Display*, XErrorEvent*);
 
-// XWindowAttributes is only read for its `visual` member (after six ints: x, y, width, height, border_width, depth).
+// XWindowAttributes is only read for its `visual` member (after six ints: x, y, width, height, border_width,
+// depth).
 constexpr std::size_t kWindowAttributesSize = 256; // the real struct is 136 bytes on LP64
 constexpr std::size_t kWindowAttributesVisualOffset = 24;
 
@@ -133,7 +134,8 @@ struct X11Fns {
     Window (*XCreateWindow)(Display*, Window, int, int, unsigned, unsigned, unsigned, int, unsigned, Visual*,
                             unsigned long, XSetWindowAttributes*) = nullptr;
     int (*XDestroyWindow)(Display*, Window) = nullptr;
-    int (*XGetWindowAttributes)(Display*, Window, void*) = nullptr; // XWindowAttributes, treated as an opaque buffer
+    int (*XGetWindowAttributes)(Display*, Window,
+                                void*) = nullptr; // XWindowAttributes, treated as an opaque buffer
     unsigned long (*XVisualIDFromVisual)(Visual*) = nullptr;
     int (*XFree)(void*) = nullptr;
     int (*XSync)(Display*, Bool) = nullptr;

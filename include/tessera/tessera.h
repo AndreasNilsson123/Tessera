@@ -47,14 +47,14 @@ typedef int32_t TesseraResult;
 #define TESSERA_SUCCESS 0
 /* Errors are negative. Values are append-only and never reused. */
 #define TESSERA_ERROR_UNKNOWN (-1)
-#define TESSERA_ERROR_INVALID_ARGUMENT (-2)  /* null pointer, bad enum, structSize too small */
-#define TESSERA_ERROR_INVALID_HANDLE (-3)    /* zero, stale (generation mismatch) or wrong type */
+#define TESSERA_ERROR_INVALID_ARGUMENT (-2) /* null pointer, bad enum, structSize too small */
+#define TESSERA_ERROR_INVALID_HANDLE (-3)   /* zero, stale (generation mismatch) or wrong type */
 #define TESSERA_ERROR_NOT_INITIALIZED (-4)
 #define TESSERA_ERROR_OUT_OF_MEMORY (-5)
-#define TESSERA_ERROR_UNSUPPORTED (-6)       /* not available on this platform / build */
+#define TESSERA_ERROR_UNSUPPORTED (-6) /* not available on this platform / build */
 #define TESSERA_ERROR_NO_MATCHING_CONFIG (-7)
-#define TESSERA_ERROR_PLATFORM (-8)          /* native API failure; see tesseraGetLastErrorMessage */
-#define TESSERA_ERROR_WRONG_THREAD (-9)      /* object used from a thread it is not valid on */
+#define TESSERA_ERROR_PLATFORM (-8)     /* native API failure; see tesseraGetLastErrorMessage */
+#define TESSERA_ERROR_WRONG_THREAD (-9) /* object used from a thread it is not valid on */
 #define TESSERA_ERROR_CONTEXT_LOST (-10)
 
 /* Static, NUL-terminated, never NULL, valid for the process lifetime. */
@@ -130,14 +130,16 @@ typedef uint32_t TesseraEnum;
 #define TESSERA_FLAG_RELEASE_FLUSH 0x0200u /* flush on release (vs. none) */
 
 /* TesseraContextConfig::surface - what the context will be able to render to */
-#define TESSERA_SURFACE_DEFAULT 0x0000u     /* backend picks the safest available */
+#define TESSERA_SURFACE_DEFAULT 0x0000u /* backend picks the safest available */
 #define TESSERA_SURFACE_HIDDEN_WINDOW 0x0001u
 #define TESSERA_SURFACE_PBUFFER 0x0002u
-#define TESSERA_SURFACE_NONE 0x0003u        /* no drawable exposed; render to FBOs (WGL still uses an internal one) */
-#define TESSERA_SURFACE_WINDOW 0x0004u      /* reported for contexts made by tesseraCreateContextForWindow; not a request value */
+#define TESSERA_SURFACE_NONE                                                                                 \
+    0x0003u /* no drawable exposed; render to FBOs (WGL still uses an internal one) */
+#define TESSERA_SURFACE_WINDOW                                                                               \
+    0x0004u /* reported for contexts made by tesseraCreateContextForWindow; not a request value */
 
 /* TesseraContextConfig::fallback */
-#define TESSERA_FALLBACK_STRICT 0x0000u     /* fail unless every requested attribute is met */
+#define TESSERA_FALLBACK_STRICT 0x0000u      /* fail unless every requested attribute is met */
 #define TESSERA_FALLBACK_BEST_EFFORT 0x0001u /* relax soft attributes (samples, bits); report result */
 
 typedef struct TesseraContextConfig {
@@ -151,9 +153,9 @@ typedef struct TesseraContextConfig {
     TesseraEnum fallback;
     int32_t redBits, greenBits, blueBits, alphaBits; /* 0 = don't care */
     int32_t depthBits, stencilBits;
-    int32_t samples;           /* 0 = no multisampling */
-    TesseraContext shareWith;  /* TESSERA_NULL_HANDLE = none */
-    uint64_t reserved[8];      /* must be zero; reserved for future use */
+    int32_t samples;          /* 0 = no multisampling */
+    TesseraContext shareWith; /* TESSERA_NULL_HANDLE = none */
+    uint64_t reserved[8];     /* must be zero; reserved for future use */
 } TesseraContextConfig;
 
 /* Zeroed config with structSize set: `TesseraContextConfig cfg = tesseraDefaultContextConfig();`
@@ -208,12 +210,14 @@ TESSERA_API TesseraResult TESSERA_CALL tesseraGetContextInfo(TesseraContext cont
 /* ------------------------------------------------------------------- native handles
  *
  * What other libraries need to interoperate with a Tessera context: share a texture with Direct3D
- * (WGL_NV_DX_interop2), export a buffer as a dma-buf, wrap it for Vulkan or Metal, ... Tessera does not wrap those APIs; it
- * hands out the native objects (and tesseraGetProcAddress resolves their extension functions, e.g. "wglDXOpenDeviceNV").
+ * (WGL_NV_DX_interop2), export a buffer as a dma-buf, wrap it for Vulkan or Metal, ... Tessera does not wrap
+ * those APIs; it hands out the native objects (and tesseraGetProcAddress resolves their extension functions,
+ * e.g. "wglDXOpenDeviceNV").
  *
- * The handles are BORROWED: valid until the context is destroyed, owned by Tessera. Never destroy, close, terminate or
- * unregister them. In particular a Display / EGLDisplay is shared by every Tessera context of the backend. Calls that need the
- * context current (most extension functions) are subject to the usual rule: it is current on one thread at a time.
+ * The handles are BORROWED: valid until the context is destroyed, owned by Tessera. Never destroy, close,
+ * terminate or unregister them. In particular a Display / EGLDisplay is shared by every Tessera context of
+ * the backend. Calls that need the context current (most extension functions) are subject to the usual rule:
+ * it is current on one thread at a time.
  */
 #define TESSERA_NATIVE_NONE 0u
 #define TESSERA_NATIVE_WGL 1u
@@ -225,11 +229,11 @@ typedef struct TesseraNativeHandles {
     uint32_t structSize; /* in: sizeof(TesseraNativeHandles) */
     uint32_t kind;       /* out: TESSERA_NATIVE_*; decides what handles[] mean */
     /*
-     * WGL: [0] HGLRC  [1] HDC (window or pbuffer)  [2] HWND (0 for a pbuffer)  [3] HPBUFFERARB (0 for a window)  [4] pixel format
-     * GLX: [0] Display*  [1] GLXContext  [2] GLXDrawable  [3] GLXFBConfig  [4] Window (0 for a pbuffer)  [5] screen
-     * EGL: [0] EGLDisplay  [1] EGLContext  [2] EGLSurface (0 if surfaceless)  [3] EGLConfig  [4] client API (EGL_OPENGL_API / _ES_API)
-     * CGL: [0] CGLContextObj
-     * Unused entries are 0. Pointers are stored as integers so the layout is the same on every ABI.
+     * WGL: [0] HGLRC  [1] HDC (window or pbuffer)  [2] HWND (0 for a pbuffer)  [3] HPBUFFERARB (0 for a
+     * window)  [4] pixel format GLX: [0] Display*  [1] GLXContext  [2] GLXDrawable  [3] GLXFBConfig  [4]
+     * Window (0 for a pbuffer)  [5] screen EGL: [0] EGLDisplay  [1] EGLContext  [2] EGLSurface (0 if
+     * surfaceless)  [3] EGLConfig  [4] client API (EGL_OPENGL_API / _ES_API) CGL: [0] CGLContextObj Unused
+     * entries are 0. Pointers are stored as integers so the layout is the same on every ABI.
      */
     uint64_t handles[6];
     uint64_t reserved[4];
@@ -242,60 +246,70 @@ static inline TesseraNativeHandles tesseraDefaultNativeHandles(void) {
     return h;
 }
 
-TESSERA_API TesseraResult TESSERA_CALL tesseraGetNativeHandles(TesseraContext context, TesseraNativeHandles* outHandles);
+TESSERA_API TesseraResult TESSERA_CALL tesseraGetNativeHandles(TesseraContext context,
+                                                               TesseraNativeHandles* outHandles);
 
 /* ------------------------------------------------------------- pre-warmed contexts
  *
- * Creating a context costs tens of milliseconds (a window, a pixel format, a driver context, the driver's own setup), which
- * matters to programs that start many short-lived contexts. Only contexts that were NEVER used are pooled, so what you get is
- * indistinguishable from a freshly created one: reusing a used context would carry its GL state and objects over to an
- * unrelated user, which this library does not do.
+ * Creating a context costs tens of milliseconds (a window, a pixel format, a driver context, the driver's own
+ * setup), which matters to programs that start many short-lived contexts. Only contexts that were NEVER used
+ * are pooled, so what you get is indistinguishable from a freshly created one: reusing a used context would
+ * carry its GL state and objects over to an unrelated user, which this library does not do.
  */
 
 /*
- * Creates `count` contexts for `config` now and keeps them ready. A later tesseraCreateContext with an identical request
- * (and shareWith = NULL handle) takes one of them instead of creating a new one. Blocks until all exist; call it from a
- * background thread. At most 64 contexts are pooled in total. The pool is emptied by tesseraTerminate.
+ * Creates `count` contexts for `config` now and keeps them ready. A later tesseraCreateContext with an
+ * identical request (and shareWith = NULL handle) takes one of them instead of creating a new one. Blocks
+ * until all exist; call it from a background thread. At most 64 contexts are pooled in total. The pool is
+ * emptied by tesseraTerminate.
  */
-TESSERA_API TesseraResult TESSERA_CALL tesseraPrewarmContexts(const TesseraContextConfig* config, int32_t count);
+TESSERA_API TesseraResult TESSERA_CALL tesseraPrewarmContexts(const TesseraContextConfig* config,
+                                                              int32_t count);
 
 /* Contexts currently waiting in the pool (all configurations). */
 TESSERA_API int32_t TESSERA_CALL tesseraPooledContextCount(void);
 
 /* ----------------------------------------------------------- rendering into a caller's window
  *
- * Normally Tessera creates its own hidden drawables and never touches anyone else's windows. This is the one exception, and
- * it follows strict ownership rules:
- *  - The window is BORROWED. Tessera never destroys, resizes, shows, hides or subclasses it, and destroying the context
- *    never destroys it. The window must outlive every use of the context; once it is gone, calls on the context fail.
- *  - The window's pixel format (Windows) / visual (X11) is decided by whoever created the window. If it already has one,
- *    Tessera adopts it and checks it against the request (STRICT fails with NO_MATCHING_CONFIG if it does not satisfy it).
- *  - A Windows window can have its pixel format set only once, ever. Tessera sets one only if the caller says so with
- *    TESSERA_ATTACH_ALLOW_PIXEL_FORMAT and the window has none yet; otherwise it fails rather than touch the window.
- *  - Supported on WGL (nativeWindow = HWND) and GLX (nativeWindow = X11 Window id, on the X server of $DISPLAY). Other
- *    backends return TESSERA_ERROR_UNSUPPORTED.
- * Presenting uses tesseraSwapBuffers; tesseraSetSwapInterval works as usual. The context reports TESSERA_SURFACE_WINDOW.
+ * Normally Tessera creates its own hidden drawables and never touches anyone else's windows. This is the one
+ * exception, and it follows strict ownership rules:
+ *  - The window is BORROWED. Tessera never destroys, resizes, shows, hides or subclasses it, and destroying
+ * the context never destroys it. The window must outlive every use of the context; once it is gone, calls on
+ * the context fail.
+ *  - The window's pixel format (Windows) / visual (X11) is decided by whoever created the window. If it
+ * already has one, Tessera adopts it and checks it against the request (STRICT fails with NO_MATCHING_CONFIG
+ * if it does not satisfy it).
+ *  - A Windows window can have its pixel format set only once, ever. Tessera sets one only if the caller says
+ * so with TESSERA_ATTACH_ALLOW_PIXEL_FORMAT and the window has none yet; otherwise it fails rather than touch
+ * the window.
+ *  - Supported on WGL (nativeWindow = HWND) and GLX (nativeWindow = X11 Window id, on the X server of
+ * $DISPLAY). Other backends return TESSERA_ERROR_UNSUPPORTED. Presenting uses tesseraSwapBuffers;
+ * tesseraSetSwapInterval works as usual. The context reports TESSERA_SURFACE_WINDOW.
  */
 #define TESSERA_ATTACH_ALLOW_PIXEL_FORMAT 0x1u
 
-TESSERA_API TesseraResult TESSERA_CALL tesseraCreateContextForWindow(const TesseraContextConfig* config, uint64_t nativeWindow,
-                                                                     uint32_t flags, TesseraContext* outContext);
+TESSERA_API TesseraResult TESSERA_CALL tesseraCreateContextForWindow(const TesseraContextConfig* config,
+                                                                     uint64_t nativeWindow, uint32_t flags,
+                                                                     TesseraContext* outContext);
 
 /* ------------------------------------------------------------------------ probing
  *
- * "Would this request work here, and what would I get?" Creates the context for real (that is the only honest answer),
- * records what the driver reports, and destroys it again. No handle is returned, the pool is bypassed (a probe must test the
- * driver, not a cached context), nothing is left current, and the caller's current context is undisturbed.
+ * "Would this request work here, and what would I get?" Creates the context for real (that is the only honest
+ * answer), records what the driver reports, and destroys it again. No handle is returned, the pool is
+ * bypassed (a probe must test the driver, not a cached context), nothing is left current, and the caller's
+ * current context is undisturbed.
  *
- * Returns what tesseraCreateContext would return for the same request. `report` is filled in whenever `config` and
- * `report` themselves are valid, success or not; with INVALID_ARGUMENT for those two it is left untouched.
+ * Returns what tesseraCreateContext would return for the same request. `report` is filled in whenever
+ * `config` and `report` themselves are valid, success or not; with INVALID_ARGUMENT for those two it is left
+ * untouched.
  */
 typedef struct TesseraProbeReport {
-    uint32_t structSize;      /* in: sizeof(TesseraProbeReport) */
-    TesseraResult result;     /* same as the return value */
-    TesseraContextInfo info;  /* what the driver gave; all zero unless result == TESSERA_SUCCESS */
-    char backend[32];         /* "wgl", "glx", "egl", "cgl": the backend that answered, or the last one that was asked */
-    char message[256];        /* why it failed (truncated); empty on success */
+    uint32_t structSize;     /* in: sizeof(TesseraProbeReport) */
+    TesseraResult result;    /* same as the return value */
+    TesseraContextInfo info; /* what the driver gave; all zero unless result == TESSERA_SUCCESS */
+    char backend[32]; /* "wgl", "glx", "egl", "cgl": the backend that answered, or the last one that was asked
+                       */
+    char message[256]; /* why it failed (truncated); empty on success */
     uint64_t reserved[4];
 } TesseraProbeReport;
 
@@ -307,15 +321,17 @@ static inline TesseraProbeReport tesseraDefaultProbeReport(void) {
     return r;
 }
 
-TESSERA_API TesseraResult TESSERA_CALL tesseraProbe(const TesseraContextConfig* config, TesseraProbeReport* outReport);
+TESSERA_API TesseraResult TESSERA_CALL tesseraProbe(const TesseraContextConfig* config,
+                                                    TesseraProbeReport* outReport);
 
 /* ------------------------------------------------- reset notification and context loss
  *
- * A context created with TESSERA_FLAG_ROBUST_ACCESS | TESSERA_FLAG_RESET_NOTIFICATION can be polled for a GPU reset
- * (driver crash, TDR, GPU removed). Like glGetGraphicsResetStatus, which this wraps, the application decides when to
- * poll (typically once per frame). Once a reset is reported the context is *lost*: it stays lost, tesseraMakeCurrent
- * and tesseraSwapBuffers on it return TESSERA_ERROR_CONTEXT_LOST, and it should be replaced with
- * tesseraRecreateContext. A backend that learns of the loss natively (e.g. EGL_CONTEXT_LOST) marks it the same way.
+ * A context created with TESSERA_FLAG_ROBUST_ACCESS | TESSERA_FLAG_RESET_NOTIFICATION can be polled for a GPU
+ * reset (driver crash, TDR, GPU removed). Like glGetGraphicsResetStatus, which this wraps, the application
+ * decides when to poll (typically once per frame). Once a reset is reported the context is *lost*: it stays
+ * lost, tesseraMakeCurrent and tesseraSwapBuffers on it return TESSERA_ERROR_CONTEXT_LOST, and it should be
+ * replaced with tesseraRecreateContext. A backend that learns of the loss natively (e.g. EGL_CONTEXT_LOST)
+ * marks it the same way.
  */
 #define TESSERA_RESET_NONE 0
 #define TESSERA_RESET_GUILTY 1   /* this context caused the reset */
@@ -323,20 +339,22 @@ TESSERA_API TesseraResult TESSERA_CALL tesseraProbe(const TesseraContextConfig* 
 #define TESSERA_RESET_UNKNOWN 3
 
 /*
- * Polls the reset status; `context` must be current on the calling thread. Returns UNSUPPORTED if the context was not
- * created with robust access and reset notification (or the driver lacks the query). For a context already known to
- * be lost it returns the status that was reported.
+ * Polls the reset status; `context` must be current on the calling thread. Returns UNSUPPORTED if the context
+ * was not created with robust access and reset notification (or the driver lacks the query). For a context
+ * already known to be lost it returns the status that was reported.
  */
 TESSERA_API TesseraResult TESSERA_CALL tesseraGetResetStatus(TesseraContext context, int32_t* outStatus);
 
 /* tesseraRecreateContext flags */
-#define TESSERA_RECREATE_SHARE_PRESERVED 0x1u /* the new context joined a surviving member of the old share group */
+#define TESSERA_RECREATE_SHARE_PRESERVED                                                                     \
+    0x1u /* the new context joined a surviving member of the old share group */
 
 /*
- * Creates a new context from the same request as `context` (normally a lost one; the old handle stays valid and must
- * still be destroyed by the caller). If `context` shared objects with other contexts, the new one shares with a
- * surviving member of that group, so the group's textures/buffers are still there (TESSERA_RECREATE_SHARE_PRESERVED).
- * If no member survives, the new context starts an empty group and everything must be re-uploaded. `outFlags` may be NULL.
+ * Creates a new context from the same request as `context` (normally a lost one; the old handle stays valid
+ * and must still be destroyed by the caller). If `context` shared objects with other contexts, the new one
+ * shares with a surviving member of that group, so the group's textures/buffers are still there
+ * (TESSERA_RECREATE_SHARE_PRESERVED). If no member survives, the new context starts an empty group and
+ * everything must be re-uploaded. `outFlags` may be NULL.
  */
 TESSERA_API TesseraResult TESSERA_CALL tesseraRecreateContext(TesseraContext context, TesseraContext* outNew,
                                                               uint32_t* outFlags);

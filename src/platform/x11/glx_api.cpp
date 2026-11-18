@@ -20,9 +20,11 @@ const LinuxApi* loadApi() noexcept {
         auto* api = new LinuxApi(); // leaked on purpose, see header
         api->x11 = DynamicLibrary::open("libX11.so.6");
         api->gl = DynamicLibrary::open("libGL.so.1");
-        if (!api->gl) api->gl = DynamicLibrary::open("libGLX.so.0");
+        if (!api->gl)
+            api->gl = DynamicLibrary::open("libGLX.so.0");
         if (!api->x11 || !api->gl) {
-            logf(TESSERA_LOG_INFO, "X11 backend unavailable: %s", !api->x11 ? "libX11.so.6 not found" : "libGL.so.1 not found");
+            logf(TESSERA_LOG_INFO, "X11 backend unavailable: %s",
+                 !api->x11 ? "libX11.so.6 not found" : "libGL.so.1 not found");
             delete api;
             return nullptr;
         }
@@ -75,11 +77,12 @@ std::mutex g_scopeMutex;
 std::atomic<Display*> g_scopeDisplay{nullptr};
 std::atomic<int> g_scopeError{0};
 std::atomic<XErrorHandler> g_scopePrevious{nullptr};
-// The last handler seen that was not ours: the host's. The handler slot is process-global and other libraries (GTK, JavaFX)
-// push and pop their own handlers without knowing about ours, so a late "restore" by one of them can leave scopedHandler
-// installed after our scope ended. The next scope would then record scopedHandler as its "previous" and chain to itself
-// forever (found by the JavaFX es2 coexistence test: stack overflow, SIGSEGV). So a previous handler that is ours is
-// replaced by the real host handler remembered here.
+// The last handler seen that was not ours: the host's. The handler slot is process-global and other libraries
+// (GTK, JavaFX) push and pop their own handlers without knowing about ours, so a late "restore" by one of
+// them can leave scopedHandler installed after our scope ended. The next scope would then record
+// scopedHandler as its "previous" and chain to itself forever (found by the JavaFX es2 coexistence test:
+// stack overflow, SIGSEGV). So a previous handler that is ours is replaced by the real host handler
+// remembered here.
 std::atomic<XErrorHandler> g_hostHandler{nullptr};
 
 int scopedHandler(Display* display, XErrorEvent* event) {
@@ -89,12 +92,16 @@ int scopedHandler(Display* display, XErrorEvent* event) {
         return 0;
     }
     XErrorHandler previous = g_scopePrevious.load();
-    if (previous == &scopedHandler) previous = g_hostHandler.load(); // never chain to ourselves
-    if (previous == &scopedHandler) return 0;
+    if (previous == &scopedHandler)
+        previous = g_hostHandler.load(); // never chain to ourselves
+    if (previous == &scopedHandler)
+        return 0;
     return previous ? previous(display, event) : 0;
 }
 
-std::mutex& scopeMutex() { return g_scopeMutex; }
+std::mutex& scopeMutex() {
+    return g_scopeMutex;
+}
 
 } // namespace
 
@@ -108,13 +115,16 @@ XErrorScope::XErrorScope(const LinuxApi& api, Display* display) : api_(api), dis
     g_scopeError.store(0);
     g_scopeDisplay.store(display);
     previous_ = api_.xlib.XSetErrorHandler(&scopedHandler);
-    if (previous_ == &scopedHandler) previous_ = g_hostHandler.load(); // a stale install of ours: see g_hostHandler
-    else g_hostHandler.store(previous_);
+    if (previous_ == &scopedHandler)
+        previous_ = g_hostHandler.load(); // a stale install of ours: see g_hostHandler
+    else
+        g_hostHandler.store(previous_);
     g_scopePrevious.store(previous_);
 }
 
 XErrorScope::~XErrorScope() {
-    if (display_) api_.xlib.XSync(display_, 0); // deliver any pending error while our handler is installed
+    if (display_)
+        api_.xlib.XSync(display_, 0); // deliver any pending error while our handler is installed
     api_.xlib.XSetErrorHandler(previous_);
     g_scopeDisplay.store(nullptr);
     g_scopePrevious.store(nullptr);
@@ -122,7 +132,8 @@ XErrorScope::~XErrorScope() {
 }
 
 int XErrorScope::sync() {
-    if (display_) api_.xlib.XSync(display_, 0);
+    if (display_)
+        api_.xlib.XSync(display_, 0);
     return g_scopeError.load();
 }
 
@@ -139,7 +150,8 @@ GlxForeignOps::State GlxForeignOps::capture() noexcept {
 
 void GlxForeignOps::restore(const State& s) noexcept {
     const LinuxApi* api = linuxApi();
-    if (!api) return;
+    if (!api)
+        return;
     const GlxFns& g = api->glx;
     if (g.glXGetCurrentContext() == s.ctx && g.glXGetCurrentDrawable() == s.draw &&
         g.glXGetCurrentReadDrawable() == s.read && (s.ctx == nullptr || g.glXGetCurrentDisplay() == s.dpy))
@@ -147,14 +159,17 @@ void GlxForeignOps::restore(const State& s) noexcept {
 
     // With nothing to restore, release on whichever display currently holds the context (ours).
     Display* dpy = s.ctx ? s.dpy : g.glXGetCurrentDisplay();
-    if (!dpy) return;
+    if (!dpy)
+        return;
     // The caller's display/drawable may be gone; a stray X error must not reach Xlib's default handler,
     // which would terminate the host process.
     XErrorScope scope(*api, dpy);
     const Bool ok = g.glXMakeContextCurrent(dpy, s.draw, s.read, s.ctx);
     const int error = scope.sync();
     if (!ok || error != 0) {
-        logf(TESSERA_LOG_WARN, "could not restore the previous GLX context (X error %d); leaving the thread without one", error);
+        logf(TESSERA_LOG_WARN,
+             "could not restore the previous GLX context (X error %d); leaving the thread without one",
+             error);
         // Never leave one of OUR contexts current on a thread that did not ask for it.
         if (Display* current = g.glXGetCurrentDisplay(); current && g.glXGetCurrentContext() != s.ctx)
             g.glXMakeContextCurrent(current, 0, 0, nullptr);

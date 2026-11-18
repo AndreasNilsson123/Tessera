@@ -8,12 +8,12 @@
 #include <utility>
 #include <vector>
 
+#include "core/boundary.hpp"
+#include "core/log.hpp"
 #include "glx_api.hpp"
 #include "platform/common/arb_context.hpp"
 #include "platform/common/gl_debug.hpp"
 #include "platform/common/gl_query.hpp"
-#include "core/boundary.hpp"
-#include "core/log.hpp"
 
 namespace tessera::x11 {
 namespace {
@@ -42,17 +42,19 @@ class GlxShared {
     PfnSwapIntervalSgi swapIntervalSgi = nullptr;
 
     /*
-     * A connection that opened successfully is never closed (it lives in the process-wide `keptConnections()` list below and
-     * is reused by the next backend instance for the same DISPLAY). Closing the last connection makes Mesa dlclose its DRI
-     * driver, and a thread that still has a context current from that driver (or merely used it) runs the driver's
-     * pthread-key destructors at its own exit, in code that is no longer mapped: SIGSEGV in __nptl_deallocate_tsd. Found by
-     * the Java shutdown test (a context current on a parked thread when tesseraTerminate ran). The EGL backend makes the
-     * same choice for the same reason (never eglTerminate, ADR 0006). Only a connection that failed to open is closed.
+     * A connection that opened successfully is never closed (it lives in the process-wide `keptConnections()`
+     * list below and is reused by the next backend instance for the same DISPLAY). Closing the last
+     * connection makes Mesa dlclose its DRI driver, and a thread that still has a context current from that
+     * driver (or merely used it) runs the driver's pthread-key destructors at its own exit, in code that is
+     * no longer mapped: SIGSEGV in __nptl_deallocate_tsd. Found by the Java shutdown test (a context current
+     * on a parked thread when tesseraTerminate ran). The EGL backend makes the same choice for the same
+     * reason (never eglTerminate, ADR 0006). Only a connection that failed to open is closed.
      */
     bool keepOpen = false;
     std::string displayName; // $DISPLAY at the time of opening: a different value means a different server
     ~GlxShared() {
-        if (dpy && !keepOpen) api->xlib.XCloseDisplay(dpy);
+        if (dpy && !keepOpen)
+            api->xlib.XCloseDisplay(dpy);
     }
 
     bool has(const char* extension) const {
@@ -100,8 +102,10 @@ class GlxShared {
             const char* p = list;
             while (*p) {
                 const char* e = p;
-                while (*e && *e != ' ') ++e;
-                if (e > p) exts_.emplace_back(p, static_cast<std::size_t>(e - p));
+                while (*e && *e != ' ')
+                    ++e;
+                if (e > p)
+                    exts_.emplace_back(p, static_cast<std::size_t>(e - p));
                 p = *e ? e + 1 : e;
             }
         }
@@ -109,8 +113,8 @@ class GlxShared {
         swapIntervalExt = reinterpret_cast<PfnSwapIntervalExt>(proc("glXSwapIntervalEXT"));
         swapIntervalMesa = reinterpret_cast<PfnSwapIntervalMesa>(proc("glXSwapIntervalMESA"));
         swapIntervalSgi = reinterpret_cast<PfnSwapIntervalSgi>(proc("glXSwapIntervalSGI"));
-        logf(TESSERA_LOG_DEBUG, "GLX %d.%d, %zu extensions, ARB_create_context=%d", major, minor, exts_.size(),
-             createContextAttribs != nullptr);
+        logf(TESSERA_LOG_DEBUG, "GLX %d.%d, %zu extensions, ARB_create_context=%d", major, minor,
+             exts_.size(), createContextAttribs != nullptr);
         keepOpen = true;
         return true;
     }
@@ -128,7 +132,9 @@ class GlxShared {
 class GlxContext final : public ContextObject {
   public:
     explicit GlxContext(std::shared_ptr<GlxShared> shared) : shared_(std::move(shared)) {}
-    ~GlxContext() override { destroy(); }
+    ~GlxContext() override {
+        destroy();
+    }
 
     TesseraResult describe(TesseraContextInfo& out) const noexcept override {
         out = info;
@@ -141,7 +147,8 @@ class GlxContext final : public ContextObject {
         const Bool ok = api.glx.glXMakeContextCurrent(shared_->dpy, drawable, drawable, ctx);
         const int error = scope.sync();
         if (!ok || error != 0)
-            return fail(TESSERA_ERROR_PLATFORM, "glXMakeContextCurrent failed (X error " + std::to_string(error) + ")");
+            return fail(TESSERA_ERROR_PLATFORM,
+                        "glXMakeContextCurrent failed (X error " + std::to_string(error) + ")");
         return TESSERA_SUCCESS;
     }
 
@@ -166,24 +173,31 @@ class GlxContext final : public ContextObject {
     }
 
     TesseraResult swapBuffers() noexcept override {
-        if (pbuffer) return TESSERA_SUCCESS; // nothing to present
-        // A caller's window can vanish under us; the resulting X error must not reach Xlib's default (exit) handler.
+        if (pbuffer)
+            return TESSERA_SUCCESS; // nothing to present
+        // A caller's window can vanish under us; the resulting X error must not reach Xlib's default (exit)
+        // handler.
         XErrorScope scope(*shared_->api, shared_->dpy);
         shared_->api->glx.glXSwapBuffers(shared_->dpy, drawable);
         const int e = scope.sync();
-        if (e != 0) return fail(TESSERA_ERROR_PLATFORM, "glXSwapBuffers raised an X error " + std::to_string(e) + " (is the window gone?)");
+        if (e != 0)
+            return fail(TESSERA_ERROR_PLATFORM,
+                        "glXSwapBuffers raised an X error " + std::to_string(e) + " (is the window gone?)");
         return TESSERA_SUCCESS;
     }
 
     TesseraResult setSwapInterval(int32_t interval) noexcept override {
-        if (pbuffer) return fail(TESSERA_ERROR_UNSUPPORTED, "swap interval does not apply to pbuffers");
+        if (pbuffer)
+            return fail(TESSERA_ERROR_UNSUPPORTED, "swap interval does not apply to pbuffers");
         if (interval < 0 && !shared_->has("GLX_EXT_swap_control_tear"))
-            return fail(TESSERA_ERROR_INVALID_ARGUMENT, "adaptive vsync (GLX_EXT_swap_control_tear) is not available");
+            return fail(TESSERA_ERROR_INVALID_ARGUMENT,
+                        "adaptive vsync (GLX_EXT_swap_control_tear) is not available");
         const LinuxApi& api = *shared_->api;
         XErrorScope scope(api, shared_->dpy);
         if (shared_->swapIntervalExt && shared_->has("GLX_EXT_swap_control")) {
             shared_->swapIntervalExt(shared_->dpy, drawable, interval);
-            if (scope.sync() != 0) return fail(TESSERA_ERROR_PLATFORM, "glXSwapIntervalEXT raised an X error");
+            if (scope.sync() != 0)
+                return fail(TESSERA_ERROR_PLATFORM, "glXSwapIntervalEXT raised an X error");
             return TESSERA_SUCCESS;
         }
         if (interval >= 0 && shared_->swapIntervalMesa && shared_->has("GLX_MESA_swap_control"))
@@ -219,13 +233,17 @@ class GlxContext final : public ContextObject {
         Display* dpy = shared_->dpy;
         XErrorScope scope(api, dpy); // teardown must never reach Xlib's terminate-the-process default handler
         if (ctx) {
-            if (api.glx.glXGetCurrentContext() == ctx) api.glx.glXMakeContextCurrent(dpy, 0, 0, nullptr);
+            if (api.glx.glXGetCurrentContext() == ctx)
+                api.glx.glXMakeContextCurrent(dpy, 0, 0, nullptr);
             api.glx.glXDestroyContext(dpy, ctx);
             ctx = nullptr;
         }
-        if (pbuffer) api.glx.glXDestroyPbuffer(dpy, pbuffer);
-        if (window) api.xlib.XDestroyWindow(dpy, window);
-        if (colormap) api.xlib.XFreeColormap(dpy, colormap);
+        if (pbuffer)
+            api.glx.glXDestroyPbuffer(dpy, pbuffer);
+        if (window)
+            api.xlib.XDestroyWindow(dpy, window);
+        if (colormap)
+            api.xlib.XFreeColormap(dpy, colormap);
         pbuffer = 0;
         window = 0;
         colormap = 0;
@@ -245,25 +263,33 @@ std::vector<int> fbconfigAttribs(const TesseraContextConfig& c, const FormatAtte
     add(kGlxXRenderable, 1);
     add(kGlxDrawableType, pbuffer ? kGlxPbufferBit : kGlxWindowBit);
     add(kGlxRenderType, isFloat ? kGlxRgbaFloatBit : kGlxRgbaBit);
-    if (!isFloat && !pbuffer) add(kGlxXVisualType, kGlxTrueColor);
-    if (c.flags & TESSERA_FLAG_DOUBLE_BUFFER) add(kGlxDoubleBuffer, 1);
-    if (c.flags & TESSERA_FLAG_STEREO) add(kGlxStereo, 1);
+    if (!isFloat && !pbuffer)
+        add(kGlxXVisualType, kGlxTrueColor);
+    if (c.flags & TESSERA_FLAG_DOUBLE_BUFFER)
+        add(kGlxDoubleBuffer, 1);
+    if (c.flags & TESSERA_FLAG_STEREO)
+        add(kGlxStereo, 1);
 
     int r = c.redBits, g = c.greenBits, b = c.blueBits;
-    if (r == 0 && g == 0 && b == 0) r = g = b = isFloat ? 16 : 8; // sane default for "don't care"
+    if (r == 0 && g == 0 && b == 0)
+        r = g = b = isFloat ? 16 : 8; // sane default for "don't care"
     add(kGlxRedSize, r);
     add(kGlxGreenSize, g);
     add(kGlxBlueSize, b);
-    if (c.alphaBits > 0) add(kGlxAlphaSize, c.alphaBits);
+    if (c.alphaBits > 0)
+        add(kGlxAlphaSize, c.alphaBits);
     if (!a.relaxDepth) {
-        if (c.depthBits > 0) add(kGlxDepthSize, c.depthBits);
-        if (c.stencilBits > 0) add(kGlxStencilSize, c.stencilBits);
+        if (c.depthBits > 0)
+            add(kGlxDepthSize, c.depthBits);
+        if (c.stencilBits > 0)
+            add(kGlxStencilSize, c.stencilBits);
     }
     if (a.samples > 0) {
         add(kGlxSampleBuffers, 1);
         add(kGlxSamples, a.samples);
     }
-    if (a.srgb) add(kGlxFramebufferSrgb, 1);
+    if (a.srgb)
+        add(kGlxFramebufferSrgb, 1);
     v.push_back(0);
     return v;
 }
@@ -274,10 +300,12 @@ int attrib(const GlxShared& sh, GLXFBConfig fb, int key) {
     return value;
 }
 
-TesseraResult chooseFbConfig(const GlxShared& sh, const TesseraContextConfig& c, bool pbuffer, GLXFBConfig& out) {
+TesseraResult chooseFbConfig(const GlxShared& sh, const TesseraContextConfig& c, bool pbuffer,
+                             GLXFBConfig& out) {
     const bool strict = c.fallback == TESSERA_FALLBACK_STRICT;
     FormatRequest request;
-    if (TesseraResult r = gateFormatFeatures(c, "GLX_", [&sh](const char* e) { return sh.has(e); }, request);
+    if (TesseraResult r = gateFormatFeatures(
+            c, "GLX_", [&sh](const char* e) { return sh.has(e); }, request);
         r != TESSERA_SUCCESS)
         return r;
 
@@ -290,13 +318,16 @@ TesseraResult chooseFbConfig(const GlxShared& sh, const TesseraContextConfig& c,
             out = list[0]; // the server sorts best-first
             sh.api->xlib.XFree(list);
             if (a.samples != request.samples || a.srgb != request.srgb || a.relaxDepth)
-                logf(TESSERA_LOG_INFO, "GLX: framebuffer config relaxed (samples %d->%d, srgb %d, depth relaxed %d)",
-                     c.samples, a.samples, a.srgb, a.relaxDepth);
+                logf(TESSERA_LOG_INFO,
+                     "GLX: framebuffer config relaxed (samples %d->%d, srgb %d, depth relaxed %d)", c.samples,
+                     a.samples, a.srgb, a.relaxDepth);
             return TESSERA_SUCCESS;
         }
-        if (list) sh.api->xlib.XFree(list);
+        if (list)
+            sh.api->xlib.XFree(list);
     }
-    return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, "no framebuffer configuration matches the requested configuration");
+    return fail(TESSERA_ERROR_NO_MATCHING_CONFIG,
+                "no framebuffer configuration matches the requested configuration");
 }
 
 // ---- reporting what we actually got -------------------------------------------------------------
@@ -308,7 +339,8 @@ bool queryInfo(const GlxShared& sh, GLXFBConfig fb, const TesseraContextConfig& 
     gl.getString = reinterpret_cast<decltype(gl.getString)>(sh.proc("glGetString"));
     gl.getIntegerv = reinterpret_cast<decltype(gl.getIntegerv)>(sh.proc("glGetIntegerv"));
     gl.getError = reinterpret_cast<decltype(gl.getError)>(sh.proc("glGetError"));
-    if (!queryContextInfo(gl, info)) return false;
+    if (!queryContextInfo(gl, info))
+        return false;
 
     uint32_t flags = info.flags;
     info.redBits = attrib(sh, fb, kGlxRedSize);
@@ -318,14 +350,19 @@ bool queryInfo(const GlxShared& sh, GLXFBConfig fb, const TesseraContextConfig& 
     info.depthBits = attrib(sh, fb, kGlxDepthSize);
     info.stencilBits = attrib(sh, fb, kGlxStencilSize);
     info.samples = attrib(sh, fb, kGlxSamples);
-    if (attrib(sh, fb, kGlxDoubleBuffer)) flags |= TESSERA_FLAG_DOUBLE_BUFFER;
-    if (attrib(sh, fb, kGlxStereo)) flags |= TESSERA_FLAG_STEREO;
-    if ((sh.has("GLX_ARB_framebuffer_sRGB") || sh.has("GLX_EXT_framebuffer_sRGB")) && attrib(sh, fb, kGlxFramebufferSrgb))
+    if (attrib(sh, fb, kGlxDoubleBuffer))
+        flags |= TESSERA_FLAG_DOUBLE_BUFFER;
+    if (attrib(sh, fb, kGlxStereo))
+        flags |= TESSERA_FLAG_STEREO;
+    if ((sh.has("GLX_ARB_framebuffer_sRGB") || sh.has("GLX_EXT_framebuffer_sRGB")) &&
+        attrib(sh, fb, kGlxFramebufferSrgb))
         flags |= TESSERA_FLAG_SRGB;
-    if (attrib(sh, fb, kGlxRenderType) & kGlxRgbaFloatBit) flags |= TESSERA_FLAG_FLOAT_COLOR;
+    if (attrib(sh, fb, kGlxRenderType) & kGlxRgbaFloatBit)
+        flags |= TESSERA_FLAG_FLOAT_COLOR;
     info.flags = flags;
-    info.surface = pbuffer ? TESSERA_SURFACE_PBUFFER
-                           : (c.surface == TESSERA_SURFACE_NONE ? TESSERA_SURFACE_NONE : TESSERA_SURFACE_HIDDEN_WINDOW);
+    info.surface =
+        pbuffer ? TESSERA_SURFACE_PBUFFER
+                : (c.surface == TESSERA_SURFACE_NONE ? TESSERA_SURFACE_NONE : TESSERA_SURFACE_HIDDEN_WINDOW);
     return true;
 }
 
@@ -333,19 +370,25 @@ bool queryInfo(const GlxShared& sh, GLXFBConfig fb, const TesseraContextConfig& 
 
 class GlxBackend final : public Backend {
   public:
-    const char* name() const noexcept override { return "glx"; }
+    const char* name() const noexcept override {
+        return "glx";
+    }
 
-    TesseraResult createContext(const TesseraContextConfig& c, const std::shared_ptr<ContextObject>& shareWith,
+    TesseraResult createContext(const TesseraContextConfig& c,
+                                const std::shared_ptr<ContextObject>& shareWith,
                                 std::shared_ptr<ContextObject>& out) override {
         std::string error;
         std::shared_ptr<GlxShared> sh = getShared(error);
-        if (!sh) return fail(TESSERA_ERROR_UNSUPPORTED, error);
+        if (!sh)
+            return fail(TESSERA_ERROR_UNSUPPORTED, error);
         const LinuxApi& api = *sh->api;
 
         std::shared_ptr<GlxContext> parent;
         if (shareWith) {
             parent = std::dynamic_pointer_cast<GlxContext>(shareWith);
-            if (!parent) return fail(TESSERA_ERROR_INVALID_ARGUMENT, "cannot share objects with a context from another backend");
+            if (!parent)
+                return fail(TESSERA_ERROR_INVALID_ARGUMENT,
+                            "cannot share objects with a context from another backend");
         }
 
         // Everything below may change this thread's current context; put the caller's back on every path.
@@ -354,18 +397,22 @@ class GlxBackend final : public Backend {
         const bool wantPbuffer = c.surface == TESSERA_SURFACE_PBUFFER;
         auto ctx = std::make_shared<GlxContext>(sh); // RAII: any failure below cleans up through ~GlxContext
 
-        if (TesseraResult r = chooseFbConfig(*sh, c, wantPbuffer, ctx->fbconfig); r != TESSERA_SUCCESS) return r;
+        if (TesseraResult r = chooseFbConfig(*sh, c, wantPbuffer, ctx->fbconfig); r != TESSERA_SUCCESS)
+            return r;
 
         // The drawable: a pbuffer, or a hidden window that is never mapped (no window manager involvement).
         {
             XErrorScope scope(api, sh->dpy);
             if (wantPbuffer) {
-                const int attribs[] = {kGlxPbufferWidth, 1, kGlxPbufferHeight, 1, kGlxPreservedContents, 0, 0};
+                const int attribs[] = {
+                    kGlxPbufferWidth, 1, kGlxPbufferHeight, 1, kGlxPreservedContents, 0, 0};
                 ctx->pbuffer = api.glx.glXCreatePbuffer(sh->dpy, ctx->fbconfig, attribs);
                 ctx->drawable = ctx->pbuffer;
             } else {
                 XVisualInfo* vi = api.glx.glXGetVisualFromFBConfig(sh->dpy, ctx->fbconfig);
-                if (!vi) return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, "the framebuffer configuration has no X visual");
+                if (!vi)
+                    return fail(TESSERA_ERROR_NO_MATCHING_CONFIG,
+                                "the framebuffer configuration has no X visual");
                 const Window root = api.xlib.XRootWindow(sh->dpy, sh->screen);
                 ctx->colormap = api.xlib.XCreateColormap(sh->dpy, root, vi->visual, kAllocNone);
                 XSetWindowAttributes attrs = {};
@@ -373,38 +420,45 @@ class GlxBackend final : public Backend {
                 attrs.override_redirect = 1;
                 attrs.event_mask = 0;
                 attrs.colormap = ctx->colormap;
-                ctx->window = api.xlib.XCreateWindow(sh->dpy, root, 0, 0, 1, 1, 0, vi->depth, kInputOutput, vi->visual,
-                                                     kCWBorderPixel | kCWOverrideRedirect | kCWEventMask | kCWColormap, &attrs);
+                ctx->window = api.xlib.XCreateWindow(
+                    sh->dpy, root, 0, 0, 1, 1, 0, vi->depth, kInputOutput, vi->visual,
+                    kCWBorderPixel | kCWOverrideRedirect | kCWEventMask | kCWColormap, &attrs);
                 api.xlib.XFree(vi);
                 ctx->drawable = ctx->window;
             }
             const int e = scope.sync();
             if (e != 0 || !ctx->drawable)
-                return fail(TESSERA_ERROR_PLATFORM, "could not create the drawable (X error " + std::to_string(e) + ")");
+                return fail(TESSERA_ERROR_PLATFORM,
+                            "could not create the drawable (X error " + std::to_string(e) + ")");
         }
 
-        if (TesseraResult r = createNativeContext(*sh, *ctx, c, parent ? parent->ctx : nullptr); r != TESSERA_SUCCESS)
+        if (TesseraResult r = createNativeContext(*sh, *ctx, c, parent ? parent->ctx : nullptr);
+            r != TESSERA_SUCCESS)
             return r;
         ctx->parent = std::move(parent);
 
-        if (TesseraResult r = ctx->bindCurrent(); r != TESSERA_SUCCESS) return r;
+        if (TesseraResult r = ctx->bindCurrent(); r != TESSERA_SUCCESS)
+            return r;
         const bool ok = queryInfo(*sh, ctx->fbconfig, c, wantPbuffer, ctx->info);
         // `guard` restores the caller's context; it must not be left to us.
-        if (!ok) return fail(TESSERA_ERROR_PLATFORM, "could not query the new context (glGetString failed)");
+        if (!ok)
+            return fail(TESSERA_ERROR_PLATFORM, "could not query the new context (glGetString failed)");
         return finishContext(*sh, ctx, c, false, out);
     }
 
     /*
-     * Renders into a caller's X window (an XID on $DISPLAY's server). The window is borrowed: we only look up its visual,
-     * pick the framebuffer configuration that belongs to it, and never destroy or modify the window. A window created with a
-     * visual that has no GLX framebuffer configuration cannot be used (GLX cannot change a window's visual afterwards).
+     * Renders into a caller's X window (an XID on $DISPLAY's server). The window is borrowed: we only look up
+     * its visual, pick the framebuffer configuration that belongs to it, and never destroy or modify the
+     * window. A window created with a visual that has no GLX framebuffer configuration cannot be used (GLX
+     * cannot change a window's visual afterwards).
      */
-    TesseraResult createContextForWindow(const TesseraContextConfig& c, uint64_t nativeWindow, uint32_t /*flags*/,
-                                         const std::shared_ptr<ContextObject>& shareWith,
+    TesseraResult createContextForWindow(const TesseraContextConfig& c, uint64_t nativeWindow,
+                                         uint32_t /*flags*/, const std::shared_ptr<ContextObject>& shareWith,
                                          std::shared_ptr<ContextObject>& out) override {
         std::string error;
         std::shared_ptr<GlxShared> sh = getShared(error);
-        if (!sh) return fail(TESSERA_ERROR_UNSUPPORTED, error);
+        if (!sh)
+            return fail(TESSERA_ERROR_UNSUPPORTED, error);
         const LinuxApi& api = *sh->api;
 #if !defined(__LP64__)
         return fail(TESSERA_ERROR_UNSUPPORTED, "window attach is implemented for LP64 X11 only");
@@ -412,7 +466,9 @@ class GlxBackend final : public Backend {
         std::shared_ptr<GlxContext> parent;
         if (shareWith) {
             parent = std::dynamic_pointer_cast<GlxContext>(shareWith);
-            if (!parent) return fail(TESSERA_ERROR_INVALID_ARGUMENT, "cannot share objects with a context from another backend");
+            if (!parent)
+                return fail(TESSERA_ERROR_INVALID_ARGUMENT,
+                            "cannot share objects with a context from another backend");
         }
         ForeignContextGuard guard;
         auto ctx = std::make_shared<GlxContext>(sh);
@@ -428,24 +484,30 @@ class GlxBackend final : public Backend {
             const int e = scope.sync();
             if (status == 0 || e != 0) {
                 ctx->foreignWindow = 0; // nothing of ours to clean up
-                return fail(TESSERA_ERROR_INVALID_ARGUMENT, "nativeWindow is not a window on the X server of $DISPLAY");
+                return fail(TESSERA_ERROR_INVALID_ARGUMENT,
+                            "nativeWindow is not a window on the X server of $DISPLAY");
             }
             Visual* visual = nullptr;
             std::memcpy(&visual, attrs + kWindowAttributesVisualOffset, sizeof visual);
-            if (visual) visualId = api.xlib.XVisualIDFromVisual(visual);
+            if (visual)
+                visualId = api.xlib.XVisualIDFromVisual(visual);
         }
-        if (visualId == 0) return fail(TESSERA_ERROR_PLATFORM, "could not determine the visual of the window");
+        if (visualId == 0)
+            return fail(TESSERA_ERROR_PLATFORM, "could not determine the visual of the window");
 
         {
             const int attribs[] = {kGlxVisualId, static_cast<int>(visualId), 0};
             int count = 0;
             GLXFBConfig* list = api.glx.glXChooseFBConfig(sh->dpy, sh->screen, attribs, &count);
             if (!list || count <= 0) {
-                if (list) api.xlib.XFree(list);
-                return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, "the window's visual has no GLX framebuffer configuration");
+                if (list)
+                    api.xlib.XFree(list);
+                return fail(TESSERA_ERROR_NO_MATCHING_CONFIG,
+                            "the window's visual has no GLX framebuffer configuration");
             }
-            // A visual can map to several framebuffer configurations (e.g. single- and double-buffered variants, which are
-            // both valid for the same window): take the first one that agrees with the request on buffering, else the first.
+            // A visual can map to several framebuffer configurations (e.g. single- and double-buffered
+            // variants, which are both valid for the same window): take the first one that agrees with the
+            // request on buffering, else the first.
             const bool wantDouble = (c.flags & TESSERA_FLAG_DOUBLE_BUFFER) != 0;
             ctx->fbconfig = list[0];
             for (int i = 0; i < count; ++i) {
@@ -457,9 +519,12 @@ class GlxBackend final : public Backend {
             api.xlib.XFree(list);
         }
 
-        if (TesseraResult r = createNativeContext(*sh, *ctx, c, parent ? parent->ctx : nullptr); r != TESSERA_SUCCESS) return r;
+        if (TesseraResult r = createNativeContext(*sh, *ctx, c, parent ? parent->ctx : nullptr);
+            r != TESSERA_SUCCESS)
+            return r;
         ctx->parent = std::move(parent);
-        if (TesseraResult r = ctx->bindCurrent(); r != TESSERA_SUCCESS) return r;
+        if (TesseraResult r = ctx->bindCurrent(); r != TESSERA_SUCCESS)
+            return r;
         if (!queryInfo(*sh, ctx->fbconfig, c, false, ctx->info))
             return fail(TESSERA_ERROR_PLATFORM, "could not query the new context (glGetString failed)");
         ctx->info.surface = TESSERA_SURFACE_WINDOW;
@@ -468,26 +533,31 @@ class GlxBackend final : public Backend {
 
     void* getProcAddress(const char* name) noexcept override {
         const LinuxApi* api = linuxApi();
-        if (!api || !name) return nullptr;
+        if (!api || !name)
+            return nullptr;
         // GLVND hands out a dispatch stub for any name it is asked about; every GL/GLX function starts with
         // "gl", so refuse the rest. (A made-up "gl*" name can still resolve to a no-op stub - that is the GLX
         // contract; check the extension strings, not the pointer, to learn what is supported.)
-        if (name[0] != 'g' || name[1] != 'l') return nullptr;
+        if (name[0] != 'g' || name[1] != 'l')
+            return nullptr;
         return api->glx.glXGetProcAddress(reinterpret_cast<const unsigned char*>(name));
     }
 
   private:
     /* The context is current and described: verify strict requests and bind the per-context extras. */
-    static TesseraResult finishContext(GlxShared& sh, const std::shared_ptr<GlxContext>& ctx, const TesseraContextConfig& c,
-                                       bool /*window*/, std::shared_ptr<ContextObject>& out) {
+    static TesseraResult finishContext(GlxShared& sh, const std::shared_ptr<GlxContext>& ctx,
+                                       const TesseraContextConfig& c, bool /*window*/,
+                                       std::shared_ptr<ContextObject>& out) {
         // Strict mode promises exactly what was asked for: verify the parts the driver may have loosened.
         if (c.fallback == TESSERA_FALLBACK_STRICT && !contextSatisfies(c, ctx->info))
-            return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, "the created context does not satisfy the strict request");
+            return fail(TESSERA_ERROR_NO_MATCHING_CONFIG,
+                        "the created context does not satisfy the strict request");
 
         // Reset polling and debug-message forwarding are bound to the context that is current right now.
         const auto glProc = [&sh](const char* n) -> void* { return sh.proc(n); };
         ctx->resetFn = resolveResetStatus(glProc);
-        if (ctx->info.flags & TESSERA_FLAG_DEBUG) installGlDebugForwarder(glProc);
+        if (ctx->info.flags & TESSERA_FLAG_DEBUG)
+            installGlDebugForwarder(glProc);
 
         out = ctx;
         return TESSERA_SUCCESS;
@@ -500,7 +570,8 @@ class GlxBackend final : public Backend {
         ArbContextPlan plan;
         const TesseraResult planned = planArbContext(
             c, "GLX_", sh.createContextAttribs != nullptr, [&sh](const char* e) { return sh.has(e); }, plan);
-        if (planned != TESSERA_SUCCESS) return planned;
+        if (planned != TESSERA_SUCCESS)
+            return planned;
 
         if (plan.legacy) {
             XErrorScope scope(api, sh.dpy);
@@ -508,7 +579,8 @@ class GlxBackend final : public Backend {
             const int e = scope.sync();
             if (!ctx.ctx || e != 0) {
                 ctx.ctx = nullptr;
-                return fail(TESSERA_ERROR_PLATFORM, "glXCreateNewContext failed (X error " + std::to_string(e) + ")");
+                return fail(TESSERA_ERROR_PLATFORM,
+                            "glXCreateNewContext failed (X error " + std::to_string(e) + ")");
             }
             return TESSERA_SUCCESS;
         }
@@ -524,34 +596,42 @@ class GlxBackend final : public Backend {
                 return TESSERA_SUCCESS;
             }
             // A rejected request may still have produced an object alongside the error.
-            if (created) api.glx.glXDestroyContext(sh.dpy, created);
+            if (created)
+                api.glx.glXDestroyContext(sh.dpy, created);
         }
         // Unsupported version/profile surfaces as BadMatch / BadValue / GLXBadFBConfig / GLXBadProfileARB.
-        if (lastError == kBadAlloc) return fail(TESSERA_ERROR_OUT_OF_MEMORY, "the X server is out of memory");
-        return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, "the driver does not support the requested OpenGL version/profile");
+        if (lastError == kBadAlloc)
+            return fail(TESSERA_ERROR_OUT_OF_MEMORY, "the X server is out of memory");
+        return fail(TESSERA_ERROR_NO_MATCHING_CONFIG,
+                    "the driver does not support the requested OpenGL version/profile");
     }
 
     std::shared_ptr<GlxShared> getShared(std::string& error) {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (shared_) return shared_;
+        if (shared_)
+            return shared_;
         const LinuxApi* api = linuxApi();
         if (!api) {
             error = "libX11 and libGL are not available on this system";
             return nullptr;
         }
-        // Reuse the connection a previous backend instance opened for the same display (see GlxShared::keepOpen).
+        // Reuse the connection a previous backend instance opened for the same display (see
+        // GlxShared::keepOpen).
         static std::mutex keptMutex;
-        static std::vector<std::shared_ptr<GlxShared>>* const kept = new std::vector<std::shared_ptr<GlxShared>>(); // never freed
+        static std::vector<std::shared_ptr<GlxShared>>* const kept =
+            new std::vector<std::shared_ptr<GlxShared>>(); // never freed
         std::lock_guard<std::mutex> keptLock(keptMutex);
         const char* display = std::getenv("DISPLAY");
         const std::string wanted = display ? display : "";
         std::shared_ptr<GlxShared> s;
         for (const auto& k : *kept)
-            if (k->displayName == wanted && k->api == api) s = k;
+            if (k->displayName == wanted && k->api == api)
+                s = k;
         if (!s) {
             s = std::make_shared<GlxShared>();
             s->api = api;
-            if (!s->open(error)) return nullptr;
+            if (!s->open(error))
+                return nullptr;
             kept->push_back(s);
         }
         shared_ = s;
@@ -564,6 +644,8 @@ class GlxBackend final : public Backend {
 
 } // namespace
 
-std::shared_ptr<Backend> makeGlxBackend() { return std::make_shared<GlxBackend>(); }
+std::shared_ptr<Backend> makeGlxBackend() {
+    return std::make_shared<GlxBackend>();
+}
 
 } // namespace tessera::x11

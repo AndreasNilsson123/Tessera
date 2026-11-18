@@ -27,25 +27,27 @@ void copyString(char* dst, std::size_t cap, const char* src) noexcept;
  * Describes the context that is current on the calling thread: api, version, profile, context flags
  * (debug/forward-compatible/robust/no-error/reset-notification) and the vendor/renderer/version strings.
  * Zeroes `info` first. Platform code adds the drawable's pixel-format fields afterwards.
- * Everything reported is read back from the driver, never copied from the request: a flag the driver quietly dropped
- * (best-effort mode) must not show up as granted.
- * Returns false if the driver gave no usable version string.
+ * Everything reported is read back from the driver, never copied from the request: a flag the driver quietly
+ * dropped (best-effort mode) must not show up as granted. Returns false if the driver gave no usable version
+ * string.
  */
 bool queryContextInfo(const GlQueryFns& gl, TesseraContextInfo& info);
 
 /*
- * Parses a GL_VERSION string ("4.6.0 NVIDIA 546.30", "OpenGL ES 3.2 Mesa ...", "OpenGL ES-CM 1.1"). False for anything
- * malformed; must never overflow or read past the terminator, whatever a broken driver returns.
+ * Parses a GL_VERSION string ("4.6.0 NVIDIA 546.30", "OpenGL ES 3.2 Mesa ...", "OpenGL ES-CM 1.1"). False for
+ * anything malformed; must never overflow or read past the terminator, whatever a broken driver returns.
  */
 bool parseGlVersion(const char* text, bool& isEs, int& major, int& minor) noexcept;
 
-/* glGetGraphicsResetStatus (core, KHR, ARB or EXT spelling), resolved through the backend's loader; null if absent. */
+/* glGetGraphicsResetStatus (core, KHR, ARB or EXT spelling), resolved through the backend's loader; null if
+ * absent. */
 using GlResetStatusFn = unsigned(TESSERA_GLCALL*)();
 GlResetStatusFn resolveResetStatus(const std::function<void*(const char*)>& getProc);
 
 /*
- * Shared body of ContextObject::queryResetStatus. `grantedFlags` is what the context actually got (info.flags): without
- * both robust access and reset notification the driver gives no meaningful answer, so this reports UNSUPPORTED.
+ * Shared body of ContextObject::queryResetStatus. `grantedFlags` is what the context actually got
+ * (info.flags): without both robust access and reset notification the driver gives no meaningful answer, so
+ * this reports UNSUPPORTED.
  */
 TesseraResult queryResetStatusFrom(GlResetStatusFn fn, uint32_t grantedFlags, int32_t& out);
 

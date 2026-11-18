@@ -1,6 +1,7 @@
 /*
- * tessera-diag: reports what Tessera can do on this machine. It uses only the public C API (tesseraProbe), so what it prints is
- * exactly what an application linking Tessera would experience. Paste its output into a bug report, or into docs/compat.md.
+ * tessera-diag: reports what Tessera can do on this machine. It uses only the public C API (tesseraProbe), so
+ * what it prints is exactly what an application linking Tessera would experience. Paste its output into a bug
+ * report, or into docs/compat.md.
  *
  *   tessera-diag                 text report for every backend that exists on this platform
  *   tessera-diag --json          the same as JSON (for scripts and for attaching to issues)
@@ -8,8 +9,8 @@
  *   tessera-diag --quick         a short list of cases instead of the full matrix
  *
  * Exit status: 0 if at least one backend could create a context, 1 if none could, 2 on a usage error.
- * Every case is a real create-inspect-destroy of a context in STRICT mode, so "refused" means the driver cannot give exactly
- * that, not that Tessera gave up.
+ * Every case is a real create-inspect-destroy of a context in STRICT mode, so "refused" means the driver
+ * cannot give exactly that, not that Tessera gave up.
  */
 #define _CRT_SECURE_NO_WARNINGS 1
 #if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
@@ -38,10 +39,14 @@ static void jstr(const char* s) {
     putchar('"');
     for (; *s; ++s) {
         unsigned char c = (unsigned char)*s;
-        if (c == '"' || c == '\\') printf("\\%c", c);
-        else if (c == '\n') fputs("\\n", stdout);
-        else if (c < 0x20 || c >= 0x7f) printf("\\u%04x", c); /* driver strings are not guaranteed to be clean UTF-8 */
-        else putchar(c);
+        if (c == '"' || c == '\\')
+            printf("\\%c", c);
+        else if (c == '\n')
+            fputs("\\n", stdout);
+        else if (c < 0x20 || c >= 0x7f)
+            printf("\\u%04x", c); /* driver strings are not guaranteed to be clean UTF-8 */
+        else
+            putchar(c);
     }
     putchar('"');
 }
@@ -49,14 +54,21 @@ static void jstr(const char* s) {
 static const char* profileName(uint32_t p) {
     return p == TESSERA_PROFILE_CORE ? "core" : p == TESSERA_PROFILE_COMPATIBILITY ? "compatibility" : "any";
 }
-static const char* apiName(uint32_t a) { return a == TESSERA_API_OPENGL_ES ? "GLES" : "GL"; }
+static const char* apiName(uint32_t a) {
+    return a == TESSERA_API_OPENGL_ES ? "GLES" : "GL";
+}
 static const char* surfaceName(uint32_t s) {
     switch (s) {
-        case TESSERA_SURFACE_HIDDEN_WINDOW: return "hidden-window";
-        case TESSERA_SURFACE_PBUFFER: return "pbuffer";
-        case TESSERA_SURFACE_NONE: return "none";
-        case TESSERA_SURFACE_WINDOW: return "window";
-        default: return "default";
+    case TESSERA_SURFACE_HIDDEN_WINDOW:
+        return "hidden-window";
+    case TESSERA_SURFACE_PBUFFER:
+        return "pbuffer";
+    case TESSERA_SURFACE_NONE:
+        return "none";
+    case TESSERA_SURFACE_WINDOW:
+        return "window";
+    default:
+        return "default";
     }
 }
 
@@ -78,9 +90,11 @@ static void flagsText(uint32_t flags, char* out, size_t cap) {
     size_t n = 0;
     out[0] = '\0';
     for (size_t i = 0; i < sizeof kFlagNames / sizeof *kFlagNames; ++i) {
-        if (!(flags & kFlagNames[i].bit)) continue;
+        if (!(flags & kFlagNames[i].bit))
+            continue;
         int w = snprintf(out + n, cap - n, "%s%s", n ? "," : "", kFlagNames[i].name);
-        if (w < 0 || (size_t)w >= cap - n) return;
+        if (w < 0 || (size_t)w >= cap - n)
+            return;
         n += (size_t)w;
     }
 }
@@ -96,8 +110,8 @@ typedef struct {
 static Case g_cases[64];
 static int g_caseCount = 0;
 
-static void addCase(const char* label, uint32_t api, int major, int minor, uint32_t profile, uint32_t flags, int samples, int depth,
-                    uint32_t surface, int quick) {
+static void addCase(const char* label, uint32_t api, int major, int minor, uint32_t profile, uint32_t flags,
+                    int samples, int depth, uint32_t surface, int quick) {
     Case* c = &g_cases[g_caseCount++];
     c->label = label;
     c->cfg = tesseraDefaultContextConfig();
@@ -115,9 +129,11 @@ static void addCase(const char* label, uint32_t api, int major, int minor, uint3
 
 static void buildCases(void) {
     const uint32_t GL = TESSERA_API_OPENGL, ES = TESSERA_API_OPENGL_ES;
-    const uint32_t ANY = TESSERA_PROFILE_ANY, CORE = TESSERA_PROFILE_CORE, COMPAT = TESSERA_PROFILE_COMPATIBILITY;
+    const uint32_t ANY = TESSERA_PROFILE_ANY, CORE = TESSERA_PROFILE_CORE,
+                   COMPAT = TESSERA_PROFILE_COMPATIBILITY;
     const uint32_t DEF = TESSERA_SURFACE_DEFAULT;
-    const uint32_t DB = 0; /* off-screen use: headless EGL cannot be double-buffered, so only one case asks for it */
+    const uint32_t DB =
+        0; /* off-screen use: headless EGL cannot be double-buffered, so only one case asks for it */
     addCase("OpenGL, driver's choice", GL, 0, 0, ANY, DB, 0, 0, DEF, 1);
     addCase("OpenGL 2.1 (legacy)", GL, 2, 1, ANY, DB, 0, 0, DEF, 0);
     addCase("OpenGL 3.2 core", GL, 3, 2, CORE, DB, 0, 0, DEF, 0);
@@ -133,7 +149,8 @@ static void buildCases(void) {
     addCase("OpenGL ES 3.1", ES, 3, 1, ANY, DB, 0, 0, DEF, 0);
     addCase("OpenGL ES 3.2", ES, 3, 2, ANY, DB, 0, 0, DEF, 0);
     addCase("core 3.3 + debug", GL, 3, 3, CORE, DB | TESSERA_FLAG_DEBUG, 0, 24, DEF, 1);
-    addCase("core 3.3 + forward-compatible", GL, 3, 3, CORE, DB | TESSERA_FLAG_FORWARD_COMPATIBLE, 0, 24, DEF, 0);
+    addCase("core 3.3 + forward-compatible", GL, 3, 3, CORE, DB | TESSERA_FLAG_FORWARD_COMPATIBLE, 0, 24, DEF,
+            0);
     addCase("core 3.3 + robust access", GL, 3, 3, CORE, DB | TESSERA_FLAG_ROBUST_ACCESS, 0, 24, DEF, 0);
     addCase("core 3.3 + robust + reset notification", GL, 3, 3, CORE,
             DB | TESSERA_FLAG_ROBUST_ACCESS | TESSERA_FLAG_RESET_NOTIFICATION, 0, 24, DEF, 0);
@@ -160,17 +177,19 @@ static void printInfoText(const TesseraContextInfo* i) {
     char flags[160];
     flagsText(i->flags, flags, sizeof flags);
     printf("%s %d.%d %s", apiName(i->api), i->versionMajor, i->versionMinor, profileName(i->profile));
-    printf(" | rgba %d%d%d%d d%d s%d x%d | %s%s%s", i->redBits, i->greenBits, i->blueBits, i->alphaBits, i->depthBits, i->stencilBits,
-           i->samples, surfaceName(i->surface), flags[0] ? " | " : "", flags);
+    printf(" | rgba %d%d%d%d d%d s%d x%d | %s%s%s", i->redBits, i->greenBits, i->blueBits, i->alphaBits,
+           i->depthBits, i->stencilBits, i->samples, surfaceName(i->surface), flags[0] ? " | " : "", flags);
 }
 
 static void printInfoJson(const TesseraContextInfo* i) {
     char flags[160];
     flagsText(i->flags, flags, sizeof flags);
-    printf("{\"api\":\"%s\",\"version\":\"%d.%d\",\"profile\":\"%s\",\"red\":%d,\"green\":%d,\"blue\":%d,\"alpha\":%d,\"depth\":%d,"
+    printf("{\"api\":\"%s\",\"version\":\"%d.%d\",\"profile\":\"%s\",\"red\":%d,\"green\":%d,\"blue\":%d,"
+           "\"alpha\":%d,\"depth\":%d,"
            "\"stencil\":%d,\"samples\":%d,\"surface\":\"%s\",\"flags\":\"%s\"}",
-           apiName(i->api), i->versionMajor, i->versionMinor, profileName(i->profile), i->redBits, i->greenBits, i->blueBits,
-           i->alphaBits, i->depthBits, i->stencilBits, i->samples, surfaceName(i->surface), flags);
+           apiName(i->api), i->versionMajor, i->versionMinor, profileName(i->profile), i->redBits,
+           i->greenBits, i->blueBits, i->alphaBits, i->depthBits, i->stencilBits, i->samples,
+           surfaceName(i->surface), flags);
 }
 
 static BackendSummary runBackend(const char* name, int* firstBackend) {
@@ -232,8 +251,8 @@ static BackendSummary runBackend(const char* name, int* firstBackend) {
     } else {
         printf("[%s]%s\n", name, r == TESSERA_SUCCESS ? "" : " (the baseline request failed)");
         if (r == TESSERA_SUCCESS) {
-            printf("  vendor   : %s\n  renderer : %s\n  version  : %s\n", baseline.info.vendor, baseline.info.renderer,
-                   baseline.info.version);
+            printf("  vendor   : %s\n  renderer : %s\n  version  : %s\n", baseline.info.vendor,
+                   baseline.info.renderer, baseline.info.version);
         } else {
             printf("  %s: %s\n", tesseraResultString(r), baseline.message);
         }
@@ -243,11 +262,13 @@ static BackendSummary runBackend(const char* name, int* firstBackend) {
 
     int firstCase = 1, ran = 0;
     for (int k = 0; k < g_caseCount; ++k) {
-        if (g_quick && !g_cases[k].quick) continue;
+        if (g_quick && !g_cases[k].quick)
+            continue;
         ++ran;
         TesseraProbeReport rep = tesseraDefaultProbeReport();
         r = tesseraProbe(&g_cases[k].cfg, &rep);
-        if (r == TESSERA_SUCCESS) ++sum.created;
+        if (r == TESSERA_SUCCESS)
+            ++sum.created;
         if (g_json) {
             printf("%s\n        {\"case\":", firstCase ? "" : ",");
             jstr(g_cases[k].label);
@@ -270,8 +291,10 @@ static BackendSummary runBackend(const char* name, int* firstBackend) {
         }
         firstCase = 0;
     }
-    if (g_json) printf("\n      ]}");
-    else printf("  %d of %d requests satisfied\n\n", sum.created, ran);
+    if (g_json)
+        printf("\n      ]}");
+    else
+        printf("  %d of %d requests satisfied\n\n", sum.created, ran);
     return sum;
 }
 
@@ -296,9 +319,12 @@ static void usage(void) {
 int main(int argc, char** argv) {
     const char* only = NULL;
     for (int i = 1; i < argc; ++i) {
-        if (!strcmp(argv[i], "--json")) g_json = 1;
-        else if (!strcmp(argv[i], "--quick")) g_quick = 1;
-        else if (!strcmp(argv[i], "--backend") && i + 1 < argc) only = argv[++i];
+        if (!strcmp(argv[i], "--json"))
+            g_json = 1;
+        else if (!strcmp(argv[i], "--quick"))
+            g_quick = 1;
+        else if (!strcmp(argv[i], "--backend") && i + 1 < argc)
+            only = argv[++i];
         else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) {
             usage();
             return 0;
@@ -308,7 +334,8 @@ int main(int argc, char** argv) {
         }
     }
     int count = 0;
-    for (const char* p = only; p && *p; ++p) count++;
+    for (const char* p = only; p && *p; ++p)
+        count++;
     if (only && (count == 0 || count > 16 || strchr(only, ','))) {
         usage();
         return 2;
@@ -318,19 +345,30 @@ int main(int argc, char** argv) {
     tesseraGetVersion(&major, &minor, &patch);
     const char* userBackend = getenv("TESSERA_BACKEND");
     char savedBackend[128] = "";
-    if (userBackend) snprintf(savedBackend, sizeof savedBackend, "%s", userBackend);
+    if (userBackend)
+        snprintf(savedBackend, sizeof savedBackend, "%s", userBackend);
 
     buildCases();
 
-    static const char* const kEnv[] = {"TESSERA_BACKEND", "TESSERA_EGL_PLATFORM", "TESSERA_EGL_DEVICE", "TESSERA_EGL_LIBRARY",
-                                       "TESSERA_CGL_LIBRARY", "TESSERA_NO_XINITTHREADS", "DISPLAY", "WAYLAND_DISPLAY"};
+    static const char* const kEnv[] = {"TESSERA_BACKEND",
+                                       "TESSERA_EGL_PLATFORM",
+                                       "TESSERA_EGL_DEVICE",
+                                       "TESSERA_EGL_LIBRARY",
+                                       "TESSERA_CGL_LIBRARY",
+                                       "TESSERA_NO_XINITTHREADS",
+                                       "DISPLAY",
+                                       "WAYLAND_DISPLAY"};
     if (g_json) {
-        printf("{\n  \"tessera\":\"%d.%d.%d\",\"abi\":%d,\"headerAbi\":%d,\"platform\":\"%s\",\"pointerBits\":%d,\n  \"environment\":{", major,
-               minor, patch, tesseraGetAbiVersion(), TESSERA_ABI_VERSION, platformName(), (int)(sizeof(void*) * 8));
+        printf("{\n  "
+               "\"tessera\":\"%d.%d.%d\",\"abi\":%d,\"headerAbi\":%d,\"platform\":\"%s\",\"pointerBits\":%d,"
+               "\n  \"environment\":{",
+               major, minor, patch, tesseraGetAbiVersion(), TESSERA_ABI_VERSION, platformName(),
+               (int)(sizeof(void*) * 8));
         int first = 1;
         for (size_t i = 0; i < sizeof kEnv / sizeof *kEnv; ++i) {
             const char* v = i == 0 ? (savedBackend[0] ? savedBackend : NULL) : getenv(kEnv[i]);
-            if (!v) continue;
+            if (!v)
+                continue;
             printf("%s", first ? "" : ",");
             jstr(kEnv[i]);
             putchar(':');
@@ -339,11 +377,12 @@ int main(int argc, char** argv) {
         }
         printf("},\n  \"backends\":[\n");
     } else {
-        printf("Tessera %d.%d.%d (ABI %d, header ABI %d) on %s, %d-bit\n", major, minor, patch, tesseraGetAbiVersion(),
-               TESSERA_ABI_VERSION, platformName(), (int)(sizeof(void*) * 8));
+        printf("Tessera %d.%d.%d (ABI %d, header ABI %d) on %s, %d-bit\n", major, minor, patch,
+               tesseraGetAbiVersion(), TESSERA_ABI_VERSION, platformName(), (int)(sizeof(void*) * 8));
         for (size_t i = 0; i < sizeof kEnv / sizeof *kEnv; ++i) {
             const char* v = i == 0 ? (savedBackend[0] ? savedBackend : NULL) : getenv(kEnv[i]);
-            if (v) printf("  %s=%s\n", kEnv[i], v);
+            if (v)
+                printf("  %s=%s\n", kEnv[i], v);
         }
         printf("\n");
     }
@@ -351,8 +390,10 @@ int main(int argc, char** argv) {
     /* Candidate backends. A TESSERA_BACKEND already set by the user is respected as the single candidate. */
     const char* candidates[5];
     int nCand = 0;
-    if (only) candidates[nCand++] = only;
-    else if (savedBackend[0]) candidates[nCand++] = savedBackend;
+    if (only)
+        candidates[nCand++] = only;
+    else if (savedBackend[0])
+        candidates[nCand++] = savedBackend;
     else {
         candidates[nCand++] = "wgl";
         candidates[nCand++] = "glx";
@@ -363,13 +404,18 @@ int main(int argc, char** argv) {
     int first = 1, anyCreated = 0;
     for (int i = 0; i < nCand; ++i) {
         BackendSummary s = runBackend(candidates[i], &first);
-        if (s.created > 0) anyCreated = 1;
+        if (s.created > 0)
+            anyCreated = 1;
     }
-    if (g_json) printf("\n  ]\n}\n");
-    else if (!anyCreated) printf("No backend could create a context on this machine.\n");
+    if (g_json)
+        printf("\n  ]\n}\n");
+    else if (!anyCreated)
+        printf("No backend could create a context on this machine.\n");
 
     tesseraTerminate();
-    if (savedBackend[0]) SETENV("TESSERA_BACKEND", savedBackend);
-    else UNSETENV("TESSERA_BACKEND");
+    if (savedBackend[0])
+        SETENV("TESSERA_BACKEND", savedBackend);
+    else
+        UNSETENV("TESSERA_BACKEND");
     return anyCreated ? 0 : 1;
 }

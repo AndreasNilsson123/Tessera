@@ -1,13 +1,15 @@
 #pragma once
 
 /*
- * The slice of CGL (Core OpenGL, OpenGL.framework) the macOS backend needs, declared by hand. CGL is a plain C API,
- * so no Objective-C and no Apple headers are involved: the framework is loaded with dlopen like libGL/libEGL elsewhere,
- * which also lets this code be compiled and tested on other platforms against a fake library.
+ * The slice of CGL (Core OpenGL, OpenGL.framework) the macOS backend needs, declared by hand. CGL is a plain
+ * C API, so no Objective-C and no Apple headers are involved: the framework is loaded with dlopen like
+ * libGL/libEGL elsewhere, which also lets this code be compiled and tested on other platforms against a fake
+ * library.
  *
- * VERIFICATION STATUS: the constants below are written from documentation and memory and have NOT been checked
- * against Apple's headers or run on a Mac. They are the first thing to check if the backend misbehaves on real
- * hardware. (The pixel-format attribute and profile values are the same ones every CGL/NSOpenGL program uses.)
+ * VERIFICATION STATUS: the constants below are written from documentation and memory and have NOT been
+ * checked against Apple's headers or run on a Mac. They are the first thing to check if the backend
+ * misbehaves on real hardware. (The pixel-format attribute and profile values are the same ones every
+ * CGL/NSOpenGL program uses.)
  */
 
 #include <cstdint>

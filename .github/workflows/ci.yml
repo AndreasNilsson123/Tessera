@@ -150,8 +150,8 @@ jobs:
       - name: Run the Java tests
         run: xvfb-run -a -s "-screen 0 1280x1024x24" ctest --preset java --output-on-failure
 
-  # Style and static analysis. Informational for now: the existing code predates the formatter settings, so
-  # making these blocking needs a one-time reformat commit first.
+  # Style and static analysis. The sources are clang-format clean (18.1.8); the clang-tidy step has not been run locally, so
+  # the job stays informational until it has passed once.
   lint:
     name: lint (informational)
     runs-on: ubuntu-24.04

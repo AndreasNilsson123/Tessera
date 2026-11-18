@@ -58,8 +58,10 @@ WglForeignOps::State WglForeignOps::capture() noexcept {
 
 void WglForeignOps::restore(const State& s) noexcept {
     const WglApi* api = wglApi();
-    if (!api) return;
-    if (api->getCurrentContext() == s.rc && api->getCurrentDC() == s.dc) return; // already as found
+    if (!api)
+        return;
+    if (api->getCurrentContext() == s.rc && api->getCurrentDC() == s.dc)
+        return; // already as found
     if (!api->makeCurrent(s.rc ? s.dc : nullptr, s.rc)) {
         // The caller's DC/window may have been destroyed in the meantime; leave the thread clean rather
         // than leaving one of our contexts current by accident.
@@ -71,13 +73,14 @@ void WglForeignOps::restore(const State& s) noexcept {
 
 std::string describeWin32Error(const char* prefix, DWORD code) {
     char buffer[256] = {0};
-    const DWORD n = FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, code, 0,
-                                   buffer, static_cast<DWORD>(sizeof buffer) - 1, nullptr);
+    const DWORD n = FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, code,
+                                   0, buffer, static_cast<DWORD>(sizeof buffer) - 1, nullptr);
     std::string text = prefix;
     text += ": ";
     if (n > 0) {
         std::string msg(buffer, n);
-        while (!msg.empty() && (msg.back() == '\r' || msg.back() == '\n' || msg.back() == ' ')) msg.pop_back();
+        while (!msg.empty() && (msg.back() == '\r' || msg.back() == '\n' || msg.back() == ' '))
+            msg.pop_back();
         text += msg;
     } else {
         text += "unknown error";

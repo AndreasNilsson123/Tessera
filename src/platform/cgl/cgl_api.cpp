@@ -17,7 +17,8 @@ const CglApi* loadApi() noexcept {
     try {
         auto* api = new CglApi(); // leaked on purpose: other components in the process use the same framework
         std::string path;
-        if (!readEnv("TESSERA_CGL_LIBRARY", path)) path = "/System/Library/Frameworks/OpenGL.framework/OpenGL";
+        if (!readEnv("TESSERA_CGL_LIBRARY", path))
+            path = "/System/Library/Frameworks/OpenGL.framework/OpenGL";
         api->lib = DynamicLibrary::open(path.c_str());
         if (!api->lib) {
             logf(TESSERA_LOG_INFO, "CGL backend unavailable: cannot load %s", path.c_str());
@@ -53,20 +54,26 @@ const CglApi* cglApi() noexcept {
 
 CglForeignOps::State CglForeignOps::capture() noexcept {
     State s;
-    if (const CglApi* api = cglApi()) s.ctx = api->fn.CGLGetCurrentContext();
+    if (const CglApi* api = cglApi())
+        s.ctx = api->fn.CGLGetCurrentContext();
     return s;
 }
 
 void CglForeignOps::restore(const State& s) noexcept {
     const CglApi* api = cglApi();
-    if (!api) return;
-    if (api->fn.CGLGetCurrentContext() == s.ctx) return; // already as found
+    if (!api)
+        return;
+    if (api->fn.CGLGetCurrentContext() == s.ctx)
+        return; // already as found
     CGLError e = api->fn.CGLSetCurrentContext(s.ctx);
-    if (e != kNoError) e = api->fn.CGLSetCurrentContext(s.ctx); // one retry: the failure may be transient
+    if (e != kNoError)
+        e = api->fn.CGLSetCurrentContext(s.ctx); // one retry: the failure may be transient
     if (e != kNoError) {
-        // The caller's context cannot be put back (e.g. it was destroyed meanwhile). Whatever happens, one of OUR
-        // contexts must not be left current on a thread that never asked for it.
-        logf(TESSERA_LOG_WARN, "could not restore the previous CGL context (error %d); leaving the thread without one", static_cast<int>(e));
+        // The caller's context cannot be put back (e.g. it was destroyed meanwhile). Whatever happens, one of
+        // OUR contexts must not be left current on a thread that never asked for it.
+        logf(TESSERA_LOG_WARN,
+             "could not restore the previous CGL context (error %d); leaving the thread without one",
+             static_cast<int>(e));
         api->fn.CGLSetCurrentContext(nullptr);
     }
 }

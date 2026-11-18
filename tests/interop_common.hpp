@@ -1,10 +1,14 @@
-// Checks for the Phase 8 additions that are independent of the platform: pre-warmed contexts and native handles.
-// Include after robustness_common.hpp (it needs its Hooks, plus `g_failures`, `CHECK`, `EXPECT` from the including file).
+// Checks for the Phase 8 additions that are independent of the platform: pre-warmed contexts and native
+// handles. It needs `g_failures`, `CHECK` and `EXPECT` from the including file, defined before this header
+// is included.
 #pragma once
 
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <vector>
+
+#include "robustness_common.hpp"
 
 namespace interop {
 
@@ -27,8 +31,10 @@ inline void prewarm(const robust::Hooks& h) {
     EXPECT(tesseraCreateContext(&cfg, &cold), TESSERA_SUCCESS);
     const double coldMs = millisSince(t0);
     TesseraContextInfo coldInfo = tesseraDefaultContextInfo();
-    if (cold) tesseraGetContextInfo(cold, &coldInfo);
-    if (cold) EXPECT(tesseraDestroyContext(cold), TESSERA_SUCCESS);
+    if (cold)
+        tesseraGetContextInfo(cold, &coldInfo);
+    if (cold)
+        EXPECT(tesseraDestroyContext(cold), TESSERA_SUCCESS);
 
     // Pre-warm three; the next three creates take them without touching the driver.
     EXPECT(tesseraPrewarmContexts(&cfg, 3), TESSERA_SUCCESS);
@@ -46,7 +52,8 @@ inline void prewarm(const robust::Hooks& h) {
         TesseraContextInfo info = tesseraDefaultContextInfo();
         EXPECT(tesseraGetContextInfo(c, &info), TESSERA_SUCCESS);
         CHECK(info.versionMajor == coldInfo.versionMajor && info.versionMinor == coldInfo.versionMinor);
-        CHECK(info.profile == coldInfo.profile && info.flags == coldInfo.flags && info.depthBits == coldInfo.depthBits);
+        CHECK(info.profile == coldInfo.profile && info.flags == coldInfo.flags &&
+              info.depthBits == coldInfo.depthBits);
         CHECK(std::strcmp(info.renderer, coldInfo.renderer) == 0);
         EXPECT(tesseraMakeCurrent(c), TESSERA_SUCCESS);
         EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS);
@@ -59,7 +66,8 @@ inline void prewarm(const robust::Hooks& h) {
     TesseraContext fourth = 0;
     EXPECT(tesseraCreateContext(&cfg, &fourth), TESSERA_SUCCESS);
     CHECK(tesseraPooledContextCount() == 0);
-    if (fourth) EXPECT(tesseraDestroyContext(fourth), TESSERA_SUCCESS);
+    if (fourth)
+        EXPECT(tesseraDestroyContext(fourth), TESSERA_SUCCESS);
 
     // A different request does not take a pooled context; neither does one that wants to share.
     TesseraContextConfig other = cfg;
@@ -77,9 +85,11 @@ inline void prewarm(const robust::Hooks& h) {
     EXPECT(tesseraCreateContext(&cfg, &match), TESSERA_SUCCESS);
     CHECK(tesseraPooledContextCount() == 0);
     for (TesseraContext c : {o, s, match}) {
-        if (c) EXPECT(tesseraDestroyContext(c), TESSERA_SUCCESS);
+        if (c)
+            EXPECT(tesseraDestroyContext(c), TESSERA_SUCCESS);
     }
-    for (TesseraContext c : warm) EXPECT(tesseraDestroyContext(c), TESSERA_SUCCESS);
+    for (TesseraContext c : warm)
+        EXPECT(tesseraDestroyContext(c), TESSERA_SUCCESS);
 
     // Misuse.
     TesseraContextConfig bad = cfg;
@@ -93,7 +103,8 @@ inline void prewarm(const robust::Hooks& h) {
     invalid.versionMajor = 9;
     invalid.versionMinor = 9;
     invalid.fallback = TESSERA_FALLBACK_STRICT;
-    EXPECT(tesseraPrewarmContexts(&invalid, 2), TESSERA_ERROR_NO_MATCHING_CONFIG); // an impossible request pools nothing
+    EXPECT(tesseraPrewarmContexts(&invalid, 2),
+           TESSERA_ERROR_NO_MATCHING_CONFIG); // an impossible request pools nothing
     CHECK(tesseraPooledContextCount() == 0);
 
     // Concurrent takers get one each, never the same context twice.
@@ -103,13 +114,16 @@ inline void prewarm(const robust::Hooks& h) {
     std::vector<std::thread> threads;
     for (int t = 0; t < 8; ++t)
         threads.emplace_back([&, t] {
-            if (tesseraCreateContext(&cfg, &taken[static_cast<std::size_t>(t)]) != TESSERA_SUCCESS) ++failures;
+            if (tesseraCreateContext(&cfg, &taken[static_cast<std::size_t>(t)]) != TESSERA_SUCCESS)
+                ++failures;
         });
-    for (auto& t : threads) t.join();
+    for (auto& t : threads)
+        t.join();
     CHECK(failures == 0);
     CHECK(tesseraPooledContextCount() == 0);
     for (TesseraContext c : taken)
-        if (c) EXPECT(tesseraDestroyContext(c), TESSERA_SUCCESS);
+        if (c)
+            EXPECT(tesseraDestroyContext(c), TESSERA_SUCCESS);
 
     // tesseraTerminate empties the pool (and the library works again afterwards).
     EXPECT(tesseraPrewarmContexts(&cfg, 2), TESSERA_SUCCESS);
@@ -119,16 +133,18 @@ inline void prewarm(const robust::Hooks& h) {
     EXPECT(tesseraInit(), TESSERA_SUCCESS);
     TesseraContext after = 0;
     EXPECT(tesseraCreateContext(&cfg, &after), TESSERA_SUCCESS);
-    if (after) EXPECT(tesseraDestroyContext(after), TESSERA_SUCCESS);
+    if (after)
+        EXPECT(tesseraDestroyContext(after), TESSERA_SUCCESS);
 }
 
 // ---------------------------------------------------------------- native handles
 
 struct HandleExpectations {
     uint32_t kind = 0;
-    int contextIndex = 0;                      // which handles[] entry is the native context object
-    std::vector<int> mustBeNonZero;            // entries that must be set for a normal (hidden-window) context
-    std::function<uint64_t()> nativeCurrent;   // the platform's own idea of the current context on this thread (may be empty)
+    int contextIndex = 0;           // which handles[] entry is the native context object
+    std::vector<int> mustBeNonZero; // entries that must be set for a normal (hidden-window) context
+    std::function<uint64_t()>
+        nativeCurrent; // the platform's own idea of the current context on this thread (may be empty)
 };
 
 inline void nativeHandles(const robust::Hooks& h, const HandleExpectations& e) {
@@ -136,7 +152,8 @@ inline void nativeHandles(const robust::Hooks& h, const HandleExpectations& e) {
     cfg.fallback = TESSERA_FALLBACK_BEST_EFFORT;
     TesseraContext ctx = 0;
     EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_SUCCESS);
-    if (!ctx) return;
+    if (!ctx)
+        return;
 
     TesseraNativeHandles nh = tesseraDefaultNativeHandles();
     EXPECT(tesseraGetNativeHandles(ctx, &nh), TESSERA_SUCCESS);
@@ -194,17 +211,22 @@ inline void probe(const robust::Hooks& h) {
     TesseraContext real = 0;
     EXPECT(tesseraCreateContext(&cfg, &real), TESSERA_SUCCESS);
     TesseraContextInfo want = tesseraDefaultContextInfo();
-    if (real) tesseraGetContextInfo(real, &want);
+    if (real)
+        tesseraGetContextInfo(real, &want);
 
-    if (h.armForeign) h.armForeign();
+    if (h.armForeign)
+        h.armForeign();
     TesseraProbeReport rep = tesseraDefaultProbeReport();
     EXPECT(tesseraProbe(&cfg, &rep), TESSERA_SUCCESS);
-    if (h.foreignIntact) CHECK(h.foreignIntact()); // the caller's context is undisturbed
+    if (h.foreignIntact)
+        CHECK(h.foreignIntact()); // the caller's context is undisturbed
     CHECK(rep.result == TESSERA_SUCCESS && rep.message[0] == '\0');
     CHECK(rep.backend[0] != '\0');
     CHECK(rep.info.versionMajor == want.versionMajor && rep.info.versionMinor == want.versionMinor);
-    CHECK(rep.info.profile == want.profile && rep.info.flags == want.flags && rep.info.depthBits == want.depthBits);
-    CHECK(std::strcmp(rep.info.renderer, want.renderer) == 0 && std::strcmp(rep.info.vendor, want.vendor) == 0);
+    CHECK(rep.info.profile == want.profile && rep.info.flags == want.flags &&
+          rep.info.depthBits == want.depthBits);
+    CHECK(std::strcmp(rep.info.renderer, want.renderer) == 0 &&
+          std::strcmp(rep.info.vendor, want.vendor) == 0);
     std::printf("  probe: %s via %s\n", rep.info.renderer, rep.backend);
     CHECK(tesseraGetCurrentContext() == TESSERA_NULL_HANDLE); // nothing of ours was left current
 
@@ -220,14 +242,16 @@ inline void probe(const robust::Hooks& h) {
     const TesseraResult got = tesseraProbe(&impossible, &bad);
     CHECK(got == expected && bad.result == expected);
     CHECK(bad.message[0] != '\0' && bad.info.versionMajor == 0);
-    if (h.foreignIntact) CHECK(h.foreignIntact());
+    if (h.foreignIntact)
+        CHECK(h.foreignIntact());
 
     // Probing repeatedly does not accumulate anything.
     for (int i = 0; i < 20; ++i) {
         TesseraProbeReport r = tesseraDefaultProbeReport();
         EXPECT(tesseraProbe(&cfg, &r), TESSERA_SUCCESS);
     }
-    if (real) EXPECT(tesseraDestroyContext(real), TESSERA_SUCCESS);
+    if (real)
+        EXPECT(tesseraDestroyContext(real), TESSERA_SUCCESS);
 }
 
 } // namespace interop

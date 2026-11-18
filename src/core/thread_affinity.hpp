@@ -26,18 +26,22 @@ class ContextAffinity {
     bool tryAcquire(const std::shared_ptr<ThreadToken>& me, bool* wasNew = nullptr) {
         std::lock_guard<std::mutex> lock(m_);
         if (owner_ == me) {
-            if (wasNew) *wasNew = false;
+            if (wasNew)
+                *wasNew = false;
             return true;
         }
-        if (owner_ && owner_->alive.load()) return false;
+        if (owner_ && owner_->alive.load())
+            return false;
         owner_ = me;
-        if (wasNew) *wasNew = true;
+        if (wasNew)
+            *wasNew = true;
         return true;
     }
 
     void release(const std::shared_ptr<ThreadToken>& me) {
         std::lock_guard<std::mutex> lock(m_);
-        if (owner_ == me) owner_.reset();
+        if (owner_ == me)
+            owner_.reset();
     }
 
     bool ownedBy(const std::shared_ptr<ThreadToken>& me) const {

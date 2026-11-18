@@ -13,10 +13,12 @@ void moduleAnchor() {}
 
 bool WindowHost::start(std::string& error) {
     std::unique_lock<std::mutex> lock(mutex_);
-    if (running_) return true;
+    if (running_)
+        return true;
 
     HMODULE module = nullptr;
-    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
                             reinterpret_cast<LPCWSTR>(&moduleAnchor), &module)) {
         error = describeWin32Error("GetModuleHandleEx failed", GetLastError());
         return false;
@@ -80,7 +82,8 @@ void WindowHost::threadMain() {
         drain();
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            if (stopRequested_ && queue_.empty()) break;
+            if (stopRequested_ && queue_.empty())
+                break;
         }
         MsgWaitForMultipleObjects(1, &wakeEvent_, FALSE, INFINITE, QS_ALLINPUT);
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
@@ -95,7 +98,8 @@ void WindowHost::threadMain() {
         std::lock_guard<std::mutex> lock(mutex_);
         running_ = false;
         leftover.swap(queue_);
-        for (auto& t : leftover) t->done = true;
+        for (auto& t : leftover)
+            t->done = true;
     }
     cv_.notify_all();
 }
@@ -105,7 +109,8 @@ void WindowHost::drain() {
         std::shared_ptr<Task> task;
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            if (queue_.empty()) return;
+            if (queue_.empty())
+                return;
             task = queue_.front();
             queue_.pop_front();
         }
@@ -128,13 +133,15 @@ bool WindowHost::invoke(const std::function<void()>& fn) {
     task->fn = fn;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (!running_ || stopRequested_) return false;
+        if (!running_ || stopRequested_)
+            return false;
         queue_.push_back(task);
     }
     SetEvent(wakeEvent_);
     std::unique_lock<std::mutex> lock(mutex_);
     cv_.wait(lock, [&] { return task->done; });
-    if (task->error) std::rethrow_exception(task->error);
+    if (task->error)
+        std::rethrow_exception(task->error);
     return task->ran;
 }
 
@@ -142,15 +149,19 @@ void WindowHost::stop() noexcept {
     std::thread worker;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (!thread_.joinable()) return;
+        if (!thread_.joinable())
+            return;
         stopRequested_ = true;
         worker = std::move(thread_);
     }
-    if (wakeEvent_) SetEvent(wakeEvent_);
+    if (wakeEvent_)
+        SetEvent(wakeEvent_);
     worker.join();
-    if (wakeEvent_) CloseHandle(wakeEvent_);
+    if (wakeEvent_)
+        CloseHandle(wakeEvent_);
     wakeEvent_ = nullptr;
-    if (atom_) UnregisterClassW(className_.c_str(), hinstance_);
+    if (atom_)
+        UnregisterClassW(className_.c_str(), hinstance_);
     atom_ = 0;
 }
 
@@ -159,8 +170,9 @@ bool WindowHost::createWindow(Window& out, std::string& error) {
     Window result;
     std::string failure;
     const bool ran = invoke([&] {
-        result.hwnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, className_.c_str(), L"Tessera",
-                                      WS_POPUP | WS_DISABLED, 0, 0, 1, 1, nullptr, nullptr, hinstance_, nullptr);
+        result.hwnd =
+            CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, className_.c_str(), L"Tessera",
+                            WS_POPUP | WS_DISABLED, 0, 0, 1, 1, nullptr, nullptr, hinstance_, nullptr);
         if (!result.hwnd) {
             failure = describeWin32Error("CreateWindowEx failed", GetLastError());
             return;
@@ -185,12 +197,14 @@ bool WindowHost::createWindow(Window& out, std::string& error) {
 }
 
 void WindowHost::destroyWindow(Window& window) noexcept {
-    if (!window.hwnd) return;
+    if (!window.hwnd)
+        return;
     const Window w = window;
     window = Window{};
     try {
         invoke([w] {
-            if (w.dc) ReleaseDC(w.hwnd, w.dc);
+            if (w.dc)
+                ReleaseDC(w.hwnd, w.dc);
             DestroyWindow(w.hwnd);
         });
     } catch (...) {

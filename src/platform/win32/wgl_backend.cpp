@@ -8,14 +8,14 @@
 #include <utility>
 #include <vector>
 
-#include "platform/common/arb_context.hpp"
-#include "platform/common/gl_debug.hpp"
-#include "platform/common/gl_query.hpp"
 #include "core/boundary.hpp"
 #include "core/library.hpp"
 #include "core/log.hpp"
-#include "window_host.hpp"
+#include "platform/common/arb_context.hpp"
+#include "platform/common/gl_debug.hpp"
+#include "platform/common/gl_query.hpp"
 #include "wgl_api.hpp"
+#include "window_host.hpp"
 
 namespace tessera::win32 {
 namespace {
@@ -77,10 +77,12 @@ class WglShared {
      * Idempotent. The caller must hold a ForeignContextGuard: this changes the thread's current context. */
     bool initExtensions(std::string& error) {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (done_) return true;
+        if (done_)
+            return true;
 
         WindowHost::Window window;
-        if (!host.createWindow(window, error)) return false;
+        if (!host.createWindow(window, error))
+            return false;
 
         HGLRC rc = nullptr;
         bool ok = false;
@@ -100,7 +102,8 @@ class WglShared {
             }
             rc = api->createContext(window.dc);
             if (!rc) {
-                error = describeWin32Error("wglCreateContext failed (is a graphics driver installed?)", GetLastError());
+                error = describeWin32Error("wglCreateContext failed (is a graphics driver installed?)",
+                                           GetLastError());
                 break;
             }
             if (!api->makeCurrent(window.dc, rc)) {
@@ -109,13 +112,16 @@ class WglShared {
             }
             resolve();
             const char* list = nullptr;
-            if (fn.getExtensionsString) list = fn.getExtensionsString(window.dc);
+            if (fn.getExtensionsString)
+                list = fn.getExtensionsString(window.dc);
             if (list) {
                 const char* p = list;
                 while (*p) {
                     const char* e = p;
-                    while (*e && *e != ' ') ++e;
-                    if (e > p) exts_.emplace_back(p, static_cast<std::size_t>(e - p));
+                    while (*e && *e != ' ')
+                        ++e;
+                    if (e > p)
+                        exts_.emplace_back(p, static_cast<std::size_t>(e - p));
                     p = *e ? e + 1 : e;
                 }
             }
@@ -123,14 +129,15 @@ class WglShared {
         } while (false);
 
         if (rc) {
-            if (api->getCurrentContext() == rc) api->makeCurrent(nullptr, nullptr);
+            if (api->getCurrentContext() == rc)
+                api->makeCurrent(nullptr, nullptr);
             api->deleteContext(rc);
         }
         host.destroyWindow(window);
         if (ok) {
             done_ = true;
-            logf(TESSERA_LOG_DEBUG, "WGL: %zu extensions, ARB_create_context=%d ARB_pixel_format=%d", exts_.size(),
-                 fn.createContextAttribs != nullptr, fn.choosePixelFormat != nullptr);
+            logf(TESSERA_LOG_DEBUG, "WGL: %zu extensions, ARB_create_context=%d ARB_pixel_format=%d",
+                 exts_.size(), fn.createContextAttribs != nullptr, fn.choosePixelFormat != nullptr);
         }
         return ok;
     }
@@ -145,7 +152,8 @@ class WglShared {
         get("wglChoosePixelFormatARB", fn.choosePixelFormat);
         get("wglGetPixelFormatAttribivARB", fn.getPixelFormatAttribiv);
         get("wglGetExtensionsStringARB", fn.getExtensionsString);
-        if (!fn.getExtensionsString) get("wglGetExtensionsStringEXT", fn.getExtensionsString);
+        if (!fn.getExtensionsString)
+            get("wglGetExtensionsStringEXT", fn.getExtensionsString);
         get("wglSwapIntervalEXT", fn.swapInterval);
         get("wglCreatePbufferARB", fn.createPbuffer);
         get("wglGetPbufferDCARB", fn.getPbufferDC);
@@ -163,7 +171,9 @@ class WglShared {
 class WglContext final : public ContextObject {
   public:
     explicit WglContext(std::shared_ptr<WglShared> shared) : shared_(std::move(shared)) {}
-    ~WglContext() override { destroy(); }
+    ~WglContext() override {
+        destroy();
+    }
 
     TesseraResult describe(TesseraContextInfo& out) const noexcept override {
         out = info;
@@ -174,7 +184,8 @@ class WglContext final : public ContextObject {
         out.kind = TESSERA_NATIVE_WGL;
         out.handles[0] = static_cast<uint64_t>(reinterpret_cast<std::uintptr_t>(rc));
         out.handles[1] = static_cast<uint64_t>(reinterpret_cast<std::uintptr_t>(dc));
-        out.handles[2] = static_cast<uint64_t>(reinterpret_cast<std::uintptr_t>(foreignWindow ? foreignWindow : window.hwnd));
+        out.handles[2] = static_cast<uint64_t>(
+            reinterpret_cast<std::uintptr_t>(foreignWindow ? foreignWindow : window.hwnd));
         out.handles[3] = static_cast<uint64_t>(reinterpret_cast<std::uintptr_t>(pbuffer));
         out.handles[4] = static_cast<uint64_t>(pixelFormat);
         return TESSERA_SUCCESS;
@@ -189,11 +200,13 @@ class WglContext final : public ContextObject {
     }
 
     void unbindCurrent() noexcept override {
-        if (rc && shared_->api->getCurrentContext() == rc) shared_->api->makeCurrent(nullptr, nullptr);
+        if (rc && shared_->api->getCurrentContext() == rc)
+            shared_->api->makeCurrent(nullptr, nullptr);
     }
 
     TesseraResult swapBuffers() noexcept override {
-        if (pbuffer) return TESSERA_SUCCESS; // nothing to present
+        if (pbuffer)
+            return TESSERA_SUCCESS; // nothing to present
         if (foreignWindow && !IsWindow(foreignWindow))
             return fail(TESSERA_ERROR_PLATFORM, "the window this context renders into no longer exists");
         if (!SwapBuffers(dc))
@@ -205,10 +218,13 @@ class WglContext final : public ContextObject {
         if (!shared_->fn.swapInterval || !shared_->has("WGL_EXT_swap_control"))
             return fail(TESSERA_ERROR_UNSUPPORTED, "WGL_EXT_swap_control is not available");
         if (interval < 0 && !shared_->has("WGL_EXT_swap_control_tear"))
-            return fail(TESSERA_ERROR_INVALID_ARGUMENT, "adaptive vsync (WGL_EXT_swap_control_tear) is not available");
-        if (pbuffer) return fail(TESSERA_ERROR_UNSUPPORTED, "swap interval does not apply to pbuffers");
+            return fail(TESSERA_ERROR_INVALID_ARGUMENT,
+                        "adaptive vsync (WGL_EXT_swap_control_tear) is not available");
+        if (pbuffer)
+            return fail(TESSERA_ERROR_UNSUPPORTED, "swap interval does not apply to pbuffers");
         if (!shared_->fn.swapInterval(interval))
-            return fail(TESSERA_ERROR_PLATFORM, describeWin32Error("wglSwapIntervalEXT failed", GetLastError()));
+            return fail(TESSERA_ERROR_PLATFORM,
+                        describeWin32Error("wglSwapIntervalEXT failed", GetLastError()));
         return TESSERA_SUCCESS;
     }
 
@@ -219,7 +235,8 @@ class WglContext final : public ContextObject {
     GlResetStatusFn resetFn = nullptr;
     std::shared_ptr<WglShared> shared_;
     WindowHost::Window window;
-    HWND foreignWindow = nullptr; // a caller's window we render into (borrowed: never destroyed, only its DC is released)
+    HWND foreignWindow =
+        nullptr; // a caller's window we render into (borrowed: never destroyed, only its DC is released)
     HANDLE pbuffer = nullptr;
     HDC dc = nullptr; // window DC, or pbuffer DC
     int pixelFormat = 0;
@@ -231,17 +248,21 @@ class WglContext final : public ContextObject {
     void destroy() noexcept {
         const WglApi* api = shared_->api;
         if (rc) {
-            if (api->getCurrentContext() == rc) api->makeCurrent(nullptr, nullptr);
+            if (api->getCurrentContext() == rc)
+                api->makeCurrent(nullptr, nullptr);
             api->deleteContext(rc);
             rc = nullptr;
         }
         if (pbuffer) {
-            if (dc && shared_->fn.releasePbufferDC) shared_->fn.releasePbufferDC(pbuffer, dc);
-            if (shared_->fn.destroyPbuffer) shared_->fn.destroyPbuffer(pbuffer);
+            if (dc && shared_->fn.releasePbufferDC)
+                shared_->fn.releasePbufferDC(pbuffer, dc);
+            if (shared_->fn.destroyPbuffer)
+                shared_->fn.destroyPbuffer(pbuffer);
             pbuffer = nullptr;
         }
         shared_->host.destroyWindow(window);
-        if (foreignWindow && dc) ReleaseDC(foreignWindow, dc); // the window itself is not ours to destroy
+        if (foreignWindow && dc)
+            ReleaseDC(foreignWindow, dc); // the window itself is not ours to destroy
         dc = nullptr;
     }
 };
@@ -258,24 +279,31 @@ std::vector<int> pixelFormatAttribs(const TesseraContextConfig& c, const FormatA
     add(kWglSupportOpenGL, 1);
     const bool isFloat = (c.flags & TESSERA_FLAG_FLOAT_COLOR) != 0;
     add(kWglPixelType, isFloat ? kWglTypeRgbaFloat : kWglTypeRgba);
-    if (c.flags & TESSERA_FLAG_DOUBLE_BUFFER) add(kWglDoubleBuffer, 1);
-    if (c.flags & TESSERA_FLAG_STEREO) add(kWglStereo, 1);
+    if (c.flags & TESSERA_FLAG_DOUBLE_BUFFER)
+        add(kWglDoubleBuffer, 1);
+    if (c.flags & TESSERA_FLAG_STEREO)
+        add(kWglStereo, 1);
 
     int r = c.redBits, g = c.greenBits, b = c.blueBits;
-    if (r == 0 && g == 0 && b == 0) r = g = b = isFloat ? 16 : 8; // sane default for "don't care"
+    if (r == 0 && g == 0 && b == 0)
+        r = g = b = isFloat ? 16 : 8; // sane default for "don't care"
     add(kWglRedBits, r);
     add(kWglGreenBits, g);
     add(kWglBlueBits, b);
-    if (c.alphaBits > 0) add(kWglAlphaBits, c.alphaBits);
+    if (c.alphaBits > 0)
+        add(kWglAlphaBits, c.alphaBits);
     if (!a.relaxDepth) {
-        if (c.depthBits > 0) add(kWglDepthBits, c.depthBits);
-        if (c.stencilBits > 0) add(kWglStencilBits, c.stencilBits);
+        if (c.depthBits > 0)
+            add(kWglDepthBits, c.depthBits);
+        if (c.stencilBits > 0)
+            add(kWglStencilBits, c.stencilBits);
     }
     if (a.samples > 0) {
         add(kWglSampleBuffers, 1);
         add(kWglSamples, a.samples);
     }
-    if (a.srgb) add(kWglFramebufferSrgb, 1);
+    if (a.srgb)
+        add(kWglFramebufferSrgb, 1);
     v.push_back(0);
     return v;
 }
@@ -294,8 +322,10 @@ int chooseLegacyFormat(HDC dc, const TesseraContextConfig& c) {
     pfd.nSize = sizeof pfd;
     pfd.nVersion = 1;
     pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL;
-    if (c.flags & TESSERA_FLAG_DOUBLE_BUFFER) pfd.dwFlags |= PFD_DOUBLEBUFFER;
-    if (c.flags & TESSERA_FLAG_STEREO) pfd.dwFlags |= PFD_STEREO;
+    if (c.flags & TESSERA_FLAG_DOUBLE_BUFFER)
+        pfd.dwFlags |= PFD_DOUBLEBUFFER;
+    if (c.flags & TESSERA_FLAG_STEREO)
+        pfd.dwFlags |= PFD_STEREO;
     pfd.iPixelType = PFD_TYPE_RGBA;
     const int rgb = c.redBits + c.greenBits + c.blueBits;
     pfd.cColorBits = static_cast<BYTE>(rgb > 0 ? rgb : 24);
@@ -314,7 +344,8 @@ TesseraResult negotiatePixelFormat(const WglShared& sh, HDC dc, const TesseraCon
 
     // Features that need extensions: strict mode refuses, best effort drops them.
     FormatRequest request;
-    if (TesseraResult r = gateFormatFeatures(c, "WGL_", [&sh](const char* e) { return sh.has(e); }, request);
+    if (TesseraResult r = gateFormatFeatures(
+            c, "WGL_", [&sh](const char* e) { return sh.has(e); }, request);
         r != TESSERA_SUCCESS)
         return r;
     const int samples = request.samples;
@@ -331,18 +362,22 @@ TesseraResult negotiatePixelFormat(const WglShared& sh, HDC dc, const TesseraCon
                 if (pbuffer || setPixelFormat(dc, pf)) {
                     pfOut = pf;
                     if (a.samples != samples || a.srgb != srgb || a.relaxDepth)
-                        logf(TESSERA_LOG_INFO, "WGL: pixel format relaxed (samples %d->%d, srgb %d, depth relaxed %d)",
+                        logf(TESSERA_LOG_INFO,
+                             "WGL: pixel format relaxed (samples %d->%d, srgb %d, depth relaxed %d)",
                              c.samples, a.samples, a.srgb, a.relaxDepth);
                     return TESSERA_SUCCESS;
                 }
             }
         }
         if (strict || pbuffer)
-            return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, "no pixel format matches the requested configuration");
+            return fail(TESSERA_ERROR_NO_MATCHING_CONFIG,
+                        "no pixel format matches the requested configuration");
     } else {
-        if (pbuffer) return fail(TESSERA_ERROR_UNSUPPORTED, "pbuffers need WGL_ARB_pixel_format");
+        if (pbuffer)
+            return fail(TESSERA_ERROR_UNSUPPORTED, "pbuffers need WGL_ARB_pixel_format");
         if (strict && (c.samples > 0 || srgb || wantFloat))
-            return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, "WGL_ARB_pixel_format is required for this configuration");
+            return fail(TESSERA_ERROR_NO_MATCHING_CONFIG,
+                        "WGL_ARB_pixel_format is required for this configuration");
     }
 
     const int pf = chooseLegacyFormat(dc, c);
@@ -355,17 +390,21 @@ TesseraResult negotiatePixelFormat(const WglShared& sh, HDC dc, const TesseraCon
 
 // ---- native context creation ------------------------------------------------------------------------
 
-TesseraResult createNativeContext(WglShared& sh, HDC dc, const TesseraContextConfig& c, HGLRC shareRc, HGLRC& rcOut) {
+TesseraResult createNativeContext(WglShared& sh, HDC dc, const TesseraContextConfig& c, HGLRC shareRc,
+                                  HGLRC& rcOut) {
     const WglApi& api = *sh.api;
 
     ArbContextPlan plan;
     const TesseraResult planned = planArbContext(
         c, "WGL_", sh.fn.createContextAttribs != nullptr, [&sh](const char* e) { return sh.has(e); }, plan);
-    if (planned != TESSERA_SUCCESS) return planned;
+    if (planned != TESSERA_SUCCESS)
+        return planned;
 
     if (plan.legacy) {
         HGLRC rc = api.createContext(dc);
-        if (!rc) return fail(TESSERA_ERROR_PLATFORM, describeWin32Error("wglCreateContext failed", GetLastError()));
+        if (!rc)
+            return fail(TESSERA_ERROR_PLATFORM,
+                        describeWin32Error("wglCreateContext failed", GetLastError()));
         if (shareRc && !api.shareLists(shareRc, rc)) {
             const DWORD e = GetLastError();
             api.deleteContext(rc);
@@ -387,14 +426,18 @@ TesseraResult createNativeContext(WglShared& sh, HDC dc, const TesseraContextCon
         lastError = GetLastError();
     }
 
-    // The driver rejected the request. The ARB spec names ERROR_INVALID_VERSION_ARB / ERROR_INVALID_PROFILE_ARB, but
-    // drivers also answer a combination they dislike with plain Win32 codes (NVIDIA: ERROR_INVALID_DATA), and put various
-    // high bits on all of them. Out-of-memory is the only failure that is not about the request itself.
+    // The driver rejected the request. The ARB spec names ERROR_INVALID_VERSION_ARB /
+    // ERROR_INVALID_PROFILE_ARB, but drivers also answer a combination they dislike with plain Win32 codes
+    // (NVIDIA: ERROR_INVALID_DATA), and put various high bits on all of them. Out-of-memory is the only
+    // failure that is not about the request itself.
     const DWORD code = lastError & 0xFFFFu;
-    if (code == 0x2095 || code == 0x2096 || code == 0x000D /*ERROR_INVALID_DATA*/ || code == 0x0057 /*ERROR_INVALID_PARAMETER*/)
-        return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, "the driver does not support the requested OpenGL version/profile/flags");
+    if (code == 0x2095 || code == 0x2096 || code == 0x000D /*ERROR_INVALID_DATA*/ ||
+        code == 0x0057 /*ERROR_INVALID_PARAMETER*/)
+        return fail(TESSERA_ERROR_NO_MATCHING_CONFIG,
+                    "the driver does not support the requested OpenGL version/profile/flags");
     if (code == 0x0008 /*ERROR_NOT_ENOUGH_MEMORY*/ || code == 0x000E /*ERROR_OUTOFMEMORY*/)
-        return fail(TESSERA_ERROR_OUT_OF_MEMORY, describeWin32Error("wglCreateContextAttribsARB failed", lastError));
+        return fail(TESSERA_ERROR_OUT_OF_MEMORY,
+                    describeWin32Error("wglCreateContextAttribsARB failed", lastError));
     return fail(TESSERA_ERROR_PLATFORM, describeWin32Error("wglCreateContextAttribsARB failed", lastError));
 }
 
@@ -408,27 +451,32 @@ bool queryInfo(const WglShared& sh, HDC dc, int pf, const TesseraContextConfig& 
     gl.getString = reinterpret_cast<decltype(gl.getString)>(api.lib.symbol("glGetString"));
     gl.getIntegerv = reinterpret_cast<decltype(gl.getIntegerv)>(api.lib.symbol("glGetIntegerv"));
     gl.getError = reinterpret_cast<decltype(gl.getError)>(api.lib.symbol("glGetError"));
-    if (!queryContextInfo(gl, info)) return false;
+    if (!queryContextInfo(gl, info))
+        return false;
 
     uint32_t flags = info.flags;
 
     // Pixel format: prefer the ARB query (also valid for ARB-only formats), fall back to GDI.
     bool queried = false;
     if (sh.fn.getPixelFormatAttribiv) {
-        const int keys[] = {kWglRedBits,   kWglGreenBits, kWglBlueBits,  kWglAlphaBits, kWglDepthBits,
-                            kWglStencilBits, kWglDoubleBuffer, kWglStereo, kWglSamples,   kWglPixelType};
+        const int keys[] = {kWglRedBits,     kWglGreenBits,    kWglBlueBits, kWglAlphaBits, kWglDepthBits,
+                            kWglStencilBits, kWglDoubleBuffer, kWglStereo,   kWglSamples,   kWglPixelType};
         int values[sizeof keys / sizeof keys[0]] = {};
-        if (sh.fn.getPixelFormatAttribiv(dc, pf, 0, static_cast<UINT>(sizeof keys / sizeof keys[0]), keys, values)) {
+        if (sh.fn.getPixelFormatAttribiv(dc, pf, 0, static_cast<UINT>(sizeof keys / sizeof keys[0]), keys,
+                                         values)) {
             info.redBits = values[0];
             info.greenBits = values[1];
             info.blueBits = values[2];
             info.alphaBits = values[3];
             info.depthBits = values[4];
             info.stencilBits = values[5];
-            if (values[6]) flags |= TESSERA_FLAG_DOUBLE_BUFFER;
-            if (values[7]) flags |= TESSERA_FLAG_STEREO;
+            if (values[6])
+                flags |= TESSERA_FLAG_DOUBLE_BUFFER;
+            if (values[7])
+                flags |= TESSERA_FLAG_STEREO;
             info.samples = values[8];
-            if (values[9] == kWglTypeRgbaFloat) flags |= TESSERA_FLAG_FLOAT_COLOR;
+            if (values[9] == kWglTypeRgbaFloat)
+                flags |= TESSERA_FLAG_FLOAT_COLOR;
             queried = true;
             const int srgbKey = kWglFramebufferSrgb;
             int srgb = 0;
@@ -446,13 +494,16 @@ bool queryInfo(const WglShared& sh, HDC dc, int pf, const TesseraContextConfig& 
             info.alphaBits = pfd.cAlphaBits;
             info.depthBits = pfd.cDepthBits;
             info.stencilBits = pfd.cStencilBits;
-            if (pfd.dwFlags & PFD_DOUBLEBUFFER) flags |= TESSERA_FLAG_DOUBLE_BUFFER;
-            if (pfd.dwFlags & PFD_STEREO) flags |= TESSERA_FLAG_STEREO;
+            if (pfd.dwFlags & PFD_DOUBLEBUFFER)
+                flags |= TESSERA_FLAG_DOUBLE_BUFFER;
+            if (pfd.dwFlags & PFD_STEREO)
+                flags |= TESSERA_FLAG_STEREO;
         }
     }
     info.flags = flags;
-    info.surface = pbuffer ? TESSERA_SURFACE_PBUFFER
-                           : (c.surface == TESSERA_SURFACE_NONE ? TESSERA_SURFACE_NONE : TESSERA_SURFACE_HIDDEN_WINDOW);
+    info.surface =
+        pbuffer ? TESSERA_SURFACE_PBUFFER
+                : (c.surface == TESSERA_SURFACE_NONE ? TESSERA_SURFACE_NONE : TESSERA_SURFACE_HIDDEN_WINDOW);
     return true;
 }
 
@@ -460,24 +511,31 @@ bool queryInfo(const WglShared& sh, HDC dc, int pf, const TesseraContextConfig& 
 
 class WglBackend final : public Backend {
   public:
-    const char* name() const noexcept override { return "wgl"; }
+    const char* name() const noexcept override {
+        return "wgl";
+    }
 
-    TesseraResult createContext(const TesseraContextConfig& c, const std::shared_ptr<ContextObject>& shareWith,
+    TesseraResult createContext(const TesseraContextConfig& c,
+                                const std::shared_ptr<ContextObject>& shareWith,
                                 std::shared_ptr<ContextObject>& out) override {
         std::string error;
         std::shared_ptr<WglShared> sh = getShared(error);
-        if (!sh) return fail(TESSERA_ERROR_UNSUPPORTED, error);
+        if (!sh)
+            return fail(TESSERA_ERROR_UNSUPPORTED, error);
 
         std::shared_ptr<WglContext> parent;
         if (shareWith) {
             parent = std::dynamic_pointer_cast<WglContext>(shareWith);
-            if (!parent) return fail(TESSERA_ERROR_INVALID_ARGUMENT, "cannot share objects with a context from another backend");
+            if (!parent)
+                return fail(TESSERA_ERROR_INVALID_ARGUMENT,
+                            "cannot share objects with a context from another backend");
         }
 
         // Everything below may change this thread's current context; put the caller's back on every path.
         ForeignContextGuard guard;
 
-        if (!sh->initExtensions(error)) return fail(TESSERA_ERROR_PLATFORM, error);
+        if (!sh->initExtensions(error))
+            return fail(TESSERA_ERROR_PLATFORM, error);
 
         const bool wantPbuffer = c.surface == TESSERA_SURFACE_PBUFFER;
         if (wantPbuffer && !(sh->fn.createPbuffer && sh->fn.getPbufferDC && sh->fn.releasePbufferDC &&
@@ -485,18 +543,23 @@ class WglBackend final : public Backend {
             return fail(TESSERA_ERROR_UNSUPPORTED, "WGL_ARB_pbuffer is not available");
 
         auto ctx = std::make_shared<WglContext>(sh); // RAII: any failure below cleans up through ~WglContext
-        if (!sh->host.createWindow(ctx->window, error)) return fail(TESSERA_ERROR_PLATFORM, error);
+        if (!sh->host.createWindow(ctx->window, error))
+            return fail(TESSERA_ERROR_PLATFORM, error);
         ctx->dc = ctx->window.dc;
 
-        if (TesseraResult r = negotiatePixelFormat(*sh, ctx->dc, c, wantPbuffer, ctx->pixelFormat); r != TESSERA_SUCCESS)
+        if (TesseraResult r = negotiatePixelFormat(*sh, ctx->dc, c, wantPbuffer, ctx->pixelFormat);
+            r != TESSERA_SUCCESS)
             return r;
 
         if (wantPbuffer) {
             ctx->pbuffer = sh->fn.createPbuffer(ctx->window.dc, ctx->pixelFormat, 1, 1, nullptr);
             if (!ctx->pbuffer)
-                return fail(TESSERA_ERROR_PLATFORM, describeWin32Error("wglCreatePbufferARB failed", GetLastError()));
+                return fail(TESSERA_ERROR_PLATFORM,
+                            describeWin32Error("wglCreatePbufferARB failed", GetLastError()));
             ctx->dc = sh->fn.getPbufferDC(ctx->pbuffer);
-            if (!ctx->dc) return fail(TESSERA_ERROR_PLATFORM, describeWin32Error("wglGetPbufferDCARB failed", GetLastError()));
+            if (!ctx->dc)
+                return fail(TESSERA_ERROR_PLATFORM,
+                            describeWin32Error("wglGetPbufferDCARB failed", GetLastError()));
         }
 
         if (TesseraResult r = createNativeContext(*sh, ctx->dc, c, parent ? parent->rc : nullptr, ctx->rc);
@@ -508,34 +571,41 @@ class WglBackend final : public Backend {
     }
 
     /*
-     * Renders into a caller's window. Ownership rules (see tessera.h): the window is borrowed; an existing pixel format is
-     * adopted and checked against the request; a missing one is set only if the caller allowed it, because a window's pixel
-     * format can be set exactly once and a window that is not ours must not be changed behind its owner's back.
+     * Renders into a caller's window. Ownership rules (see tessera.h): the window is borrowed; an existing
+     * pixel format is adopted and checked against the request; a missing one is set only if the caller
+     * allowed it, because a window's pixel format can be set exactly once and a window that is not ours must
+     * not be changed behind its owner's back.
      */
     TesseraResult createContextForWindow(const TesseraContextConfig& c, uint64_t nativeWindow, uint32_t flags,
                                          const std::shared_ptr<ContextObject>& shareWith,
                                          std::shared_ptr<ContextObject>& out) override {
         std::string error;
         std::shared_ptr<WglShared> sh = getShared(error);
-        if (!sh) return fail(TESSERA_ERROR_UNSUPPORTED, error);
+        if (!sh)
+            return fail(TESSERA_ERROR_UNSUPPORTED, error);
 
         std::shared_ptr<WglContext> parent;
         if (shareWith) {
             parent = std::dynamic_pointer_cast<WglContext>(shareWith);
-            if (!parent) return fail(TESSERA_ERROR_INVALID_ARGUMENT, "cannot share objects with a context from another backend");
+            if (!parent)
+                return fail(TESSERA_ERROR_INVALID_ARGUMENT,
+                            "cannot share objects with a context from another backend");
         }
         HWND hwnd = reinterpret_cast<HWND>(static_cast<std::uintptr_t>(nativeWindow));
-        if (!IsWindow(hwnd)) return fail(TESSERA_ERROR_INVALID_ARGUMENT, "nativeWindow is not a window handle");
+        if (!IsWindow(hwnd))
+            return fail(TESSERA_ERROR_INVALID_ARGUMENT, "nativeWindow is not a window handle");
 
         ForeignContextGuard guard;
-        if (!sh->initExtensions(error)) return fail(TESSERA_ERROR_PLATFORM, error);
+        if (!sh->initExtensions(error))
+            return fail(TESSERA_ERROR_PLATFORM, error);
 
         auto ctx = std::make_shared<WglContext>(sh); // RAII: failure paths release the DC through ~WglContext
         ctx->foreignWindow = hwnd;
         ctx->dc = GetDC(hwnd);
         if (!ctx->dc) {
             ctx->foreignWindow = nullptr; // no DC to release
-            return fail(TESSERA_ERROR_PLATFORM, describeWin32Error("GetDC failed on the window", GetLastError()));
+            return fail(TESSERA_ERROR_PLATFORM,
+                        describeWin32Error("GetDC failed on the window", GetLastError()));
         }
 
         const int existing = GetPixelFormat(ctx->dc);
@@ -544,11 +614,15 @@ class WglBackend final : public Backend {
         } else {
             if (!(flags & TESSERA_ATTACH_ALLOW_PIXEL_FORMAT))
                 return fail(TESSERA_ERROR_INVALID_ARGUMENT,
-                            "the window has no pixel format and TESSERA_ATTACH_ALLOW_PIXEL_FORMAT was not given: Tessera does not modify windows it does not own");
-            if (TesseraResult r = negotiatePixelFormat(*sh, ctx->dc, c, false, ctx->pixelFormat); r != TESSERA_SUCCESS) return r;
+                            "the window has no pixel format and TESSERA_ATTACH_ALLOW_PIXEL_FORMAT was not "
+                            "given: Tessera does not modify windows it does not own");
+            if (TesseraResult r = negotiatePixelFormat(*sh, ctx->dc, c, false, ctx->pixelFormat);
+                r != TESSERA_SUCCESS)
+                return r;
         }
 
-        if (TesseraResult r = createNativeContext(*sh, ctx->dc, c, parent ? parent->rc : nullptr, ctx->rc); r != TESSERA_SUCCESS)
+        if (TesseraResult r = createNativeContext(*sh, ctx->dc, c, parent ? parent->rc : nullptr, ctx->rc);
+            r != TESSERA_SUCCESS)
             return r;
         ctx->parent = std::move(parent);
         return finishContext(*sh, ctx, c, false, true, out);
@@ -556,26 +630,35 @@ class WglBackend final : public Backend {
 
     void* getProcAddress(const char* name) noexcept override {
         const WglApi* api = wglApi();
-        if (!api || !name) return nullptr;
-        void* p = reinterpret_cast<void*>(api->getProcAddress(name)); // only resolves while a context is current
-        if (isPlausibleProcAddress(p)) return p;
+        if (!api || !name)
+            return nullptr;
+        void* p =
+            reinterpret_cast<void*>(api->getProcAddress(name)); // only resolves while a context is current
+        if (isPlausibleProcAddress(p))
+            return p;
         return api->lib.symbol(name); // OpenGL 1.1 functions are exported by opengl32.dll itself
     }
 
   private:
-    /* Makes the new context current once to describe it, verifies strict requests, and binds the per-context extras. */
-    static TesseraResult finishContext(WglShared& sh, const std::shared_ptr<WglContext>& ctx, const TesseraContextConfig& c,
-                                       bool pbuffer, bool window, std::shared_ptr<ContextObject>& out) {
+    /* Makes the new context current once to describe it, verifies strict requests, and binds the per-context
+     * extras. */
+    static TesseraResult finishContext(WglShared& sh, const std::shared_ptr<WglContext>& ctx,
+                                       const TesseraContextConfig& c, bool pbuffer, bool window,
+                                       std::shared_ptr<ContextObject>& out) {
         if (!sh.api->makeCurrent(ctx->dc, ctx->rc))
-            return fail(TESSERA_ERROR_PLATFORM, describeWin32Error("wglMakeCurrent failed on the new context", GetLastError()));
+            return fail(TESSERA_ERROR_PLATFORM,
+                        describeWin32Error("wglMakeCurrent failed on the new context", GetLastError()));
         const bool ok = queryInfo(sh, ctx->dc, ctx->pixelFormat, c, pbuffer, ctx->info);
         // The caller's ForeignContextGuard restores their context; it must not be left to us.
-        if (!ok) return fail(TESSERA_ERROR_PLATFORM, "could not query the new context (glGetString failed)");
-        if (window) ctx->info.surface = TESSERA_SURFACE_WINDOW;
+        if (!ok)
+            return fail(TESSERA_ERROR_PLATFORM, "could not query the new context (glGetString failed)");
+        if (window)
+            ctx->info.surface = TESSERA_SURFACE_WINDOW;
 
         // Strict mode promises exactly what was asked for: verify the parts the driver may have loosened.
         if (c.fallback == TESSERA_FALLBACK_STRICT && !contextSatisfies(c, ctx->info))
-            return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, "the created context does not satisfy the strict request");
+            return fail(TESSERA_ERROR_NO_MATCHING_CONFIG,
+                        "the created context does not satisfy the strict request");
 
         // Reset polling and debug-message forwarding are bound to the context that is current right now.
         const WglApi* api = sh.api;
@@ -584,7 +667,8 @@ class WglBackend final : public Backend {
             return isPlausibleProcAddress(p) ? p : api->lib.symbol(n);
         };
         ctx->resetFn = resolveResetStatus(glProc);
-        if (ctx->info.flags & TESSERA_FLAG_DEBUG) installGlDebugForwarder(glProc);
+        if (ctx->info.flags & TESSERA_FLAG_DEBUG)
+            installGlDebugForwarder(glProc);
 
         out = ctx;
         return TESSERA_SUCCESS;
@@ -592,7 +676,8 @@ class WglBackend final : public Backend {
 
     std::shared_ptr<WglShared> getShared(std::string& error) {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (shared_) return shared_;
+        if (shared_)
+            return shared_;
         const WglApi* api = wglApi();
         if (!api) {
             error = "opengl32.dll is not available on this system";
@@ -600,7 +685,8 @@ class WglBackend final : public Backend {
         }
         auto s = std::make_shared<WglShared>();
         s->api = api;
-        if (!s->host.start(error)) return nullptr;
+        if (!s->host.start(error))
+            return nullptr;
         shared_ = s;
         return shared_;
     }
@@ -611,6 +697,8 @@ class WglBackend final : public Backend {
 
 } // namespace
 
-std::shared_ptr<Backend> makeWglBackend() { return std::make_shared<WglBackend>(); }
+std::shared_ptr<Backend> makeWglBackend() {
+    return std::make_shared<WglBackend>();
+}
 
 } // namespace tessera::win32

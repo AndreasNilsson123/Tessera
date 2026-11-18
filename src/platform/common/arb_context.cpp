@@ -36,10 +36,12 @@ bool legacySuffices(const TesseraContextConfig& c) {
 
 std::vector<std::pair<int, int>> versionLadder(const TesseraContextConfig& c) {
     if (c.api == TESSERA_API_OPENGL_ES) {
-        if (c.versionMajor == 0) return {{2, 0}};
+        if (c.versionMajor == 0)
+            return {{2, 0}};
         return {{c.versionMajor, c.versionMinor}};
     }
-    if (c.versionMajor != 0) return {{c.versionMajor, c.versionMinor}};
+    if (c.versionMajor != 0)
+        return {{c.versionMajor, c.versionMinor}};
     if (c.profile != TESSERA_PROFILE_ANY)
         return {{4, 6}, {4, 5}, {4, 4}, {4, 3}, {4, 2}, {4, 1}, {4, 0}, {3, 3}, {3, 2}};
     return {{0, 0}}; // no version attributes: whatever the driver considers its default
@@ -56,8 +58,10 @@ std::vector<int> ArbContextPlan::attribs(std::pair<int, int> version) const {
     if (version.first != 0) {
         a.insert(a.end(), {kCtxMajor, version.first, kCtxMinor, version.second});
     }
-    if (profileBit) a.insert(a.end(), {kCtxProfileMask, profileBit});
-    if (ctxFlags) a.insert(a.end(), {kCtxFlags, ctxFlags});
+    if (profileBit)
+        a.insert(a.end(), {kCtxProfileMask, profileBit});
+    if (ctxFlags)
+        a.insert(a.end(), {kCtxFlags, ctxFlags});
     a.insert(a.end(), extra.begin(), extra.end());
     a.push_back(0);
     return a;
@@ -86,38 +90,49 @@ TesseraResult planArbContext(const TesseraContextConfig& c, const char* prefix, 
         plan.profileBit = kProfileEs2;
     } else if (c.profile != TESSERA_PROFILE_ANY) {
         if (!has((p + "ARB_create_context_profile").c_str()))
-            return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, "the driver lacks " + p + "ARB_create_context_profile");
+            return fail(TESSERA_ERROR_NO_MATCHING_CONFIG,
+                        "the driver lacks " + p + "ARB_create_context_profile");
         plan.profileBit = c.profile == TESSERA_PROFILE_CORE ? kProfileCore : kProfileCompat;
     }
 
     // Strict fails on a missing extension; best effort logs and drops the request.
     auto require = [&](const std::string& ext, bool& ok) {
         ok = has(ext.c_str());
-        if (ok) return TESSERA_SUCCESS;
-        if (strict) return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, "required extension missing: " + ext);
+        if (ok)
+            return TESSERA_SUCCESS;
+        if (strict)
+            return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, "required extension missing: " + ext);
         logf(TESSERA_LOG_INFO, "%s missing, request dropped", ext.c_str());
         return TESSERA_SUCCESS;
     };
 
-    if (c.flags & TESSERA_FLAG_DEBUG) plan.ctxFlags |= kFlagDebug;
-    if (c.flags & TESSERA_FLAG_FORWARD_COMPATIBLE) plan.ctxFlags |= kFlagForward;
+    if (c.flags & TESSERA_FLAG_DEBUG)
+        plan.ctxFlags |= kFlagDebug;
+    if (c.flags & TESSERA_FLAG_FORWARD_COMPATIBLE)
+        plan.ctxFlags |= kFlagForward;
     if (c.flags & TESSERA_FLAG_ROBUST_ACCESS) {
         bool ok = false;
-        if (TesseraResult r = require(p + "ARB_create_context_robustness", ok); r != TESSERA_SUCCESS) return r;
+        if (TesseraResult r = require(p + "ARB_create_context_robustness", ok); r != TESSERA_SUCCESS)
+            return r;
         if (ok) {
             plan.ctxFlags |= kFlagRobust;
-            if (c.flags & TESSERA_FLAG_RESET_NOTIFICATION) plan.extra.insert(plan.extra.end(), {kCtxResetStrategy, kCtxLoseOnReset});
+            if (c.flags & TESSERA_FLAG_RESET_NOTIFICATION)
+                plan.extra.insert(plan.extra.end(), {kCtxResetStrategy, kCtxLoseOnReset});
         }
     }
     if (c.flags & TESSERA_FLAG_NO_ERROR) {
         bool ok = false;
-        if (TesseraResult r = require(p + "ARB_create_context_no_error", ok); r != TESSERA_SUCCESS) return r;
-        if (ok) plan.extra.insert(plan.extra.end(), {kCtxNoError, 1});
+        if (TesseraResult r = require(p + "ARB_create_context_no_error", ok); r != TESSERA_SUCCESS)
+            return r;
+        if (ok)
+            plan.extra.insert(plan.extra.end(), {kCtxNoError, 1});
     }
     if (c.flags & TESSERA_FLAG_RELEASE_FLUSH) {
         bool ok = false;
-        if (TesseraResult r = require(p + "ARB_context_flush_control", ok); r != TESSERA_SUCCESS) return r;
-        if (ok) plan.extra.insert(plan.extra.end(), {kCtxReleaseBehavior, kCtxReleaseFlush});
+        if (TesseraResult r = require(p + "ARB_context_flush_control", ok); r != TESSERA_SUCCESS)
+            return r;
+        if (ok)
+            plan.extra.insert(plan.extra.end(), {kCtxReleaseBehavior, kCtxReleaseFlush});
     }
 
     plan.versions = contextVersionLadder(c);
@@ -133,11 +148,14 @@ TesseraResult gateFormatFeatures(const TesseraContextConfig& c, const char* pref
 
     if (out.samples > 0 && !has((p + "ARB_multisample").c_str())) {
         if (strict)
-            return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, "multisampling (" + p + "ARB_multisample) is not available");
+            return fail(TESSERA_ERROR_NO_MATCHING_CONFIG,
+                        "multisampling (" + p + "ARB_multisample) is not available");
         out.samples = 0;
     }
-    if (out.srgb && !has((p + "ARB_framebuffer_sRGB").c_str()) && !has((p + "EXT_framebuffer_sRGB").c_str())) {
-        if (strict) return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, "sRGB framebuffers are not available");
+    if (out.srgb && !has((p + "ARB_framebuffer_sRGB").c_str()) &&
+        !has((p + "EXT_framebuffer_sRGB").c_str())) {
+        if (strict)
+            return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, "sRGB framebuffers are not available");
         out.srgb = false;
     }
     if ((c.flags & TESSERA_FLAG_FLOAT_COLOR) && !has((p + "ARB_pixel_format_float").c_str()) &&
@@ -151,10 +169,12 @@ std::vector<FormatAttempt> formatAttempts(int samples, bool srgb, bool strict) {
     for (int s = samples;; s = s > 1 ? s / 2 : 0) {
         attempts.push_back({s, srgb, false});
         if (!strict) {
-            if (srgb) attempts.push_back({s, false, false});
+            if (srgb)
+                attempts.push_back({s, false, false});
             attempts.push_back({s, false, true});
         }
-        if (strict || s == 0) break;
+        if (strict || s == 0)
+            break;
     }
     return attempts;
 }

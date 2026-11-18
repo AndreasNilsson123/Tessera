@@ -1,8 +1,8 @@
 #pragma once
 
 /*
- * The slice of EGL the backend needs, declared by hand (see x11_types.hpp for why): libEGL is loaded at run time,
- * so building needs no EGL headers and a machine without libEGL just reports "unsupported".
+ * The slice of EGL the backend needs, declared by hand (see x11_types.hpp for why): libEGL is loaded at run
+ * time, so building needs no EGL headers and a machine without libEGL just reports "unsupported".
  */
 
 #include <cstdint>

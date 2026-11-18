@@ -38,7 +38,9 @@ class WindowHost {
     };
 
     WindowHost() = default;
-    ~WindowHost() { stop(); }
+    ~WindowHost() {
+        stop();
+    }
     WindowHost(const WindowHost&) = delete;
     WindowHost& operator=(const WindowHost&) = delete;
 

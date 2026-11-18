@@ -42,7 +42,8 @@ class Runtime {
     TesseraResult getResetStatus(TesseraContext handle, int32_t& outStatus);
     TesseraResult recreateContext(TesseraContext handle, TesseraContext& out, uint32_t& outFlags);
     TesseraResult getNativeHandles(TesseraContext handle, TesseraNativeHandles& out);
-    TesseraResult createContextForWindow(const TesseraContextConfig& config, uint64_t nativeWindow, uint32_t flags, TesseraContext& out);
+    TesseraResult createContextForWindow(const TesseraContextConfig& config, uint64_t nativeWindow,
+                                         uint32_t flags, TesseraContext& out);
     TesseraResult prewarm(const TesseraContextConfig& config, int32_t count);
     TesseraResult probe(const TesseraContextConfig& config, TesseraProbeReport& report);
     std::size_t pooledContexts() const;
@@ -54,24 +55,33 @@ class Runtime {
     static void disableBuiltinBackendsForTesting() noexcept;
 
     int refCount() const;
-    std::size_t liveContexts() const { return contexts_.size(); }
-    /* Contexts destroyed while current on another thread, whose native teardown is still waiting for that thread. */
+    std::size_t liveContexts() const {
+        return contexts_.size();
+    }
+    /* Contexts destroyed while current on another thread, whose native teardown is still waiting for that
+     * thread. */
     std::size_t pendingDestructions() const;
 
   private:
     Runtime() : contexts_(kContextTag, kMaxContexts) {}
 
-    // A destroyed context may still be current on another thread. Its handle is dead for everyone, but the object
-    // is kept here until the owning thread releases it (only that thread can), then dropped on that thread.
+    // A destroyed context may still be current on another thread. Its handle is dead for everyone, but the
+    // object is kept here until the owning thread releases it (only that thread can), then dropped on that
+    // thread.
     std::shared_ptr<ContextObject> lookupAny(TesseraContext handle);
     std::shared_ptr<ContextObject> takeZombie(TesseraContext handle);
 
-    /* The creation path shared by create / create-for-window / recreate: pick a backend that can serve the request, then register. */
-    using Attempt = std::function<TesseraResult(Backend&, const std::shared_ptr<ContextObject>& share, std::shared_ptr<ContextObject>& out)>;
-    TesseraResult createWith(const TesseraContextConfig& config, bool usePool, const Attempt& attempt, TesseraContext& out);
-    TesseraResult createNative(const TesseraContextConfig& config, const std::shared_ptr<ContextObject>& share, const Attempt& attempt,
+    /* The creation path shared by create / create-for-window / recreate: pick a backend that can serve the
+     * request, then register. */
+    using Attempt = std::function<TesseraResult(Backend&, const std::shared_ptr<ContextObject>& share,
+                                                std::shared_ptr<ContextObject>& out)>;
+    TesseraResult createWith(const TesseraContextConfig& config, bool usePool, const Attempt& attempt,
+                             TesseraContext& out);
+    TesseraResult createNative(const TesseraContextConfig& config,
+                               const std::shared_ptr<ContextObject>& share, const Attempt& attempt,
                                std::shared_ptr<ContextObject>& created);
-    TesseraResult registerContext(const TesseraContextConfig& config, const std::shared_ptr<ContextObject>& share,
+    TesseraResult registerContext(const TesseraContextConfig& config,
+                                  const std::shared_ptr<ContextObject>& share,
                                   const std::shared_ptr<ContextObject>& created, TesseraContext& out);
     std::shared_ptr<ContextObject> takeFromPool(const TesseraContextConfig& config);
 

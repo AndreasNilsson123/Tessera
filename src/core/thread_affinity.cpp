@@ -4,7 +4,9 @@ namespace tessera {
 namespace {
 struct ThreadHolder {
     std::shared_ptr<ThreadToken> token = std::make_shared<ThreadToken>();
-    ~ThreadHolder() { token->alive.store(false); }
+    ~ThreadHolder() {
+        token->alive.store(false);
+    }
 };
 } // namespace
 

@@ -1,10 +1,12 @@
-// macOS integration test: the public C API against the REAL OpenGL.framework (CGL). Registered only on Apple platforms.
+// macOS integration test: the public C API against the REAL OpenGL.framework (CGL). Registered only on Apple
+// platforms.
 //
-// STATUS: written without access to a Mac, never run. It exists so that the first run on real hardware immediately
-// shows whether the hand-declared CGL constants in src/platform/cgl/cgl_types.hpp are right: the raw "other library"
-// context below is created with the very same attribute values, so a wrong constant fails here instead of silently
-// mis-selecting a pixel format. Apple's GL implementation is also the only thing that can show whether the colour-size
-// heuristic and the version/profile behaviour the backend assumes hold up.
+// STATUS: written without access to a Mac, never run. It exists so that the first run on real hardware
+// immediately shows whether the hand-declared CGL constants in src/platform/cgl/cgl_types.hpp are right: the
+// raw "other library" context below is created with the very same attribute values, so a wrong constant fails
+// here instead of silently mis-selecting a pixel format. Apple's GL implementation is also the only thing
+// that can show whether the colour-size heuristic and the version/profile behaviour the backend assumes hold
+// up.
 //
 // Hosted macOS CI runners are VMs without a GPU: expect software OpenGL there and possibly no core profile.
 #include <tessera/tessera.h>
@@ -20,21 +22,22 @@
 using namespace tessera::cgl;
 
 static int g_failures = 0;
-#define CHECK(cond)                                                                                      \
-    do {                                                                                                 \
-        if (!(cond)) {                                                                                   \
-            std::fprintf(stderr, "%s:%d: CHECK failed: %s\n", __FILE__, __LINE__, #cond);                \
-            ++g_failures;                                                                                \
-        }                                                                                                \
+#define CHECK(cond)                                                                                          \
+    do {                                                                                                     \
+        if (!(cond)) {                                                                                       \
+            std::fprintf(stderr, "%s:%d: CHECK failed: %s\n", __FILE__, __LINE__, #cond);                    \
+            ++g_failures;                                                                                    \
+        }                                                                                                    \
     } while (0)
-#define EXPECT(call, want)                                                                               \
-    do {                                                                                                 \
-        const TesseraResult got_ = (call);                                                               \
-        if (got_ != (want)) {                                                                            \
-            std::fprintf(stderr, "%s:%d: %s -> %s, expected %s (%s)\n", __FILE__, __LINE__, #call,       \
-                         tesseraResultString(got_), tesseraResultString(want), tesseraGetLastErrorMessage()); \
-            ++g_failures;                                                                                \
-        }                                                                                                \
+#define EXPECT(call, want)                                                                                   \
+    do {                                                                                                     \
+        const TesseraResult got_ = (call);                                                                   \
+        if (got_ != (want)) {                                                                                \
+            std::fprintf(stderr, "%s:%d: %s -> %s, expected %s (%s)\n", __FILE__, __LINE__, #call,           \
+                         tesseraResultString(got_), tesseraResultString(want),                               \
+                         tesseraGetLastErrorMessage());                                                      \
+            ++g_failures;                                                                                    \
+        }                                                                                                    \
     } while (0)
 
 using GlGetString = const unsigned char* (*)(unsigned);
@@ -51,10 +54,12 @@ template <class Fn> static bool bind(void* lib, const char* name, Fn& out) {
 
 static bool loadRaw() {
     void* lib = dlopen("/System/Library/Frameworks/OpenGL.framework/OpenGL", RTLD_NOW | RTLD_LOCAL);
-    if (!lib) return false;
+    if (!lib)
+        return false;
     return bind(lib, "CGLChoosePixelFormat", g_cgl.CGLChoosePixelFormat) &&
            bind(lib, "CGLReleasePixelFormat", g_cgl.CGLReleasePixelFormat) &&
-           bind(lib, "CGLCreateContext", g_cgl.CGLCreateContext) && bind(lib, "CGLDestroyContext", g_cgl.CGLDestroyContext) &&
+           bind(lib, "CGLCreateContext", g_cgl.CGLCreateContext) &&
+           bind(lib, "CGLDestroyContext", g_cgl.CGLDestroyContext) &&
            bind(lib, "CGLSetCurrentContext", g_cgl.CGLSetCurrentContext) &&
            bind(lib, "CGLGetCurrentContext", g_cgl.CGLGetCurrentContext);
 }
@@ -69,17 +74,20 @@ static void testBasicLegacy() {
     TesseraContextConfig cfg = baseConfig();
     TesseraContext ctx = 0;
     EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_SUCCESS);
-    if (!ctx) return;
+    if (!ctx)
+        return;
     TesseraContextInfo info = tesseraDefaultContextInfo();
     EXPECT(tesseraGetContextInfo(ctx, &info), TESSERA_SUCCESS);
-    std::printf("  legacy: %s | %s | GL %s\n    %d.%d profile=%u flags=0x%x rgba=%d%d%d%d d=%d s=%d samples=%d\n", info.vendor,
-                info.renderer, info.version, info.versionMajor, info.versionMinor, info.profile, info.flags, info.redBits,
-                info.greenBits, info.blueBits, info.alphaBits, info.depthBits, info.stencilBits, info.samples);
+    std::printf(
+        "  legacy: %s | %s | GL %s\n    %d.%d profile=%u flags=0x%x rgba=%d%d%d%d d=%d s=%d samples=%d\n",
+        info.vendor, info.renderer, info.version, info.versionMajor, info.versionMinor, info.profile,
+        info.flags, info.redBits, info.greenBits, info.blueBits, info.alphaBits, info.depthBits,
+        info.stencilBits, info.samples);
     CHECK(info.api == TESSERA_API_OPENGL);
-    CHECK(info.versionMajor == 2 && info.versionMinor == 1);     // what the legacy profile is documented to give
+    CHECK(info.versionMajor == 2 && info.versionMinor == 1); // what the legacy profile is documented to give
     CHECK(info.profile == TESSERA_PROFILE_COMPATIBILITY);
     CHECK(info.surface == TESSERA_SURFACE_NONE);
-    CHECK(info.redBits >= 8 && info.greenBits >= 8 && info.blueBits >= 8);  // checks the colour-size heuristic
+    CHECK(info.redBits >= 8 && info.greenBits >= 8 && info.blueBits >= 8); // checks the colour-size heuristic
     CHECK(g_cgl.CGLGetCurrentContext() == nullptr);
     EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
 }
@@ -90,9 +98,11 @@ static void testCore() {
     cfg.fallback = TESSERA_FALLBACK_STRICT;
     TesseraContext ctx = 0;
     const TesseraResult r = tesseraCreateContext(&cfg, &ctx);
-    CHECK(r == TESSERA_SUCCESS || r == TESSERA_ERROR_NO_MATCHING_CONFIG); // a VM without a core-capable renderer may refuse
+    CHECK(r == TESSERA_SUCCESS ||
+          r == TESSERA_ERROR_NO_MATCHING_CONFIG); // a VM without a core-capable renderer may refuse
     std::printf("  core: %s\n", tesseraResultString(r));
-    if (r != TESSERA_SUCCESS) return;
+    if (r != TESSERA_SUCCESS)
+        return;
     TesseraContextInfo info = tesseraDefaultContextInfo();
     tesseraGetContextInfo(ctx, &info);
     std::printf("    %s\n", info.version);
@@ -107,10 +117,12 @@ static void testForeignUntouchedAndCurrent() {
     const PixelFormatAttribute attribs[] = {kPFAOpenGLProfile, kProfileLegacy, 0};
     CGLPixelFormatObj pf = nullptr;
     GLint n = 0;
-    CHECK(g_cgl.CGLChoosePixelFormat(attribs, &pf, &n) == kNoError && pf && n > 0); // fails if a constant is wrong
+    CHECK(g_cgl.CGLChoosePixelFormat(attribs, &pf, &n) == kNoError && pf &&
+          n > 0); // fails if a constant is wrong
     CGLContextObj foreign = nullptr;
     CHECK(g_cgl.CGLCreateContext(pf, nullptr, &foreign) == kNoError && foreign);
-    if (pf) g_cgl.CGLReleasePixelFormat(pf);
+    if (pf)
+        g_cgl.CGLReleasePixelFormat(pf);
     g_cgl.CGLSetCurrentContext(foreign);
 
     TesseraContextConfig cfg = baseConfig();
@@ -129,7 +141,8 @@ static void testForeignUntouchedAndCurrent() {
     CHECK(tesseraGetCurrentContext() == ctx);
     auto glGetString = reinterpret_cast<GlGetString>(tesseraGetProcAddress("glGetString"));
     CHECK(glGetString != nullptr);
-    if (glGetString) CHECK(glGetString(0x1F02) != nullptr);
+    if (glGetString)
+        CHECK(glGetString(0x1F02) != nullptr);
     CHECK(tesseraGetProcAddress("CGLCreateContext") == nullptr);
     g_cgl.CGLSetCurrentContext(foreign);
     EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS);
@@ -138,14 +151,16 @@ static void testForeignUntouchedAndCurrent() {
     EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
     CHECK(g_cgl.CGLGetCurrentContext() == foreign);
     g_cgl.CGLSetCurrentContext(nullptr);
-    if (foreign) g_cgl.CGLDestroyContext(foreign);
+    if (foreign)
+        g_cgl.CGLDestroyContext(foreign);
 }
 
 static void testSharingAndThreads() {
     TesseraContextConfig cfg = baseConfig();
     TesseraContext a = 0, b = 0;
     EXPECT(tesseraCreateContext(&cfg, &a), TESSERA_SUCCESS);
-    if (!a) return;
+    if (!a)
+        return;
     cfg.shareWith = a;
     EXPECT(tesseraCreateContext(&cfg, &b), TESSERA_SUCCESS);
     if (!b) {
@@ -198,7 +213,10 @@ int main() {
         tesseraDestroyContext(probe);
     }
 
-    struct Section { const char* name; void (*fn)(); };
+    struct Section {
+        const char* name;
+        void (*fn)();
+    };
     const Section sections[] = {
         {"legacy context", testBasicLegacy},
         {"core context", testCore},
@@ -210,6 +228,7 @@ int main() {
         sec.fn();
     }
     tesseraTerminate();
-    if (g_failures == 0) std::puts("test_cgl: OK");
+    if (g_failures == 0)
+        std::puts("test_cgl: OK");
     return g_failures == 0 ? 0 : 1;
 }

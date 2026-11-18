@@ -31,8 +31,8 @@ using HasExtension = std::function<bool(const char*)>;
 
 /*
  * Versions to try for a request, newest first when the caller did not name one: {0,0} = omit the version,
- * ES defaults to 2.0, core/compatibility without a version walks 4.6 down to 3.2. Shared with the EGL backend,
- * whose attribute encoding differs but whose negotiation policy is the same.
+ * ES defaults to 2.0, core/compatibility without a version walks 4.6 down to 3.2. Shared with the EGL
+ * backend, whose attribute encoding differs but whose negotiation policy is the same.
  */
 std::vector<std::pair<int, int>> contextVersionLadder(const TesseraContextConfig& config);
 

@@ -42,13 +42,15 @@ template <class T> class HandleTable {
     /* Returns TESSERA_NULL_HANDLE if the table is closed or full. May throw std::bad_alloc. */
     TesseraHandle insert(std::shared_ptr<T> object) {
         std::lock_guard<std::mutex> lock(m_);
-        if (!open_) return TESSERA_NULL_HANDLE;
+        if (!open_)
+            return TESSERA_NULL_HANDLE;
         uint32_t index;
         if (!free_.empty()) {
             index = free_.back();
             free_.pop_back();
         } else {
-            if (slots_.size() >= max_) return TESSERA_NULL_HANDLE;
+            if (slots_.size() >= max_)
+                return TESSERA_NULL_HANDLE;
             slots_.emplace_back();
             index = static_cast<uint32_t>(slots_.size() - 1);
         }
@@ -71,7 +73,8 @@ template <class T> class HandleTable {
         {
             std::lock_guard<std::mutex> lock(m_);
             Slot* slot = lookup(handle);
-            if (!slot) return nullptr;
+            if (!slot)
+                return nullptr;
             removed = std::move(slot->object);
             slot->object.reset();
             retire(*slot, static_cast<uint32_t>(slot - slots_.data()));
@@ -112,20 +115,26 @@ template <class T> class HandleTable {
 
     // Caller holds m_.
     Slot* lookup(TesseraHandle handle) {
-        if (static_cast<uint8_t>(handle >> 56) != tag_) return nullptr;
+        if (static_cast<uint8_t>(handle >> 56) != tag_)
+            return nullptr;
         const uint32_t generation = static_cast<uint32_t>(handle >> 32) & kGenMask;
         const uint32_t index = static_cast<uint32_t>(handle);
-        if (index >= slots_.size()) return nullptr;
+        if (index >= slots_.size())
+            return nullptr;
         Slot& slot = slots_[index];
-        if (!slot.object || slot.generation != generation) return nullptr;
+        if (!slot.object || slot.generation != generation)
+            return nullptr;
         return &slot;
     }
-    const Slot* lookup(TesseraHandle handle) const { return const_cast<HandleTable*>(this)->lookup(handle); }
+    const Slot* lookup(TesseraHandle handle) const {
+        return const_cast<HandleTable*>(this)->lookup(handle);
+    }
 
     // Caller holds m_. Bumps the generation (wrapping past 0) and recycles the index.
     void retire(Slot& slot, uint32_t index) {
         slot.generation = (slot.generation + 1u) & kGenMask;
-        if (slot.generation == 0) slot.generation = 1;
+        if (slot.generation == 0)
+            slot.generation = 1;
         free_.push_back(index);
         --live_;
     }

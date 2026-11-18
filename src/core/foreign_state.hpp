@@ -19,14 +19,17 @@ template <class Ops> class ScopedForeignState {
   public:
     ScopedForeignState() noexcept : state_(Ops::capture()) {}
     ~ScopedForeignState() {
-        if (active_) Ops::restore(state_);
+        if (active_)
+            Ops::restore(state_);
     }
 
     ScopedForeignState(const ScopedForeignState&) = delete;
     ScopedForeignState& operator=(const ScopedForeignState&) = delete;
 
     /* Skip restoration (e.g. the caller explicitly wants a different context left current). */
-    void dismiss() noexcept { active_ = false; }
+    void dismiss() noexcept {
+        active_ = false;
+    }
 
   private:
     typename Ops::State state_;
@@ -35,7 +38,9 @@ template <class Ops> class ScopedForeignState {
 
 struct NullForeignOps {
     struct State {};
-    static State capture() noexcept { return {}; }
+    static State capture() noexcept {
+        return {};
+    }
     static void restore(const State&) noexcept {}
 };
 

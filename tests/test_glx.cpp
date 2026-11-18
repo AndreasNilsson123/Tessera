@@ -1,7 +1,7 @@
-// Integration tests for the GLX backend, through the public C API only. Needs an X server with GLX (a software
-// renderer such as Mesa llvmpipe under Xvfb is fine). A raw GLX context on its own X connection plays the role
-// of "another library in the same process" (JavaFX/GTK, AWT, LWJGL...) whose current context Tessera must not
-// disturb. Exits 77 (ctest: skipped) when no display/GLX is available.
+// Integration tests for the GLX backend, through the public C API only. Needs an X server with GLX (a
+// software renderer such as Mesa llvmpipe under Xvfb is fine). A raw GLX context on its own X connection
+// plays the role of "another library in the same process" (JavaFX/GTK, AWT, LWJGL...) whose current context
+// Tessera must not disturb. Exits 77 (ctest: skipped) when no display/GLX is available.
 #include <tessera/tessera.h>
 
 #include <dirent.h>
@@ -20,25 +20,26 @@
 using namespace tessera::x11;
 
 static int g_failures = 0;
-#define CHECK(cond)                                                                                      \
-    do {                                                                                                 \
-        if (!(cond)) {                                                                                   \
-            std::fprintf(stderr, "%s:%d: CHECK failed: %s\n", __FILE__, __LINE__, #cond);                \
-            ++g_failures;                                                                                \
-        }                                                                                                \
+#define CHECK(cond)                                                                                          \
+    do {                                                                                                     \
+        if (!(cond)) {                                                                                       \
+            std::fprintf(stderr, "%s:%d: CHECK failed: %s\n", __FILE__, __LINE__, #cond);                    \
+            ++g_failures;                                                                                    \
+        }                                                                                                    \
     } while (0)
-#define EXPECT(call, want)                                                                               \
-    do {                                                                                                 \
-        const TesseraResult got_ = (call);                                                               \
-        if (got_ != (want)) {                                                                            \
-            std::fprintf(stderr, "%s:%d: %s -> %s, expected %s (%s)\n", __FILE__, __LINE__, #call,       \
-                         tesseraResultString(got_), tesseraResultString(want), tesseraGetLastErrorMessage()); \
-            ++g_failures;                                                                                \
-        }                                                                                                \
+#define EXPECT(call, want)                                                                                   \
+    do {                                                                                                     \
+        const TesseraResult got_ = (call);                                                                   \
+        if (got_ != (want)) {                                                                                \
+            std::fprintf(stderr, "%s:%d: %s -> %s, expected %s (%s)\n", __FILE__, __LINE__, #call,           \
+                         tesseraResultString(got_), tesseraResultString(want),                               \
+                         tesseraGetLastErrorMessage());                                                      \
+            ++g_failures;                                                                                    \
+        }                                                                                                    \
     } while (0)
 
-#include "robustness_common.hpp"
 #include "interop_common.hpp"
+#include "robustness_common.hpp"
 
 using GlGetString = const unsigned char* (*)(unsigned);
 using GlGenTextures = void (*)(int, unsigned*);
@@ -58,7 +59,8 @@ template <class Fn> static bool bind(void* lib, const char* name, Fn& out) {
 static bool loadRaw() {
     void* x11 = dlopen("libX11.so.6", RTLD_NOW | RTLD_LOCAL);
     void* gl = dlopen("libGL.so.1", RTLD_NOW | RTLD_LOCAL);
-    if (!x11 || !gl) return false;
+    if (!x11 || !gl)
+        return false;
     return bind(x11, "XOpenDisplay", g_x.XOpenDisplay) && bind(x11, "XCloseDisplay", g_x.XCloseDisplay) &&
            bind(x11, "XInitThreads", g_x.XInitThreads) && bind(x11, "XDefaultScreen", g_x.XDefaultScreen) &&
            bind(x11, "XRootWindow", g_x.XRootWindow) && bind(x11, "XCreateColormap", g_x.XCreateColormap) &&
@@ -82,17 +84,33 @@ struct ForeignContext {
 
     bool create() {
         dpy = g_x.XOpenDisplay(nullptr);
-        if (!dpy) return false;
+        if (!dpy)
+            return false;
         const int screen = g_x.XDefaultScreen(dpy);
-        const int attribs[] = {kGlxXRenderable, 1, kGlxDrawableType, kGlxWindowBit, kGlxRenderType, kGlxRgbaBit,
-                               kGlxDoubleBuffer, 1, kGlxRedSize, 8, kGlxGreenSize, 8, kGlxBlueSize, 8, 0};
+        const int attribs[] = {kGlxXRenderable,
+                               1,
+                               kGlxDrawableType,
+                               kGlxWindowBit,
+                               kGlxRenderType,
+                               kGlxRgbaBit,
+                               kGlxDoubleBuffer,
+                               1,
+                               kGlxRedSize,
+                               8,
+                               kGlxGreenSize,
+                               8,
+                               kGlxBlueSize,
+                               8,
+                               0};
         int n = 0;
         GLXFBConfig* list = g_g.glXChooseFBConfig(dpy, screen, attribs, &n);
-        if (!list || n == 0) return false;
+        if (!list || n == 0)
+            return false;
         GLXFBConfig fb = list[0];
         g_x.XFree(list);
         XVisualInfo* vi = g_g.glXGetVisualFromFBConfig(dpy, fb);
-        if (!vi) return false;
+        if (!vi)
+            return false;
         const Window root = g_x.XRootWindow(dpy, screen);
         cmap = g_x.XCreateColormap(dpy, root, vi->visual, kAllocNone);
         XSetWindowAttributes a = {};
@@ -104,14 +122,23 @@ struct ForeignContext {
         ctx = g_g.glXCreateNewContext(dpy, fb, kGlxRgbaType, nullptr, 1);
         return win != 0 && ctx != nullptr;
     }
-    void makeCurrent() const { g_g.glXMakeContextCurrent(dpy, win, win, ctx); }
-    bool isCurrent() const { return g_g.glXGetCurrentContext() == ctx && g_g.glXGetCurrentDrawable() == win; }
+    void makeCurrent() const {
+        g_g.glXMakeContextCurrent(dpy, win, win, ctx);
+    }
+    bool isCurrent() const {
+        return g_g.glXGetCurrentContext() == ctx && g_g.glXGetCurrentDrawable() == win;
+    }
     void destroy() {
-        if (!dpy) return;
-        if (g_g.glXGetCurrentContext() == ctx) g_g.glXMakeContextCurrent(dpy, 0, 0, nullptr);
-        if (ctx) g_g.glXDestroyContext(dpy, ctx);
-        if (win) g_x.XDestroyWindow(dpy, win);
-        if (cmap) g_x.XFreeColormap(dpy, cmap);
+        if (!dpy)
+            return;
+        if (g_g.glXGetCurrentContext() == ctx)
+            g_g.glXMakeContextCurrent(dpy, 0, 0, nullptr);
+        if (ctx)
+            g_g.glXDestroyContext(dpy, ctx);
+        if (win)
+            g_x.XDestroyWindow(dpy, win);
+        if (cmap)
+            g_x.XFreeColormap(dpy, cmap);
         g_x.XCloseDisplay(dpy);
         *this = ForeignContext{};
     }
@@ -127,7 +154,8 @@ static TesseraContextConfig baseConfig() {
 static int openFdCount() {
     int n = 0;
     if (DIR* d = opendir("/proc/self/fd")) {
-        while (readdir(d)) ++n;
+        while (readdir(d))
+            ++n;
         closedir(d);
     }
     return n;
@@ -139,14 +167,16 @@ static void testBasicCreateAndInfo() {
     TesseraContextConfig cfg = baseConfig();
     TesseraContext ctx = 0;
     EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_SUCCESS);
-    if (!ctx) return;
+    if (!ctx)
+        return;
 
     TesseraContextInfo info = tesseraDefaultContextInfo();
     EXPECT(tesseraGetContextInfo(ctx, &info), TESSERA_SUCCESS);
-    std::printf("  default context: %s | %s | GL %s\n    api=%u %d.%d profile=%u flags=0x%x rgba=%d%d%d%d d=%d s=%d samples=%d\n",
-                info.vendor, info.renderer, info.version, info.api, info.versionMajor, info.versionMinor, info.profile,
-                info.flags, info.redBits, info.greenBits, info.blueBits, info.alphaBits, info.depthBits,
-                info.stencilBits, info.samples);
+    std::printf("  default context: %s | %s | GL %s\n    api=%u %d.%d profile=%u flags=0x%x rgba=%d%d%d%d "
+                "d=%d s=%d samples=%d\n",
+                info.vendor, info.renderer, info.version, info.api, info.versionMajor, info.versionMinor,
+                info.profile, info.flags, info.redBits, info.greenBits, info.blueBits, info.alphaBits,
+                info.depthBits, info.stencilBits, info.samples);
     CHECK(info.api == TESSERA_API_OPENGL);
     CHECK(info.profile == TESSERA_PROFILE_COMPATIBILITY);
     CHECK(info.versionMajor >= 1);
@@ -194,7 +224,8 @@ static void testForeignContextUntouched() {
     CHECK(foreign.isCurrent());
 
     EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
-    if (coreCtx) EXPECT(tesseraDestroyContext(coreCtx), TESSERA_SUCCESS);
+    if (coreCtx)
+        EXPECT(tesseraDestroyContext(coreCtx), TESSERA_SUCCESS);
     CHECK(foreign.isCurrent()); // destroy
 
     // Ours made current, then the other library takes the thread back: our release must not drop it.
@@ -220,7 +251,8 @@ static void testMakeCurrentAndProcs() {
     TesseraContextConfig cfg = baseConfig();
     TesseraContext ctx = 0;
     EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_SUCCESS);
-    if (!ctx) return;
+    if (!ctx)
+        return;
     TesseraContextInfo info = tesseraDefaultContextInfo();
     tesseraGetContextInfo(ctx, &info);
 
@@ -230,12 +262,14 @@ static void testMakeCurrentAndProcs() {
 
     auto glGetString = reinterpret_cast<GlGetString>(tesseraGetProcAddress("glGetString"));
     CHECK(glGetString != nullptr);
-    if (glGetString) CHECK(std::strcmp(reinterpret_cast<const char*>(glGetString(0x1F01)), info.renderer) == 0);
+    if (glGetString)
+        CHECK(std::strcmp(reinterpret_cast<const char*>(glGetString(0x1F01)), info.renderer) == 0);
     // Not a "gl*" name, so even GLVND's dynamic stub generation does not apply. (A bogus gl* name may legally
     // resolve to a no-op stub under GLX; consult the extension strings for availability.)
     CHECK(tesseraGetProcAddress("tesseraNotAFunction") == nullptr);
     CHECK(tesseraGetProcAddress(nullptr) == nullptr);
-    if (info.versionMajor >= 2) CHECK(tesseraGetProcAddress("glGenBuffers") != nullptr);
+    if (info.versionMajor >= 2)
+        CHECK(tesseraGetProcAddress("glGenBuffers") != nullptr);
 
     const TesseraResult si = tesseraSetSwapInterval(ctx, 0);
     CHECK(si == TESSERA_SUCCESS || si == TESSERA_ERROR_UNSUPPORTED);
@@ -256,7 +290,8 @@ static void testThreadRules() {
     TesseraContextConfig cfg = baseConfig();
     TesseraContext ctx = 0;
     EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_SUCCESS);
-    if (!ctx) return;
+    if (!ctx)
+        return;
 
     EXPECT(tesseraMakeCurrent(ctx), TESSERA_SUCCESS);
     std::thread([&] {
@@ -317,8 +352,8 @@ static void testConfigNegotiation() {
     if (r == TESSERA_SUCCESS) {
         TesseraContextInfo info = tesseraDefaultContextInfo();
         tesseraGetContextInfo(ctx, &info);
-        std::printf("  core request -> GL %d.%d profile=%u flags=0x%x\n", info.versionMajor, info.versionMinor,
-                    info.profile, info.flags);
+        std::printf("  core request -> GL %d.%d profile=%u flags=0x%x\n", info.versionMajor,
+                    info.versionMinor, info.profile, info.flags);
         CHECK(info.profile == TESSERA_PROFILE_CORE);
         CHECK(info.versionMajor > 3 || (info.versionMajor == 3 && info.versionMinor >= 3));
         CHECK(info.flags & TESSERA_FLAG_DEBUG);
@@ -381,7 +416,8 @@ static void testSharing() {
     TesseraContextConfig cfg = baseConfig();
     TesseraContext a = 0, b = 0;
     EXPECT(tesseraCreateContext(&cfg, &a), TESSERA_SUCCESS);
-    if (!a) return;
+    if (!a)
+        return;
     cfg.shareWith = a;
     EXPECT(tesseraCreateContext(&cfg, &b), TESSERA_SUCCESS);
     if (!b) {
@@ -407,7 +443,8 @@ static void testSharing() {
 
     EXPECT(tesseraDestroyContext(a), TESSERA_SUCCESS);
     EXPECT(tesseraMakeCurrent(b), TESSERA_SUCCESS);
-    if (isTexture) CHECK(isTexture(tex));
+    if (isTexture)
+        CHECK(isTexture(tex));
     EXPECT(tesseraDestroyContext(b), TESSERA_SUCCESS); // destroyed while current on this thread
     CHECK(g_g.glXGetCurrentContext() == nullptr);
     CHECK(tesseraGetCurrentContext() == TESSERA_NULL_HANDLE);
@@ -421,13 +458,20 @@ static void testConcurrentCreation() {
             for (int i = 0; i < 15; ++i) {
                 TesseraContextConfig cfg = baseConfig();
                 TesseraContext ctx = 0;
-                if (tesseraCreateContext(&cfg, &ctx) != TESSERA_SUCCESS) { ++failures; continue; }
-                if (tesseraMakeCurrent(ctx) != TESSERA_SUCCESS) ++failures;
-                if (tesseraSwapBuffers(ctx) != TESSERA_SUCCESS) ++failures;
-                if (tesseraDestroyContext(ctx) != TESSERA_SUCCESS) ++failures;
+                if (tesseraCreateContext(&cfg, &ctx) != TESSERA_SUCCESS) {
+                    ++failures;
+                    continue;
+                }
+                if (tesseraMakeCurrent(ctx) != TESSERA_SUCCESS)
+                    ++failures;
+                if (tesseraSwapBuffers(ctx) != TESSERA_SUCCESS)
+                    ++failures;
+                if (tesseraDestroyContext(ctx) != TESSERA_SUCCESS)
+                    ++failures;
             }
         });
-    for (auto& t : threads) t.join();
+    for (auto& t : threads)
+        t.join();
     CHECK(failures == 0);
 }
 
@@ -438,14 +482,18 @@ static int hostErrorHandler(Display*, XErrorEvent*) {
 }
 
 static void testNoLeaksAndHandlerRestored() {
-    // The host application's X error handler must be exactly as it was after we have used the process-wide slot.
+    // The host application's X error handler must be exactly as it was after we have used the process-wide
+    // slot.
     g_x.XSetErrorHandler(&hostErrorHandler);
 
     TesseraContextConfig cfg = baseConfig();
     auto cycle = [&](int n) {
         for (int i = 0; i < n; ++i) {
             TesseraContext ctx = 0;
-            if (tesseraCreateContext(&cfg, &ctx) != TESSERA_SUCCESS) { ++g_failures; return; }
+            if (tesseraCreateContext(&cfg, &ctx) != TESSERA_SUCCESS) {
+                ++g_failures;
+                return;
+            }
             tesseraMakeCurrent(ctx);
             tesseraDestroyContext(ctx);
         }
@@ -477,32 +525,40 @@ static void testTerminateAndReinit() {
     EXPECT(tesseraInit(), TESSERA_SUCCESS); // the private X connection is reopened
     TesseraContext again = 0;
     EXPECT(tesseraCreateContext(&cfg, &again), TESSERA_SUCCESS);
-    if (again) EXPECT(tesseraDestroyContext(again), TESSERA_SUCCESS);
+    if (again)
+        EXPECT(tesseraDestroyContext(again), TESSERA_SUCCESS);
 }
 
-// A thread still has a Tessera context current when tesseraTerminate runs, and exits afterwards. Closing the library's X
-// connection at terminate used to let Mesa unload its driver under that thread; its exit then called a destructor in unmapped
-// code (SIGSEGV in __nptl_deallocate_tsd). Found by the Java shutdown test (java_shutdown, 15/15 failures on Mesa D3D12 before
-// the fix, 0/15 after). This native version does NOT reproduce the crash without the fix, so it only guards the scenario's basic behaviour.
+// A thread still has a Tessera context current when tesseraTerminate runs, and exits afterwards. Closing the
+// library's X connection at terminate used to let Mesa unload its driver under that thread; its exit then
+// called a destructor in unmapped code (SIGSEGV in __nptl_deallocate_tsd). Found by the Java shutdown test
+// (java_shutdown, 15/15 failures on Mesa D3D12 before the fix, 0/15 after). This native version does NOT
+// reproduce the crash without the fix, so it only guards the scenario's basic behaviour.
 static void testTerminateWithBusyThread() {
     TesseraContextConfig cfg = baseConfig();
     std::atomic<bool> current{false}, release{false};
     std::thread busy([&] {
         TesseraContext c = 0;
         EXPECT(tesseraCreateContext(&cfg, &c), TESSERA_SUCCESS);
-        if (c) EXPECT(tesseraMakeCurrent(c), TESSERA_SUCCESS);
+        if (c)
+            EXPECT(tesseraMakeCurrent(c), TESSERA_SUCCESS);
         current = true;
-        while (!release.load()) std::this_thread::yield();
-        // exits with the context still current: the library's exit hook and the driver's thread-exit destructors both run
+        while (!release.load())
+            std::this_thread::yield();
+        // exits with the context still current: the library's exit hook and the driver's thread-exit
+        // destructors both run
     });
-    while (!current.load()) std::this_thread::yield();
+    while (!current.load())
+        std::this_thread::yield();
     EXPECT(tesseraTerminate(), TESSERA_SUCCESS);
     release = true;
-    busy.join(); // would crash the whole process before the fix (the library must not re-initialise first: that reloads the driver)
+    busy.join(); // would crash the whole process before the fix (the library must not re-initialise first:
+                 // that reloads the driver)
     EXPECT(tesseraInit(), TESSERA_SUCCESS);
     TesseraContext again = 0;
     EXPECT(tesseraCreateContext(&cfg, &again), TESSERA_SUCCESS);
-    if (again) EXPECT(tesseraDestroyContext(again), TESSERA_SUCCESS);
+    if (again)
+        EXPECT(tesseraDestroyContext(again), TESSERA_SUCCESS);
 }
 
 static robust::Hooks glxHooks() {
@@ -511,9 +567,15 @@ static robust::Hooks glxHooks() {
     h.nothingCurrentNatively = [] { return g_g.glXGetCurrentContext() == nullptr; };
     return h;
 }
-static void testDeferredDestroy() { robust::deferredDestroy(glxHooks()); }
-static void testResetStatus() { robust::resetStatus(glxHooks()); }
-static void testDebugForwarding() { robust::debugForwarding(glxHooks()); }
+static void testDeferredDestroy() {
+    robust::deferredDestroy(glxHooks());
+}
+static void testResetStatus() {
+    robust::resetStatus(glxHooks());
+}
+static void testDebugForwarding() {
+    robust::debugForwarding(glxHooks());
+}
 static void testAttributeMatrix() {
     ForeignContext foreign;
     robust::Hooks h = glxHooks();
@@ -527,7 +589,9 @@ static void testAttributeMatrix() {
 
 // ---------------------------------------------------------------- Phase 8
 
-static void testPrewarm() { interop::prewarm(glxHooks()); }
+static void testPrewarm() {
+    interop::prewarm(glxHooks());
+}
 static void testProbe() {
     ForeignContext foreign; // a context from "another library" must survive every probe
     robust::Hooks h = glxHooks();
@@ -544,12 +608,15 @@ static void testNativeHandles() {
     e.kind = TESSERA_NATIVE_GLX;
     e.contextIndex = 1;
     e.mustBeNonZero = {0, 1, 2, 3, 4}; // Display*, GLXContext, drawable, FBConfig, hidden window
-    e.nativeCurrent = [] { return static_cast<uint64_t>(reinterpret_cast<std::uintptr_t>(g_g.glXGetCurrentContext())); };
+    e.nativeCurrent = [] {
+        return static_cast<uint64_t>(reinterpret_cast<std::uintptr_t>(g_g.glXGetCurrentContext()));
+    };
     interop::nativeHandles(glxHooks(), e);
 }
 
 static void testWindowAttach() {
-    ForeignContext owner; // supplies a real, mapped-or-not X window with a GLX-capable visual that is NOT ours
+    ForeignContext
+        owner; // supplies a real, mapped-or-not X window with a GLX-capable visual that is NOT ours
     if (!owner.create()) {
         std::printf("  (no GLX-capable window available, skipped)\n");
         return;
@@ -565,7 +632,8 @@ static void testWindowAttach() {
         CHECK(info.flags & TESSERA_FLAG_DOUBLE_BUFFER);
         TesseraNativeHandles nh = tesseraDefaultNativeHandles();
         EXPECT(tesseraGetNativeHandles(ctx, &nh), TESSERA_SUCCESS);
-        CHECK(nh.handles[2] == static_cast<uint64_t>(owner.win) && nh.handles[4] == static_cast<uint64_t>(owner.win));
+        CHECK(nh.handles[2] == static_cast<uint64_t>(owner.win) &&
+              nh.handles[4] == static_cast<uint64_t>(owner.win));
 
         EXPECT(tesseraMakeCurrent(ctx), TESSERA_SUCCESS);
         CHECK(g_g.glXGetCurrentDrawable() == owner.win);
@@ -586,7 +654,8 @@ static void testWindowAttach() {
         EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS);
         EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
 
-        // The window is the caller's: it must survive the context, and the caller's own context must still work on it.
+        // The window is the caller's: it must survive the context, and the caller's own context must still
+        // work on it.
         owner.makeCurrent();
         CHECK(owner.isCurrent());
         g_g.glXMakeContextCurrent(owner.dpy, 0, 0, nullptr);
@@ -601,10 +670,12 @@ static void testWindowAttach() {
     ForeignContext doomed;
     if (doomed.create()) {
         TesseraContext c = 0;
-        EXPECT(tesseraCreateContextForWindow(&cfg, static_cast<uint64_t>(doomed.win), 0, &c), TESSERA_SUCCESS);
+        EXPECT(tesseraCreateContextForWindow(&cfg, static_cast<uint64_t>(doomed.win), 0, &c),
+               TESSERA_SUCCESS);
         if (c) {
             EXPECT(tesseraMakeCurrent(c), TESSERA_SUCCESS);
-            g_g.glXMakeContextCurrent(doomed.dpy, 0, 0, nullptr); // (this also unbinds ours: same thread, one current context)
+            g_g.glXMakeContextCurrent(doomed.dpy, 0, 0,
+                                      nullptr); // (this also unbinds ours: same thread, one current context)
             g_x.XDestroyWindow(doomed.dpy, doomed.win);
             g_x.XSync(doomed.dpy, 0);
             doomed.win = 0;
@@ -618,7 +689,8 @@ static void testWindowAttach() {
 
     // Argument handling and unsupported flags.
     EXPECT(tesseraCreateContextForWindow(&cfg, 0, 0, &none), TESSERA_ERROR_INVALID_ARGUMENT);
-    EXPECT(tesseraCreateContextForWindow(&cfg, static_cast<uint64_t>(owner.win), 0x80, &none), TESSERA_ERROR_INVALID_ARGUMENT);
+    EXPECT(tesseraCreateContextForWindow(&cfg, static_cast<uint64_t>(owner.win), 0x80, &none),
+           TESSERA_ERROR_INVALID_ARGUMENT);
     owner.destroy();
 }
 
@@ -627,7 +699,8 @@ int main() {
         std::fprintf(stderr, "test_glx: libX11/libGL not available, skipping\n");
         return 77;
     }
-    setenv("TESSERA_BACKEND", "glx", 1); // with EGL registered too, a missing display would fall through to it
+    setenv("TESSERA_BACKEND", "glx",
+           1); // with EGL registered too, a missing display would fall through to it
     // What GLFW, SDL, GTK and AWT all do before touching Xlib; the "other library" owns its connection.
     g_x.XInitThreads();
 
@@ -640,7 +713,8 @@ int main() {
         TesseraContext probe = 0;
         const TesseraResult r = tesseraCreateContext(&cfg, &probe);
         if (r == TESSERA_ERROR_UNSUPPORTED) {
-            std::fprintf(stderr, "test_glx: no usable X display / GLX here, skipping: %s\n", tesseraGetLastErrorMessage());
+            std::fprintf(stderr, "test_glx: no usable X display / GLX here, skipping: %s\n",
+                         tesseraGetLastErrorMessage());
             return 77;
         }
         if (r != TESSERA_SUCCESS) {
@@ -651,7 +725,10 @@ int main() {
         tesseraDestroyContext(probe);
     }
 
-    struct Section { const char* name; void (*fn)(); };
+    struct Section {
+        const char* name;
+        void (*fn)();
+    };
     const Section sections[] = {
         {"basic create/info", testBasicCreateAndInfo},
         {"foreign context untouched", testForeignContextUntouched},
@@ -678,6 +755,7 @@ int main() {
     }
 
     tesseraTerminate();
-    if (g_failures == 0) std::puts("test_glx: OK");
+    if (g_failures == 0)
+        std::puts("test_glx: OK");
     return g_failures == 0 ? 0 : 1;
 }

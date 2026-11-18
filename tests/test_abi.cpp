@@ -6,12 +6,12 @@
 #include <thread>
 
 static int g_failures = 0;
-#define CHECK(cond)                                                                                      \
-    do {                                                                                                 \
-        if (!(cond)) {                                                                                   \
-            std::fprintf(stderr, "%s:%d: CHECK failed: %s\n", __FILE__, __LINE__, #cond);                \
-            ++g_failures;                                                                                \
-        }                                                                                                \
+#define CHECK(cond)                                                                                          \
+    do {                                                                                                     \
+        if (!(cond)) {                                                                                       \
+            std::fprintf(stderr, "%s:%d: CHECK failed: %s\n", __FILE__, __LINE__, #cond);                    \
+            ++g_failures;                                                                                    \
+        }                                                                                                    \
     } while (0)
 
 // Layout guards: these sizes are part of the ABI. Changing them is an ABI break.
@@ -39,6 +39,7 @@ int main() {
     // Last-error storage is thread-local: a fresh thread starts empty.
     std::thread([] { CHECK(tesseraGetLastErrorMessage()[0] == '\0'); }).join();
 
-    if (g_failures == 0) std::puts("test_abi: OK");
+    if (g_failures == 0)
+        std::puts("test_abi: OK");
     return g_failures == 0 ? 0 : 1;
 }

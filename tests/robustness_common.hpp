@@ -1,6 +1,7 @@
 // Robustness checks shared by the real-driver integration tests (WGL, GLX, EGL). Public API only.
 //
-// Include after defining, in the including file:  `static int g_failures;`  `CHECK(cond)`  `EXPECT(call, want)`.
+// Include after defining, in the including file:  `static int g_failures;`  `CHECK(cond)`  `EXPECT(call,
+// want)`.
 #pragma once
 
 #include <tessera/tessera.h>
@@ -18,25 +19,28 @@
 namespace robust {
 
 struct Hooks {
-    TesseraContextConfig base;                       // a configuration that works on this backend
-    std::function<bool()> nothingCurrentNatively;    // true if the platform sees no current context on this thread
-    std::function<void()> armForeign;                // makes the "other library's" context current again
-    std::function<bool()> foreignIntact;             // true if the "other library's" state is as the test left it
+    TesseraContextConfig base; // a configuration that works on this backend
+    std::function<bool()>
+        nothingCurrentNatively;          // true if the platform sees no current context on this thread
+    std::function<void()> armForeign;    // makes the "other library's" context current again
+    std::function<bool()> foreignIntact; // true if the "other library's" state is as the test left it
 };
 
 inline void waitFor(const std::atomic<bool>& flag) {
-    while (!flag.load()) std::this_thread::yield();
+    while (!flag.load())
+        std::this_thread::yield();
 }
 
 // ---------------------------------------------------------------- deferred destruction
 
-// A context destroyed while another thread holds it current: the handle dies at once, the native teardown happens on
-// the owner when it lets go (explicitly, by switching, or by exiting).
+// A context destroyed while another thread holds it current: the handle dies at once, the native teardown
+// happens on the owner when it lets go (explicitly, by switching, or by exiting).
 inline void deferredDestroy(const Hooks& h) {
     TesseraContextConfig cfg = h.base;
     TesseraContext ctx = 0;
     EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_SUCCESS);
-    if (!ctx) return;
+    if (!ctx)
+        return;
 
     // 1. Held by this thread, destroyed from another one.
     EXPECT(tesseraMakeCurrent(ctx), TESSERA_SUCCESS);
@@ -46,8 +50,10 @@ inline void deferredDestroy(const Hooks& h) {
     EXPECT(tesseraGetContextInfo(ctx, &info), TESSERA_ERROR_INVALID_HANDLE);
     EXPECT(tesseraDestroyContext(ctx), TESSERA_ERROR_INVALID_HANDLE); // and not a second time
     CHECK(tesseraGetCurrentContext() == TESSERA_NULL_HANDLE);         // the handle is dead for the owner too
-    EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS); // finishes the destruction, on this thread
-    if (h.nothingCurrentNatively) CHECK(h.nothingCurrentNatively());
+    EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE),
+           TESSERA_SUCCESS); // finishes the destruction, on this thread
+    if (h.nothingCurrentNatively)
+        CHECK(h.nothingCurrentNatively());
 
     // 2. Held by a thread that exits without releasing: its exit finishes the destruction.
     TesseraContext held = 0;
@@ -90,7 +96,8 @@ inline void deferredDestroy(const Hooks& h) {
         EXPECT(tesseraMakeCurrent(after), TESSERA_SUCCESS);
         EXPECT(tesseraDestroyContext(after), TESSERA_SUCCESS);
     }
-    if (h.foreignIntact) CHECK(h.foreignIntact());
+    if (h.foreignIntact)
+        CHECK(h.foreignIntact());
 }
 
 // ---------------------------------------------------------------- reset notification
@@ -223,31 +230,42 @@ inline bool honours(const TesseraContextConfig& req, const TesseraContextInfo& i
         return false;
     };
     // Never negotiable, in either mode.
-    if (info.api != req.api) return bad("api");
-    if (req.versionMajor != 0 && (info.versionMajor < req.versionMajor ||
-                                  (info.versionMajor == req.versionMajor && info.versionMinor < req.versionMinor)))
+    if (info.api != req.api)
+        return bad("api");
+    if (req.versionMajor != 0 &&
+        (info.versionMajor < req.versionMajor ||
+         (info.versionMajor == req.versionMajor && info.versionMinor < req.versionMinor)))
         return bad("version below the requested minimum");
-    if (req.profile != TESSERA_PROFILE_ANY && info.profile != req.profile) return bad("profile");
-    if (req.surface == TESSERA_SURFACE_NONE && info.surface != TESSERA_SURFACE_NONE) return bad("surface none");
-    if (req.surface == TESSERA_SURFACE_PBUFFER && info.surface != TESSERA_SURFACE_PBUFFER) return bad("surface pbuffer");
-    if (!strict) return true; // best effort may relax the rest, but only by reporting it truthfully (checked below)
+    if (req.profile != TESSERA_PROFILE_ANY && info.profile != req.profile)
+        return bad("profile");
+    if (req.surface == TESSERA_SURFACE_NONE && info.surface != TESSERA_SURFACE_NONE)
+        return bad("surface none");
+    if (req.surface == TESSERA_SURFACE_PBUFFER && info.surface != TESSERA_SURFACE_PBUFFER)
+        return bad("surface pbuffer");
+    if (!strict)
+        return true; // best effort may relax the rest, but only by reporting it truthfully (checked below)
 
-    constexpr uint32_t flagsToCheck = TESSERA_FLAG_DEBUG | TESSERA_FLAG_FORWARD_COMPATIBLE | TESSERA_FLAG_ROBUST_ACCESS |
-                                      TESSERA_FLAG_RESET_NOTIFICATION | TESSERA_FLAG_NO_ERROR | TESSERA_FLAG_SRGB |
-                                      TESSERA_FLAG_FLOAT_COLOR | TESSERA_FLAG_DOUBLE_BUFFER | TESSERA_FLAG_STEREO |
+    constexpr uint32_t flagsToCheck = TESSERA_FLAG_DEBUG | TESSERA_FLAG_FORWARD_COMPATIBLE |
+                                      TESSERA_FLAG_ROBUST_ACCESS | TESSERA_FLAG_RESET_NOTIFICATION |
+                                      TESSERA_FLAG_NO_ERROR | TESSERA_FLAG_SRGB | TESSERA_FLAG_FLOAT_COLOR |
+                                      TESSERA_FLAG_DOUBLE_BUFFER | TESSERA_FLAG_STEREO |
                                       TESSERA_FLAG_RELEASE_FLUSH;
-    if (req.flags & ~info.flags & flagsToCheck) return bad("a requested flag is not reported as granted");
-    if (info.samples < req.samples) return bad("samples");
-    if (info.depthBits < req.depthBits || info.stencilBits < req.stencilBits) return bad("depth/stencil");
-    if (info.redBits < req.redBits || info.alphaBits < req.alphaBits) return bad("colour bits");
+    if (req.flags & ~info.flags & flagsToCheck)
+        return bad("a requested flag is not reported as granted");
+    if (info.samples < req.samples)
+        return bad("samples");
+    if (info.depthBits < req.depthBits || info.stencilBits < req.stencilBits)
+        return bad("depth/stencil");
+    if (info.redBits < req.redBits || info.alphaBits < req.alphaBits)
+        return bad("colour bits");
     return true;
 }
 
 inline std::string describe(const TesseraContextConfig& c) {
     char buf[256];
-    std::snprintf(buf, sizeof buf, "api=%u profile=%u v=%d.%d flags=0x%x samples=%d d=%d s=%d %s surface=%u", c.api,
-                  c.profile, c.versionMajor, c.versionMinor, c.flags, c.samples, c.depthBits, c.stencilBits,
-                  c.fallback == TESSERA_FALLBACK_STRICT ? "strict" : "best-effort", c.surface);
+    std::snprintf(buf, sizeof buf, "api=%u profile=%u v=%d.%d flags=0x%x samples=%d d=%d s=%d %s surface=%u",
+                  c.api, c.profile, c.versionMajor, c.versionMinor, c.flags, c.samples, c.depthBits,
+                  c.stencilBits, c.fallback == TESSERA_FALLBACK_STRICT ? "strict" : "best-effort", c.surface);
     return buf;
 }
 
@@ -257,14 +275,22 @@ inline MatrixResult attributeMatrix(const Hooks& h) {
         int major, minor;
     };
     const Version versions[] = {
-        {TESSERA_API_OPENGL, TESSERA_PROFILE_ANY, 0, 0},      {TESSERA_API_OPENGL, TESSERA_PROFILE_ANY, 2, 1},
-        {TESSERA_API_OPENGL, TESSERA_PROFILE_ANY, 3, 3},      {TESSERA_API_OPENGL, TESSERA_PROFILE_CORE, 0, 0},
-        {TESSERA_API_OPENGL, TESSERA_PROFILE_CORE, 3, 2},     {TESSERA_API_OPENGL, TESSERA_PROFILE_CORE, 3, 3},
-        {TESSERA_API_OPENGL, TESSERA_PROFILE_CORE, 4, 1},     {TESSERA_API_OPENGL, TESSERA_PROFILE_CORE, 4, 5},
-        {TESSERA_API_OPENGL, TESSERA_PROFILE_CORE, 4, 6},     {TESSERA_API_OPENGL, TESSERA_PROFILE_COMPATIBILITY, 3, 2},
-        {TESSERA_API_OPENGL, TESSERA_PROFILE_COMPATIBILITY, 4, 5}, {TESSERA_API_OPENGL_ES, TESSERA_PROFILE_ANY, 0, 0},
-        {TESSERA_API_OPENGL_ES, TESSERA_PROFILE_ANY, 2, 0},   {TESSERA_API_OPENGL_ES, TESSERA_PROFILE_ANY, 3, 0},
-        {TESSERA_API_OPENGL_ES, TESSERA_PROFILE_ANY, 3, 2},   {TESSERA_API_OPENGL, TESSERA_PROFILE_CORE, 9, 9},
+        {TESSERA_API_OPENGL, TESSERA_PROFILE_ANY, 0, 0},
+        {TESSERA_API_OPENGL, TESSERA_PROFILE_ANY, 2, 1},
+        {TESSERA_API_OPENGL, TESSERA_PROFILE_ANY, 3, 3},
+        {TESSERA_API_OPENGL, TESSERA_PROFILE_CORE, 0, 0},
+        {TESSERA_API_OPENGL, TESSERA_PROFILE_CORE, 3, 2},
+        {TESSERA_API_OPENGL, TESSERA_PROFILE_CORE, 3, 3},
+        {TESSERA_API_OPENGL, TESSERA_PROFILE_CORE, 4, 1},
+        {TESSERA_API_OPENGL, TESSERA_PROFILE_CORE, 4, 5},
+        {TESSERA_API_OPENGL, TESSERA_PROFILE_CORE, 4, 6},
+        {TESSERA_API_OPENGL, TESSERA_PROFILE_COMPATIBILITY, 3, 2},
+        {TESSERA_API_OPENGL, TESSERA_PROFILE_COMPATIBILITY, 4, 5},
+        {TESSERA_API_OPENGL_ES, TESSERA_PROFILE_ANY, 0, 0},
+        {TESSERA_API_OPENGL_ES, TESSERA_PROFILE_ANY, 2, 0},
+        {TESSERA_API_OPENGL_ES, TESSERA_PROFILE_ANY, 3, 0},
+        {TESSERA_API_OPENGL_ES, TESSERA_PROFILE_ANY, 3, 2},
+        {TESSERA_API_OPENGL, TESSERA_PROFILE_CORE, 9, 9},
     };
     const uint32_t flagSets[] = {0,
                                  TESSERA_FLAG_DEBUG,
@@ -301,13 +327,15 @@ inline MatrixResult attributeMatrix(const Hooks& h) {
             ++i;
             ++result.combos;
 
-            if (h.armForeign) h.armForeign(); // a Tessera make-current legitimately displaces it, so re-arm each time
+            if (h.armForeign)
+                h.armForeign(); // a Tessera make-current legitimately displaces it, so re-arm each time
             TesseraContext ctx = 0;
             const TesseraResult r = tesseraCreateContext(&cfg, &ctx);
             ++result.byResult[tesseraResultString(r)];
             const std::string label = describe(cfg);
             // Creating (successfully or not) must leave the other library's context exactly as it was.
-            if (h.foreignIntact && !h.foreignIntact()) result.problems.push_back(label + " -> disturbed the other library's state");
+            if (h.foreignIntact && !h.foreignIntact())
+                result.problems.push_back(label + " -> disturbed the other library's state");
 
             if (r == TESSERA_SUCCESS) {
                 TesseraContextInfo info = tesseraDefaultContextInfo();
@@ -315,19 +343,27 @@ inline MatrixResult attributeMatrix(const Hooks& h) {
                     result.problems.push_back(label + " -> created, but tesseraGetContextInfo failed");
                 } else {
                     std::string why;
-                    if (!honours(cfg, info, why)) result.problems.push_back(label + " -> returned a context that breaks the request: " + why);
+                    if (!honours(cfg, info, why))
+                        result.problems.push_back(label +
+                                                  " -> returned a context that breaks the request: " + why);
                 }
                 // A context that was created must be usable.
-                if (tesseraMakeCurrent(ctx) != TESSERA_SUCCESS) result.problems.push_back(label + " -> created but cannot be made current");
-                if (tesseraSwapBuffers(ctx) != TESSERA_SUCCESS) result.problems.push_back(label + " -> created but swap failed");
-                if (tesseraMakeCurrent(TESSERA_NULL_HANDLE) != TESSERA_SUCCESS) result.problems.push_back(label + " -> release failed");
-                if (tesseraDestroyContext(ctx) != TESSERA_SUCCESS) result.problems.push_back(label + " -> destroy failed");
+                if (tesseraMakeCurrent(ctx) != TESSERA_SUCCESS)
+                    result.problems.push_back(label + " -> created but cannot be made current");
+                if (tesseraSwapBuffers(ctx) != TESSERA_SUCCESS)
+                    result.problems.push_back(label + " -> created but swap failed");
+                if (tesseraMakeCurrent(TESSERA_NULL_HANDLE) != TESSERA_SUCCESS)
+                    result.problems.push_back(label + " -> release failed");
+                if (tesseraDestroyContext(ctx) != TESSERA_SUCCESS)
+                    result.problems.push_back(label + " -> destroy failed");
             } else if (r != TESSERA_ERROR_NO_MATCHING_CONFIG && r != TESSERA_ERROR_UNSUPPORTED &&
                        r != TESSERA_ERROR_INVALID_ARGUMENT) {
                 // A valid request may be refused, but never with a code that means "something broke".
-                result.problems.push_back(label + " -> " + tesseraResultString(r) + " (" + tesseraGetLastErrorMessage() + ")");
+                result.problems.push_back(label + " -> " + tesseraResultString(r) + " (" +
+                                          tesseraGetLastErrorMessage() + ")");
             }
-            if (ctx != 0 && r != TESSERA_SUCCESS) result.problems.push_back(label + " -> failed but returned a handle");
+            if (ctx != 0 && r != TESSERA_SUCCESS)
+                result.problems.push_back(label + " -> failed but returned a handle");
         }
     }
     return result;
@@ -336,7 +372,8 @@ inline MatrixResult attributeMatrix(const Hooks& h) {
 inline void reportMatrix(const Hooks& h) {
     const MatrixResult m = attributeMatrix(h);
     std::printf("  %d combinations:", m.combos);
-    for (const auto& entry : m.byResult) std::printf("  %s=%d", entry.first.c_str(), entry.second);
+    for (const auto& entry : m.byResult)
+        std::printf("  %s=%d", entry.first.c_str(), entry.second);
     std::printf("\n");
     for (const std::string& p : m.problems) {
         std::fprintf(stderr, "  MATRIX PROBLEM: %s\n", p.c_str());

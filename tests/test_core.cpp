@@ -24,28 +24,29 @@
 #if defined(__linux__)
 #include "platform/x11/glx_api.hpp"
 #endif
-#include "platform/common/gl_query.hpp"
 #include "core/thread_affinity.hpp"
+#include "platform/common/gl_query.hpp"
 
 static int g_failures = 0;
-#define CHECK(cond)                                                                                      \
-    do {                                                                                                 \
-        if (!(cond)) {                                                                                   \
-            std::fprintf(stderr, "%s:%d: CHECK failed: %s\n", __FILE__, __LINE__, #cond);                \
-            ++g_failures;                                                                                \
-        }                                                                                                \
+#define CHECK(cond)                                                                                          \
+    do {                                                                                                     \
+        if (!(cond)) {                                                                                       \
+            std::fprintf(stderr, "%s:%d: CHECK failed: %s\n", __FILE__, __LINE__, #cond);                    \
+            ++g_failures;                                                                                    \
+        }                                                                                                    \
     } while (0)
 
 using namespace tessera;
 
-#define EXPECT(call, want)                                                                               \
-    do {                                                                                                 \
-        const TesseraResult got_ = (call);                                                               \
-        if (got_ != (want)) {                                                                            \
-            std::fprintf(stderr, "%s:%d: %s -> %s, expected %s (%s)\n", __FILE__, __LINE__, #call,       \
-                         tesseraResultString(got_), tesseraResultString(want), tesseraGetLastErrorMessage()); \
-            ++g_failures;                                                                                \
-        }                                                                                                \
+#define EXPECT(call, want)                                                                                   \
+    do {                                                                                                     \
+        const TesseraResult got_ = (call);                                                                   \
+        if (got_ != (want)) {                                                                                \
+            std::fprintf(stderr, "%s:%d: %s -> %s, expected %s (%s)\n", __FILE__, __LINE__, #call,           \
+                         tesseraResultString(got_), tesseraResultString(want),                               \
+                         tesseraGetLastErrorMessage());                                                      \
+            ++g_failures;                                                                                    \
+        }                                                                                                    \
     } while (0)
 
 static_assert(sizeof(TesseraContextInfo) == 504, "TesseraContextInfo layout");
@@ -70,10 +71,10 @@ static void testHandleTable() {
     CHECK(t.get(a + 1) == nullptr);            // other index, never allocated
 
     CHECK(t.remove(a) != nullptr);
-    CHECK(t.get(a) == nullptr);       // stale
-    CHECK(t.remove(a) == nullptr);    // double remove
+    CHECK(t.get(a) == nullptr);    // stale
+    CHECK(t.remove(a) == nullptr); // double remove
     const TesseraHandle b = t.insert(std::make_shared<Dummy>(2));
-    CHECK(b != a);                    // same slot, new generation
+    CHECK(b != a); // same slot, new generation
     CHECK(static_cast<uint32_t>(b) == static_cast<uint32_t>(a));
     CHECK(t.get(a) == nullptr && t.get(b)->value == 2);
 
@@ -84,14 +85,16 @@ static void testHandleTable() {
 
     // Capacity limit.
     std::vector<TesseraHandle> hs;
-    for (int i = 0; i < 8; ++i) hs.push_back(t.insert(std::make_shared<Dummy>(i)));
+    for (int i = 0; i < 8; ++i)
+        hs.push_back(t.insert(std::make_shared<Dummy>(i)));
     CHECK(t.insert(std::make_shared<Dummy>(99)) == TESSERA_NULL_HANDLE);
     CHECK(t.size() == 8);
 
     auto drained = t.closeAndDrain();
     CHECK(drained.size() == 8);
     CHECK(t.size() == 0);
-    for (TesseraHandle h : hs) CHECK(t.get(h) == nullptr);
+    for (TesseraHandle h : hs)
+        CHECK(t.get(h) == nullptr);
     CHECK(t.insert(std::make_shared<Dummy>(1)) == TESSERA_NULL_HANDLE);
 
     // Concurrency smoke test: many threads insert/get/remove with no crashes and no leaks.
@@ -108,7 +111,8 @@ static void testHandleTable() {
                 CHECK(c.get(h) == nullptr);
             }
         });
-    for (auto& th : threads) th.join();
+    for (auto& th : threads)
+        th.join();
     CHECK(c.size() == 0);
 }
 
@@ -127,22 +131,47 @@ static void testConfig() {
     CHECK(normalizeConfig(&bad, out) == TESSERA_ERROR_INVALID_ARGUMENT);
     CHECK(std::strstr(tesseraGetLastErrorMessage(), "structSize") != nullptr);
 
-    bad = cfg; bad.api = 0;                                 CHECK(normalizeConfig(&bad, out) != TESSERA_SUCCESS);
-    bad = cfg; bad.api = 99;                                CHECK(normalizeConfig(&bad, out) != TESSERA_SUCCESS);
-    bad = cfg; bad.api = TESSERA_API_OPENGL_ES; bad.profile = TESSERA_PROFILE_CORE;
-                                                            CHECK(normalizeConfig(&bad, out) != TESSERA_SUCCESS);
-    bad = cfg; bad.profile = TESSERA_PROFILE_CORE; bad.versionMajor = 3; bad.versionMinor = 1;
-                                                            CHECK(normalizeConfig(&bad, out) != TESSERA_SUCCESS);
-    bad = cfg; bad.profile = TESSERA_PROFILE_CORE; bad.versionMajor = 3; bad.versionMinor = 2;
-                                                            CHECK(normalizeConfig(&bad, out) == TESSERA_SUCCESS);
-    bad = cfg; bad.flags = 0x80000000u;                     CHECK(normalizeConfig(&bad, out) != TESSERA_SUCCESS);
-    bad = cfg; bad.flags = TESSERA_FLAG_RESET_NOTIFICATION; CHECK(normalizeConfig(&bad, out) != TESSERA_SUCCESS);
-    bad = cfg; bad.flags = TESSERA_FLAG_NO_ERROR | TESSERA_FLAG_DEBUG;
-                                                            CHECK(normalizeConfig(&bad, out) != TESSERA_SUCCESS);
-    bad = cfg; bad.samples = -1;                            CHECK(normalizeConfig(&bad, out) != TESSERA_SUCCESS);
-    bad = cfg; bad.depthBits = 99;                          CHECK(normalizeConfig(&bad, out) != TESSERA_SUCCESS);
-    bad = cfg; bad.surface = 77;                            CHECK(normalizeConfig(&bad, out) != TESSERA_SUCCESS);
-    bad = cfg; bad.reserved[3] = 1;                         CHECK(normalizeConfig(&bad, out) != TESSERA_SUCCESS);
+    bad = cfg;
+    bad.api = 0;
+    CHECK(normalizeConfig(&bad, out) != TESSERA_SUCCESS);
+    bad = cfg;
+    bad.api = 99;
+    CHECK(normalizeConfig(&bad, out) != TESSERA_SUCCESS);
+    bad = cfg;
+    bad.api = TESSERA_API_OPENGL_ES;
+    bad.profile = TESSERA_PROFILE_CORE;
+    CHECK(normalizeConfig(&bad, out) != TESSERA_SUCCESS);
+    bad = cfg;
+    bad.profile = TESSERA_PROFILE_CORE;
+    bad.versionMajor = 3;
+    bad.versionMinor = 1;
+    CHECK(normalizeConfig(&bad, out) != TESSERA_SUCCESS);
+    bad = cfg;
+    bad.profile = TESSERA_PROFILE_CORE;
+    bad.versionMajor = 3;
+    bad.versionMinor = 2;
+    CHECK(normalizeConfig(&bad, out) == TESSERA_SUCCESS);
+    bad = cfg;
+    bad.flags = 0x80000000u;
+    CHECK(normalizeConfig(&bad, out) != TESSERA_SUCCESS);
+    bad = cfg;
+    bad.flags = TESSERA_FLAG_RESET_NOTIFICATION;
+    CHECK(normalizeConfig(&bad, out) != TESSERA_SUCCESS);
+    bad = cfg;
+    bad.flags = TESSERA_FLAG_NO_ERROR | TESSERA_FLAG_DEBUG;
+    CHECK(normalizeConfig(&bad, out) != TESSERA_SUCCESS);
+    bad = cfg;
+    bad.samples = -1;
+    CHECK(normalizeConfig(&bad, out) != TESSERA_SUCCESS);
+    bad = cfg;
+    bad.depthBits = 99;
+    CHECK(normalizeConfig(&bad, out) != TESSERA_SUCCESS);
+    bad = cfg;
+    bad.surface = 77;
+    CHECK(normalizeConfig(&bad, out) != TESSERA_SUCCESS);
+    bad = cfg;
+    bad.reserved[3] = 1;
+    CHECK(normalizeConfig(&bad, out) != TESSERA_SUCCESS);
 
     // Older caller: structSize ends right after `fallback`; the rest must read as zero, not as garbage.
     struct Padded {
@@ -166,18 +195,27 @@ static void testConfig() {
 // ------------------------------------------------------------------ foreign-state guard
 
 struct FakeOps {
-    struct State { int value; };
+    struct State {
+        int value;
+    };
     static inline int current = 0;
     static inline int captures = 0;
     static inline int restores = 0;
-    static State capture() noexcept { ++captures; return {current}; }
-    static void restore(const State& s) noexcept { ++restores; current = s.value; }
+    static State capture() noexcept {
+        ++captures;
+        return {current};
+    }
+    static void restore(const State& s) noexcept {
+        ++restores;
+        current = s.value;
+    }
 };
 
 static int guardedEarlyReturn(bool fail) {
     ScopedForeignState<FakeOps> guard;
     FakeOps::current = 42; // pretend we made our own context current
-    if (fail) return -1;
+    if (fail)
+        return -1;
     return 0;
 }
 
@@ -198,7 +236,8 @@ static void testForeignGuard() {
         ScopedForeignState<FakeOps> g;
         FakeOps::current = 5;
         throw 1;
-    } catch (int) {}
+    } catch (int) {
+    }
     CHECK(FakeOps::current == 7); // restored on exception
 
     FakeOps::current = 7;
@@ -220,7 +259,8 @@ static void testLibrary() {
     CHECK(lib.symbol("GetCurrentProcessId") != nullptr);
 #else
     DynamicLibrary lib = DynamicLibrary::open("libm.so.6");
-    if (!lib) lib = DynamicLibrary::open("libSystem.dylib");
+    if (!lib)
+        lib = DynamicLibrary::open("libSystem.dylib");
     CHECK(lib);
     CHECK(lib.symbol("cos") != nullptr);
 #endif
@@ -247,7 +287,8 @@ static std::atomic<int> g_liveFakeContexts{0};
 
 template <std::size_t N> static void copyStr(char (&dst)[N], const char* src) {
     std::size_t i = 0;
-    for (; i + 1 < N && src[i] != char(0); ++i) dst[i] = src[i];
+    for (; i + 1 < N && src[i] != char(0); ++i)
+        dst[i] = src[i];
     dst[i] = char(0);
 }
 
@@ -257,7 +298,9 @@ class FakeContext : public ContextObject {
         : cfg(c), shared(std::move(share)) {
         ++g_liveFakeContexts;
     }
-    ~FakeContext() override { --g_liveFakeContexts; }
+    ~FakeContext() override {
+        --g_liveFakeContexts;
+    }
     TesseraResult describe(TesseraContextInfo& out) const noexcept override {
         out.api = cfg.api;
         out.versionMajor = cfg.versionMajor ? cfg.versionMajor : 4;
@@ -276,14 +319,20 @@ class FakeContext : public ContextObject {
 class FakeBackend : public Backend {
   public:
     FakeBackend(const char* n, TesseraEnum onlyApi) : name_(n), api_(onlyApi) {}
-    const char* name() const noexcept override { return name_; }
+    const char* name() const noexcept override {
+        return name_;
+    }
     TesseraResult createContext(const TesseraContextConfig& c, const std::shared_ptr<ContextObject>& share,
                                 std::shared_ptr<ContextObject>& out) override {
         ++calls;
-        if (c.api != api_) return TESSERA_ERROR_UNSUPPORTED;
-        if (c.samples > 8) return TESSERA_ERROR_NO_MATCHING_CONFIG;
-        if (c.samples == 5) throw std::bad_alloc();
-        if (c.samples == 6) throw std::runtime_error("boom");
+        if (c.api != api_)
+            return TESSERA_ERROR_UNSUPPORTED;
+        if (c.samples > 8)
+            return TESSERA_ERROR_NO_MATCHING_CONFIG;
+        if (c.samples == 5)
+            throw std::bad_alloc();
+        if (c.samples == 6)
+            throw std::runtime_error("boom");
         out = std::make_shared<FakeContext>(c, share);
         return TESSERA_SUCCESS;
     }
@@ -329,7 +378,9 @@ static void testRuntime() {
     CHECK(tesseraCreateContext(nullptr, &ctx) == TESSERA_ERROR_INVALID_ARGUMENT);
 
     // Create, describe, destroy.
-    cfg.versionMajor = 3; cfg.versionMinor = 3; cfg.samples = 4;
+    cfg.versionMajor = 3;
+    cfg.versionMinor = 3;
+    cfg.samples = 4;
     CHECK(tesseraCreateContext(&cfg, &ctx) == TESSERA_SUCCESS);
     CHECK(ctx != TESSERA_NULL_HANDLE);
     CHECK(g_liveFakeContexts == 1);
@@ -385,9 +436,12 @@ static void testRuntime() {
     TesseraContextConfig failCfg = tesseraDefaultContextConfig();
     failCfg.api = TESSERA_API_OPENGL;
     TesseraContext none = 0;
-    failCfg.samples = 16; CHECK(tesseraCreateContext(&failCfg, &none) == TESSERA_ERROR_NO_MATCHING_CONFIG);
-    failCfg.samples = 5;  CHECK(tesseraCreateContext(&failCfg, &none) == TESSERA_ERROR_OUT_OF_MEMORY);
-    failCfg.samples = 6;  CHECK(tesseraCreateContext(&failCfg, &none) == TESSERA_ERROR_UNKNOWN);
+    failCfg.samples = 16;
+    CHECK(tesseraCreateContext(&failCfg, &none) == TESSERA_ERROR_NO_MATCHING_CONFIG);
+    failCfg.samples = 5;
+    CHECK(tesseraCreateContext(&failCfg, &none) == TESSERA_ERROR_OUT_OF_MEMORY);
+    failCfg.samples = 6;
+    CHECK(tesseraCreateContext(&failCfg, &none) == TESSERA_ERROR_UNKNOWN);
     CHECK(std::strcmp(tesseraGetLastErrorMessage(), "boom") == 0);
     CHECK(none == TESSERA_NULL_HANDLE);
 
@@ -404,7 +458,8 @@ static void testRuntime() {
     CHECK(tesseraGetContextInfo(esCtx, &info) == TESSERA_ERROR_INVALID_HANDLE);
     bool warned = false;
     for (const auto& l : g_logs)
-        if (l.rfind("2:", 0) == 0 && l.find("never destroyed") != std::string::npos) warned = true;
+        if (l.rfind("2:", 0) == 0 && l.find("never destroyed") != std::string::npos)
+            warned = true;
     CHECK(warned);
     tesseraSetLogCallback(nullptr, nullptr);
 
@@ -423,7 +478,8 @@ static void testRuntime() {
                 CHECK(tesseraTerminate() == TESSERA_SUCCESS);
             }
         });
-    for (auto& t : threads) t.join();
+    for (auto& t : threads)
+        t.join();
     CHECK(Runtime::instance().refCount() == 0);
 }
 
@@ -441,7 +497,9 @@ static void testAffinity() {
     // being reported without leaving a stale claim behind.
     CHECK(tesseraMakeCurrent(ctx) == TESSERA_ERROR_UNSUPPORTED);
     CHECK(tesseraGetCurrentContext() == TESSERA_NULL_HANDLE);
-    std::thread([&] { CHECK(tesseraMakeCurrent(ctx) == TESSERA_ERROR_UNSUPPORTED); }).join(); // no stuck owner
+    std::thread([&] {
+        CHECK(tesseraMakeCurrent(ctx) == TESSERA_ERROR_UNSUPPORTED);
+    }).join(); // no stuck owner
     CHECK(tesseraSetSwapInterval(ctx, 1) == TESSERA_ERROR_WRONG_THREAD);
     CHECK(tesseraSwapBuffers(ctx) == TESSERA_ERROR_WRONG_THREAD);
     CHECK(tesseraMakeCurrent(TESSERA_NULL_HANDLE) == TESSERA_SUCCESS);
@@ -457,9 +515,9 @@ static void testAffinity() {
     CHECK(!other->alive.load());
     CHECK(aff.ownedBy(me) && !aff.busyElsewhere(me));
     aff.release(me);
-    CHECK(aff.tryAcquire(other)); // claim it as a thread that is already dead...
+    CHECK(aff.tryAcquire(other));  // claim it as a thread that is already dead...
     CHECK(!aff.busyElsewhere(me)); // ...which does not count as busy
-    CHECK(aff.tryAcquire(me));    // and can be taken over
+    CHECK(aff.tryAcquire(me));     // and can be taken over
     CHECK(aff.ownedBy(me));
     std::shared_ptr<ThreadToken> live;
     std::atomic<bool> published{false};
@@ -467,9 +525,11 @@ static void testAffinity() {
     std::thread holder([&] {
         live = currentThreadToken();
         published.store(true); // release/acquire pair with the load below makes `live` safe to read
-        while (!release.load()) std::this_thread::yield();
+        while (!release.load())
+            std::this_thread::yield();
     });
-    while (!published.load()) std::this_thread::yield();
+    while (!published.load())
+        std::this_thread::yield();
     aff.release(me);
     CHECK(aff.tryAcquire(live));
     CHECK(aff.busyElsewhere(me));
@@ -484,7 +544,12 @@ static void testAffinity() {
 
 // Whatever a broken driver returns from glGetString(GL_VERSION) must be rejected or parsed, never overflow.
 static void testGlVersionParsing() {
-    struct Case { const char* text; bool ok; bool es; int major, minor; };
+    struct Case {
+        const char* text;
+        bool ok;
+        bool es;
+        int major, minor;
+    };
     const Case cases[] = {
         {"4.6.0 NVIDIA 546.30", true, false, 4, 6},
         {"2.1 Metal - 83.1", true, false, 2, 1},
@@ -514,8 +579,8 @@ static void testGlVersionParsing() {
             std::fprintf(stderr, "parseGlVersion(\"%s\") -> %d, expected %d\n", c.text, ok, c.ok);
             ++g_failures;
         } else if (ok && (es != c.es || major != c.major || minor != c.minor)) {
-            std::fprintf(stderr, "parseGlVersion(\"%s\") -> es=%d %d.%d, expected es=%d %d.%d\n", c.text, es, major, minor,
-                         c.es, c.major, c.minor);
+            std::fprintf(stderr, "parseGlVersion(\"%s\") -> es=%d %d.%d, expected es=%d %d.%d\n", c.text, es,
+                         major, minor, c.es, c.major, c.minor);
             ++g_failures;
         }
     }
@@ -524,7 +589,8 @@ static void testGlVersionParsing() {
     CHECK(!parseGlVersion(nullptr, es, major, minor));
 }
 
-// ---- a fake backend whose contexts can be bound, reset and lost on command ----------------------------------
+// ---- a fake backend whose contexts can be bound, reset and lost on command
+// ----------------------------------
 
 static std::atomic<int> g_liveRobust{0};
 static std::atomic<int> g_resetToReport{0};
@@ -534,7 +600,9 @@ static std::thread::id g_lastDestroyThread;
 
 class RobustFakeContext : public ContextObject {
   public:
-    explicit RobustFakeContext(const TesseraContextConfig& c) : cfg(c) { ++g_liveRobust; }
+    explicit RobustFakeContext(const TesseraContextConfig& c) : cfg(c) {
+        ++g_liveRobust;
+    }
     ~RobustFakeContext() override {
         {
             std::lock_guard<std::mutex> lock(g_destroyMutex);
@@ -550,13 +618,20 @@ class RobustFakeContext : public ContextObject {
         return TESSERA_SUCCESS;
     }
     TesseraResult bindCurrent() noexcept override {
-        if (g_bindReportsLost) return fail(TESSERA_ERROR_CONTEXT_LOST, "device lost");
+        if (g_bindReportsLost)
+            return fail(TESSERA_ERROR_CONTEXT_LOST, "device lost");
         bound = true;
         return TESSERA_SUCCESS;
     }
-    void unbindCurrent() noexcept override { bound = false; }
-    TesseraResult swapBuffers() noexcept override { return TESSERA_SUCCESS; }
-    TesseraResult setSwapInterval(int32_t) noexcept override { return TESSERA_SUCCESS; }
+    void unbindCurrent() noexcept override {
+        bound = false;
+    }
+    TesseraResult swapBuffers() noexcept override {
+        return TESSERA_SUCCESS;
+    }
+    TesseraResult setSwapInterval(int32_t) noexcept override {
+        return TESSERA_SUCCESS;
+    }
     TesseraResult queryResetStatus(int32_t& out) noexcept override {
         out = g_resetToReport;
         return TESSERA_SUCCESS;
@@ -567,7 +642,9 @@ class RobustFakeContext : public ContextObject {
 
 class RobustFakeBackend : public Backend {
   public:
-    const char* name() const noexcept override { return "robust-fake"; }
+    const char* name() const noexcept override {
+        return "robust-fake";
+    }
     TesseraResult createContext(const TesseraContextConfig& c, const std::shared_ptr<ContextObject>&,
                                 std::shared_ptr<ContextObject>& out) override {
         out = std::make_shared<RobustFakeContext>(c);
@@ -582,7 +659,8 @@ static TesseraContext makeRobust(TesseraContextConfig cfg, TesseraContext shareW
     return ctx;
 }
 
-// Drives the context into the lost state the way an application would: poll while the "driver" reports a reset.
+// Drives the context into the lost state the way an application would: poll while the "driver" reports a
+// reset.
 static void loseContext(TesseraContext ctx, int32_t status) {
     EXPECT(tesseraMakeCurrent(ctx), TESSERA_SUCCESS);
     g_resetToReport = status;
@@ -617,11 +695,13 @@ static void testResetAndLoss() {
     EXPECT(tesseraSwapBuffers(ctx), TESSERA_ERROR_CONTEXT_LOST);
     EXPECT(tesseraSetSwapInterval(ctx, 1), TESSERA_ERROR_CONTEXT_LOST);
     EXPECT(tesseraMakeCurrent(ctx), TESSERA_ERROR_CONTEXT_LOST);
-    EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS); // letting go of a lost context always works
+    EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE),
+           TESSERA_SUCCESS); // letting go of a lost context always works
     EXPECT(tesseraMakeCurrent(ctx), TESSERA_ERROR_CONTEXT_LOST);
     EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
 
-    // A loss the backend discovers natively (e.g. EGL_CONTEXT_LOST at make-current) marks the context the same way.
+    // A loss the backend discovers natively (e.g. EGL_CONTEXT_LOST at make-current) marks the context the
+    // same way.
     TesseraContext native = makeRobust(cfg);
     g_bindReportsLost = true;
     EXPECT(tesseraMakeCurrent(native), TESSERA_ERROR_CONTEXT_LOST);
@@ -704,7 +784,8 @@ static void testRecreateAndShareGroups() {
 
     TesseraContext none = 0;
     EXPECT(tesseraRecreateContext(0xBAD, &none, &flags), TESSERA_ERROR_INVALID_HANDLE);
-    EXPECT(tesseraRecreateContext(a, nullptr, &flags), TESSERA_ERROR_INVALID_ARGUMENT); // `a` is destroyed: still no crash
+    EXPECT(tesseraRecreateContext(a, nullptr, &flags),
+           TESSERA_ERROR_INVALID_ARGUMENT); // `a` is destroyed: still no crash
     CHECK(g_liveRobust == 0);
 }
 
@@ -712,7 +793,8 @@ static void testDeferredDestruction() {
     TesseraContextConfig cfg = tesseraDefaultContextConfig();
     cfg.api = TESSERA_API_OPENGL;
 
-    // Destroyed by one thread while another holds it: the handle dies at once, the teardown happens ON the owner.
+    // Destroyed by one thread while another holds it: the handle dies at once, the teardown happens ON the
+    // owner.
     TesseraContext ctx = makeRobust(cfg);
     std::atomic<bool> held{false}, destroyed{false};
     std::thread::id ownerId;
@@ -720,13 +802,16 @@ static void testDeferredDestruction() {
         ownerId = std::this_thread::get_id();
         EXPECT(tesseraMakeCurrent(ctx), TESSERA_SUCCESS);
         held = true;
-        while (!destroyed.load()) std::this_thread::yield();
-        CHECK(g_liveRobust == 1);                               // still alive: only this thread may release it
+        while (!destroyed.load())
+            std::this_thread::yield();
+        CHECK(g_liveRobust == 1); // still alive: only this thread may release it
         CHECK(tessera::Runtime::instance().pendingDestructions() == 1);
-        EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS); // the owner lets go: teardown happens here
+        EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE),
+               TESSERA_SUCCESS); // the owner lets go: teardown happens here
         CHECK(g_liveRobust == 0);
     });
-    while (!held.load()) std::this_thread::yield();
+    while (!held.load())
+        std::this_thread::yield();
     EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
     EXPECT(tesseraMakeCurrent(ctx), TESSERA_ERROR_INVALID_HANDLE);
     EXPECT(tesseraDestroyContext(ctx), TESSERA_ERROR_INVALID_HANDLE);
@@ -747,9 +832,11 @@ static void testDeferredDestruction() {
         leaverId = std::this_thread::get_id();
         EXPECT(tesseraMakeCurrent(leaving), TESSERA_SUCCESS);
         held = true;
-        while (!destroyed.load()) std::this_thread::yield();
+        while (!destroyed.load())
+            std::this_thread::yield();
     });
-    while (!held.load()) std::this_thread::yield();
+    while (!held.load())
+        std::this_thread::yield();
     EXPECT(tesseraDestroyContext(leaving), TESSERA_SUCCESS);
     CHECK(g_liveRobust == 1);
     destroyed = true;
@@ -767,12 +854,14 @@ static void testDeferredDestruction() {
     std::thread switcher([&] {
         EXPECT(tesseraMakeCurrent(first), TESSERA_SUCCESS);
         held = true;
-        while (!destroyed.load()) std::this_thread::yield();
+        while (!destroyed.load())
+            std::this_thread::yield();
         EXPECT(tesseraMakeCurrent(second), TESSERA_SUCCESS);
         CHECK(g_liveRobust == 1); // `first` is gone, `second` remains
         EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS);
     });
-    while (!held.load()) std::this_thread::yield();
+    while (!held.load())
+        std::this_thread::yield();
     EXPECT(tesseraDestroyContext(first), TESSERA_SUCCESS);
     destroyed = true;
     switcher.join();
@@ -790,10 +879,13 @@ static void testDeferredDestruction() {
     std::thread late([&] {
         EXPECT(tesseraMakeCurrent(heldAtTerminate), TESSERA_SUCCESS);
         held = true;
-        while (!terminated.load()) std::this_thread::yield();
-        EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS); // the runtime is gone: harmless no-op
+        while (!terminated.load())
+            std::this_thread::yield();
+        EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE),
+               TESSERA_SUCCESS); // the runtime is gone: harmless no-op
     });
-    while (!held.load()) std::this_thread::yield();
+    while (!held.load())
+        std::this_thread::yield();
     EXPECT(tesseraDestroyContext(heldAtTerminate), TESSERA_SUCCESS);
     EXPECT(tesseraTerminate(), TESSERA_SUCCESS);
     terminated = true;
@@ -809,18 +901,22 @@ static void testResourceWarnings() {
     g_logs.clear();
     tesseraSetLogCallback(logSink, nullptr);
     std::vector<TesseraContext> all;
-    for (int i = 0; i < 300; ++i) all.push_back(makeRobust(cfg));
+    for (int i = 0; i < 300; ++i)
+        all.push_back(makeRobust(cfg));
     tesseraSetLogCallback(nullptr, nullptr);
     int warnings = 0;
     for (const auto& l : g_logs)
-        if (l.rfind("2:", 0) == 0 && l.find("live contexts") != std::string::npos) ++warnings;
+        if (l.rfind("2:", 0) == 0 && l.find("live contexts") != std::string::npos)
+            ++warnings;
     CHECK(warnings == 2); // once at 64 and once at 256, not once per context
-    for (TesseraContext ctx : all) EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
+    for (TesseraContext ctx : all)
+        EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
     CHECK(g_liveRobust == 0);
 }
 
 #if defined(__linux__)
-// ---- the scoped X error handler must survive another library leaving it installed ------------------------------------
+// ---- the scoped X error handler must survive another library leaving it installed
+// ------------------------------------
 static int g_hostHandlerCalls = 0;
 static int hostXHandler(tessera::x11::Display*, tessera::x11::XErrorEvent*) {
     ++g_hostHandlerCalls;
@@ -834,18 +930,22 @@ static void testXErrorScopeStaleInstall() {
         return;
     }
     using tessera::x11::XErrorHandler;
-    const XErrorHandler original = api->xlib.XSetErrorHandler(&hostXHandler); // the "host application" installs its handler
+    const XErrorHandler original =
+        api->xlib.XSetErrorHandler(&hostXHandler); // the "host application" installs its handler
     {
         tessera::x11::XErrorScope scope(*api, nullptr);
-        // While we are active, another library pushes its own handler: it receives OUR handler as the one to restore later.
+        // While we are active, another library pushes its own handler: it receives OUR handler as the one to
+        // restore later.
         XErrorHandler ours = api->xlib.XSetErrorHandler(&hostXHandler);
         (void)api->xlib.XSetErrorHandler(ours);
         (void)ours;
     }
-    // After the scope ended the host handler is back. Now the other library "pops" late and reinstalls what it was given.
+    // After the scope ended the host handler is back. Now the other library "pops" late and reinstalls what
+    // it was given.
     XErrorHandler installed = api->xlib.XSetErrorHandler(&hostXHandler);
     CHECK(installed == &hostXHandler);
-    // Emulate the leak: install our own handler again via a scope's constructor path, then abandon it without restoring.
+    // Emulate the leak: install our own handler again via a scope's constructor path, then abandon it without
+    // restoring.
     XErrorHandler leaked = nullptr;
     {
         tessera::x11::XErrorScope scope(*api, nullptr);
@@ -853,10 +953,12 @@ static void testXErrorScopeStaleInstall() {
         (void)api->xlib.XSetErrorHandler(leaked);
     }
     CHECK(leaked != nullptr && leaked != &hostXHandler);
-    api->xlib.XSetErrorHandler(leaked); // the late restore: scopedHandler is now installed with no scope active
+    api->xlib.XSetErrorHandler(
+        leaked); // the late restore: scopedHandler is now installed with no scope active
 
     {
-        tessera::x11::XErrorScope scope(*api, nullptr); // used to record scopedHandler as "previous" and recurse forever
+        tessera::x11::XErrorScope scope(
+            *api, nullptr); // used to record scopedHandler as "previous" and recurse forever
         XErrorHandler current = api->xlib.XSetErrorHandler(&hostXHandler);
         CHECK(current == leaked);
         (void)api->xlib.XSetErrorHandler(current);
@@ -895,7 +997,8 @@ static void testPoolAndNativeApi() {
     CHECK(tesseraPooledContextCount() == 3 && g_liveRobust == 6); // sharing never takes a pooled context
 
     // Limits and misuse.
-    EXPECT(tesseraPrewarmContexts(&cfg, 62), TESSERA_ERROR_INVALID_ARGUMENT); // 3 pooled + 62 > 64: refused up front
+    EXPECT(tesseraPrewarmContexts(&cfg, 62),
+           TESSERA_ERROR_INVALID_ARGUMENT); // 3 pooled + 62 > 64: refused up front
     CHECK(tesseraPooledContextCount() == 3);
     EXPECT(tesseraPrewarmContexts(&cfg, 61), TESSERA_SUCCESS); // exactly 64 in total
     CHECK(tesseraPooledContextCount() == 64);
@@ -908,7 +1011,8 @@ static void testPoolAndNativeApi() {
     std::vector<std::thread> threads;
     for (std::size_t i = 0; i < taken.size(); ++i)
         threads.emplace_back([&, i] { EXPECT(tesseraCreateContext(&cfg, &taken[i]), TESSERA_SUCCESS); });
-    for (auto& th : threads) th.join();
+    for (auto& th : threads)
+        th.join();
     std::sort(taken.begin(), taken.end());
     CHECK(std::adjacent_find(taken.begin(), taken.end()) == taken.end());
     CHECK(tesseraPooledContextCount() == 64 - 16);
@@ -921,8 +1025,10 @@ static void testPoolAndNativeApi() {
     CHECK(tesseraPooledContextCount() == before);
 
     // Terminate empties the pool and destroys every pooled native context.
-    for (TesseraContext h : taken) EXPECT(tesseraDestroyContext(h), TESSERA_SUCCESS);
-    for (TesseraContext h : {a, b, c}) EXPECT(tesseraDestroyContext(h), TESSERA_SUCCESS);
+    for (TesseraContext h : taken)
+        EXPECT(tesseraDestroyContext(h), TESSERA_SUCCESS);
+    for (TesseraContext h : {a, b, c})
+        EXPECT(tesseraDestroyContext(h), TESSERA_SUCCESS);
     CHECK(tesseraPooledContextCount() > 0);
     EXPECT(tesseraTerminate(), TESSERA_SUCCESS);
     CHECK(tesseraPooledContextCount() == 0);
@@ -950,8 +1056,9 @@ static void testProbe() {
 
     TesseraProbeReport rep = tesseraDefaultProbeReport();
     EXPECT(tesseraProbe(&cfg, &rep), TESSERA_SUCCESS);
-    CHECK(rep.result == TESSERA_SUCCESS && std::strcmp(rep.backend, "robust-fake") == 0 && rep.message[0] == '\0');
-    CHECK(g_liveRobust == 0); // created and destroyed again
+    CHECK(rep.result == TESSERA_SUCCESS && std::strcmp(rep.backend, "robust-fake") == 0 &&
+          rep.message[0] == '\0');
+    CHECK(g_liveRobust == 0);                                         // created and destroyed again
     CHECK(tessera::Runtime::instance().liveContexts() == liveBefore); // no handle was registered
     CHECK(tesseraPooledContextCount() == pooledBefore);
 
@@ -995,7 +1102,8 @@ static void testProbe() {
                 EXPECT(tesseraProbe(&cfg, &r), TESSERA_SUCCESS);
             }
         });
-    for (auto& th : threads) th.join();
+    for (auto& th : threads)
+        th.join();
     CHECK(g_liveRobust == 1); // only the pooled one remains
     EXPECT(tesseraTerminate(), TESSERA_SUCCESS);
     CHECK(g_liveRobust == 0);
@@ -1031,6 +1139,7 @@ int main() {
     testRuntime();
     testAffinity();
     testLifecycleRobustness();
-    if (g_failures == 0) std::puts("test_core: OK");
+    if (g_failures == 0)
+        std::puts("test_core: OK");
     return g_failures == 0 ? 0 : 1;
 }

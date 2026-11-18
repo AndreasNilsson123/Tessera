@@ -18,21 +18,24 @@ namespace tessera {
 namespace {
 
 /*
- * TESSERA_BACKEND=<name>[,<name>...] restricts and orders the backends (names: wgl, glx, egl, cgl). Without it the
- * platform default order applies and the first backend able to serve a request wins; one that cannot serve it at
- * all reports UNSUPPORTED and the next is tried.
+ * TESSERA_BACKEND=<name>[,<name>...] restricts and orders the backends (names: wgl, glx, egl, cgl). Without
+ * it the platform default order applies and the first backend able to serve a request wins; one that cannot
+ * serve it at all reports UNSUPPORTED and the next is tried.
  */
 void applyBackendSelection(std::vector<std::shared_ptr<Backend>>& backends) {
     std::string list;
-    if (!readEnv("TESSERA_BACKEND", list)) return;
+    if (!readEnv("TESSERA_BACKEND", list))
+        return;
 
     std::vector<std::shared_ptr<Backend>> selected;
     for (std::size_t start = 0; start <= list.size();) {
         std::size_t end = list.find(',', start);
-        if (end == std::string::npos) end = list.size();
+        if (end == std::string::npos)
+            end = list.size();
         const std::string name = list.substr(start, end - start);
         start = end + 1;
-        if (name.empty()) continue;
+        if (name.empty())
+            continue;
         auto it = std::find_if(backends.begin(), backends.end(),
                                [&](const std::shared_ptr<Backend>& b) { return name == b->name(); });
         if (it == backends.end())

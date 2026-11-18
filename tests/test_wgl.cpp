@@ -17,25 +17,26 @@
 #include <vector>
 
 static int g_failures = 0;
-#define CHECK(cond)                                                                                      \
-    do {                                                                                                 \
-        if (!(cond)) {                                                                                   \
-            std::fprintf(stderr, "%s:%d: CHECK failed: %s\n", __FILE__, __LINE__, #cond);                \
-            ++g_failures;                                                                                \
-        }                                                                                                \
+#define CHECK(cond)                                                                                          \
+    do {                                                                                                     \
+        if (!(cond)) {                                                                                       \
+            std::fprintf(stderr, "%s:%d: CHECK failed: %s\n", __FILE__, __LINE__, #cond);                    \
+            ++g_failures;                                                                                    \
+        }                                                                                                    \
     } while (0)
-#define EXPECT(call, want)                                                                               \
-    do {                                                                                                 \
-        const TesseraResult got_ = (call);                                                               \
-        if (got_ != (want)) {                                                                            \
-            std::fprintf(stderr, "%s:%d: %s -> %s, expected %s (%s)\n", __FILE__, __LINE__, #call,       \
-                         tesseraResultString(got_), tesseraResultString(want), tesseraGetLastErrorMessage()); \
-            ++g_failures;                                                                                \
-        }                                                                                                \
+#define EXPECT(call, want)                                                                                   \
+    do {                                                                                                     \
+        const TesseraResult got_ = (call);                                                                   \
+        if (got_ != (want)) {                                                                                \
+            std::fprintf(stderr, "%s:%d: %s -> %s, expected %s (%s)\n", __FILE__, __LINE__, #call,           \
+                         tesseraResultString(got_), tesseraResultString(want),                               \
+                         tesseraGetLastErrorMessage());                                                      \
+            ++g_failures;                                                                                    \
+        }                                                                                                    \
     } while (0)
 
-#include "robustness_common.hpp"
 #include "interop_common.hpp"
+#include "robustness_common.hpp"
 
 using GlGetString = const unsigned char*(WINAPI*)(unsigned);
 using GlGenTextures = void(WINAPI*)(int, unsigned*);
@@ -56,8 +57,10 @@ struct ForeignContext {
     HDC dc = nullptr;
     HGLRC rc = nullptr;
     bool create() {
-        hwnd = CreateWindowExW(0, L"STATIC", L"foreign", WS_POPUP, 0, 0, 1, 1, nullptr, nullptr, nullptr, nullptr);
-        if (!hwnd) return false;
+        hwnd = CreateWindowExW(0, L"STATIC", L"foreign", WS_POPUP, 0, 0, 1, 1, nullptr, nullptr, nullptr,
+                               nullptr);
+        if (!hwnd)
+            return false;
         dc = GetDC(hwnd);
         PIXELFORMATDESCRIPTOR pfd = {};
         pfd.nSize = sizeof pfd;
@@ -67,15 +70,22 @@ struct ForeignContext {
         pfd.cColorBits = 32;
         pfd.cDepthBits = 24;
         const int pf = ChoosePixelFormat(dc, &pfd);
-        if (!pf || !SetPixelFormat(dc, pf, &pfd)) return false;
+        if (!pf || !SetPixelFormat(dc, pf, &pfd))
+            return false;
         rc = wglCreateContext(dc);
         return rc != nullptr;
     }
-    void makeCurrent() const { wglMakeCurrent(dc, rc); }
-    bool isCurrent() const { return wglGetCurrentContext() == rc && wglGetCurrentDC() == dc; }
+    void makeCurrent() const {
+        wglMakeCurrent(dc, rc);
+    }
+    bool isCurrent() const {
+        return wglGetCurrentContext() == rc && wglGetCurrentDC() == dc;
+    }
     void destroy() {
-        if (wglGetCurrentContext() == rc) wglMakeCurrent(nullptr, nullptr);
-        if (rc) wglDeleteContext(rc);
+        if (wglGetCurrentContext() == rc)
+            wglMakeCurrent(nullptr, nullptr);
+        if (rc)
+            wglDeleteContext(rc);
         if (hwnd) {
             ReleaseDC(hwnd, dc);
             DestroyWindow(hwnd);
@@ -90,14 +100,16 @@ static void testBasicCreateAndInfo() {
     TesseraContextConfig cfg = baseConfig();
     TesseraContext ctx = 0;
     EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_SUCCESS);
-    if (!ctx) return;
+    if (!ctx)
+        return;
 
     TesseraContextInfo info = tesseraDefaultContextInfo();
     EXPECT(tesseraGetContextInfo(ctx, &info), TESSERA_SUCCESS);
-    std::printf("  default context: %s | %s | GL %s\n    api=%u %d.%d profile=%u flags=0x%x rgba=%d%d%d%d d=%d s=%d samples=%d\n",
-                info.vendor, info.renderer, info.version, info.api, info.versionMajor, info.versionMinor, info.profile,
-                info.flags, info.redBits, info.greenBits, info.blueBits, info.alphaBits, info.depthBits,
-                info.stencilBits, info.samples);
+    std::printf("  default context: %s | %s | GL %s\n    api=%u %d.%d profile=%u flags=0x%x rgba=%d%d%d%d "
+                "d=%d s=%d samples=%d\n",
+                info.vendor, info.renderer, info.version, info.api, info.versionMajor, info.versionMinor,
+                info.profile, info.flags, info.redBits, info.greenBits, info.blueBits, info.alphaBits,
+                info.depthBits, info.stencilBits, info.samples);
     CHECK(info.api == TESSERA_API_OPENGL);
     CHECK(info.profile == TESSERA_PROFILE_COMPATIBILITY); // plain request = legacy/compatibility context
     CHECK(info.versionMajor >= 1);
@@ -146,7 +158,8 @@ static void testForeignContextUntouched() {
     CHECK(foreign.isCurrent());
 
     EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
-    if (coreCtx) EXPECT(tesseraDestroyContext(coreCtx), TESSERA_SUCCESS);
+    if (coreCtx)
+        EXPECT(tesseraDestroyContext(coreCtx), TESSERA_SUCCESS);
     CHECK(foreign.isCurrent()); // destroy
 
     // Our context made current, then the foreign library takes the thread back: our release must not drop it.
@@ -174,7 +187,8 @@ static void testMakeCurrentAndProcs() {
     TesseraContextConfig cfg = baseConfig();
     TesseraContext ctx = 0;
     EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_SUCCESS);
-    if (!ctx) return;
+    if (!ctx)
+        return;
     TesseraContextInfo info = tesseraDefaultContextInfo();
     tesseraGetContextInfo(ctx, &info);
 
@@ -184,10 +198,12 @@ static void testMakeCurrentAndProcs() {
 
     auto glGetString = reinterpret_cast<GlGetString>(tesseraGetProcAddress("glGetString"));
     CHECK(glGetString != nullptr);
-    if (glGetString) CHECK(std::strcmp(reinterpret_cast<const char*>(glGetString(0x1F01)), info.renderer) == 0);
+    if (glGetString)
+        CHECK(std::strcmp(reinterpret_cast<const char*>(glGetString(0x1F01)), info.renderer) == 0);
     CHECK(tesseraGetProcAddress("glThisFunctionDoesNotExist") == nullptr);
     CHECK(tesseraGetProcAddress(nullptr) == nullptr);
-    if (info.versionMajor >= 2) CHECK(tesseraGetProcAddress("glGenBuffers") != nullptr);
+    if (info.versionMajor >= 2)
+        CHECK(tesseraGetProcAddress("glGenBuffers") != nullptr);
 
     EXPECT(tesseraSetSwapInterval(ctx, 0), TESSERA_SUCCESS);
     EXPECT(tesseraSetSwapInterval(ctx, 1), TESSERA_SUCCESS);
@@ -207,7 +223,8 @@ static void testThreadRules() {
     TesseraContextConfig cfg = baseConfig();
     TesseraContext ctx = 0;
     EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_SUCCESS);
-    if (!ctx) return;
+    if (!ctx)
+        return;
 
     EXPECT(tesseraMakeCurrent(ctx), TESSERA_SUCCESS);
     std::thread([&] {
@@ -274,8 +291,8 @@ static void testConfigNegotiation() {
     if (r == TESSERA_SUCCESS) {
         TesseraContextInfo info = tesseraDefaultContextInfo();
         tesseraGetContextInfo(ctx, &info);
-        std::printf("  core request -> GL %d.%d profile=%u flags=0x%x\n", info.versionMajor, info.versionMinor,
-                    info.profile, info.flags);
+        std::printf("  core request -> GL %d.%d profile=%u flags=0x%x\n", info.versionMajor,
+                    info.versionMinor, info.profile, info.flags);
         CHECK(info.profile == TESSERA_PROFILE_CORE);
         CHECK(info.versionMajor > 3 || (info.versionMajor == 3 && info.versionMinor >= 3));
         CHECK(info.flags & TESSERA_FLAG_DEBUG);
@@ -303,7 +320,8 @@ static void testConfigNegotiation() {
     const TesseraResult er = tesseraCreateContext(&es, &ctx);
     CHECK(er == TESSERA_SUCCESS || er == TESSERA_ERROR_UNSUPPORTED || er == TESSERA_ERROR_NO_MATCHING_CONFIG);
     std::printf("  OpenGL ES request: %s\n", tesseraResultString(er));
-    if (er == TESSERA_SUCCESS) tesseraDestroyContext(ctx);
+    if (er == TESSERA_SUCCESS)
+        tesseraDestroyContext(ctx);
 
     // Surface types.
     TesseraContextConfig pb = baseConfig();
@@ -336,7 +354,8 @@ static void testSharing() {
     TesseraContextConfig cfg = baseConfig();
     TesseraContext a = 0, b = 0;
     EXPECT(tesseraCreateContext(&cfg, &a), TESSERA_SUCCESS);
-    if (!a) return;
+    if (!a)
+        return;
     cfg.shareWith = a;
     EXPECT(tesseraCreateContext(&cfg, &b), TESSERA_SUCCESS);
     if (!b) {
@@ -363,7 +382,8 @@ static void testSharing() {
     // Destroying the parent first leaves the child fully working.
     EXPECT(tesseraDestroyContext(a), TESSERA_SUCCESS);
     EXPECT(tesseraMakeCurrent(b), TESSERA_SUCCESS);
-    if (isTexture) CHECK(isTexture(tex));
+    if (isTexture)
+        CHECK(isTexture(tex));
     EXPECT(tesseraDestroyContext(b), TESSERA_SUCCESS); // destroys while current on this thread
     CHECK(wglGetCurrentContext() == nullptr);
     CHECK(tesseraGetCurrentContext() == TESSERA_NULL_HANDLE);
@@ -377,13 +397,20 @@ static void testConcurrentCreation() {
             for (int i = 0; i < 15; ++i) {
                 TesseraContextConfig cfg = baseConfig();
                 TesseraContext ctx = 0;
-                if (tesseraCreateContext(&cfg, &ctx) != TESSERA_SUCCESS) { ++failures; continue; }
-                if (tesseraMakeCurrent(ctx) != TESSERA_SUCCESS) ++failures;
-                if (tesseraSwapBuffers(ctx) != TESSERA_SUCCESS) ++failures;
-                if (tesseraDestroyContext(ctx) != TESSERA_SUCCESS) ++failures;
+                if (tesseraCreateContext(&cfg, &ctx) != TESSERA_SUCCESS) {
+                    ++failures;
+                    continue;
+                }
+                if (tesseraMakeCurrent(ctx) != TESSERA_SUCCESS)
+                    ++failures;
+                if (tesseraSwapBuffers(ctx) != TESSERA_SUCCESS)
+                    ++failures;
+                if (tesseraDestroyContext(ctx) != TESSERA_SUCCESS)
+                    ++failures;
             }
         });
-    for (auto& t : threads) t.join();
+    for (auto& t : threads)
+        t.join();
     CHECK(failures == 0);
 }
 
@@ -392,7 +419,10 @@ static void testNoLeaks() {
     auto cycle = [&](int n) {
         for (int i = 0; i < n; ++i) {
             TesseraContext ctx = 0;
-            if (tesseraCreateContext(&cfg, &ctx) != TESSERA_SUCCESS) { ++g_failures; return; }
+            if (tesseraCreateContext(&cfg, &ctx) != TESSERA_SUCCESS) {
+                ++g_failures;
+                return;
+            }
             tesseraMakeCurrent(ctx);
             tesseraDestroyContext(ctx);
         }
@@ -422,7 +452,8 @@ static void testTerminateAndReinit() {
     EXPECT(tesseraInit(), TESSERA_SUCCESS); // host thread and window class are recreated
     TesseraContext again = 0;
     EXPECT(tesseraCreateContext(&cfg, &again), TESSERA_SUCCESS);
-    if (again) EXPECT(tesseraDestroyContext(again), TESSERA_SUCCESS);
+    if (again)
+        EXPECT(tesseraDestroyContext(again), TESSERA_SUCCESS);
 }
 
 static robust::Hooks wglHooks() {
@@ -431,9 +462,15 @@ static robust::Hooks wglHooks() {
     h.nothingCurrentNatively = [] { return wglGetCurrentContext() == nullptr; };
     return h;
 }
-static void testDeferredDestroy() { robust::deferredDestroy(wglHooks()); }
-static void testResetStatus() { robust::resetStatus(wglHooks()); }
-static void testDebugForwarding() { robust::debugForwarding(wglHooks()); }
+static void testDeferredDestroy() {
+    robust::deferredDestroy(wglHooks());
+}
+static void testResetStatus() {
+    robust::resetStatus(wglHooks());
+}
+static void testDebugForwarding() {
+    robust::debugForwarding(wglHooks());
+}
 static void testAttributeMatrix() {
     ForeignContext foreign;
     robust::Hooks h = wglHooks();
@@ -447,7 +484,9 @@ static void testAttributeMatrix() {
 
 // ---------------------------------------------------------------- Phase 8
 
-static void testPrewarm() { interop::prewarm(wglHooks()); }
+static void testPrewarm() {
+    interop::prewarm(wglHooks());
+}
 static void testProbe() {
     ForeignContext foreign; // a context from "another library" must survive every probe
     robust::Hooks h = wglHooks();
@@ -464,7 +503,9 @@ static void testNativeHandles() {
     e.kind = TESSERA_NATIVE_WGL;
     e.contextIndex = 0;
     e.mustBeNonZero = {0, 1, 2, 4}; // HGLRC, HDC, HWND (the hidden window), pixel format
-    e.nativeCurrent = [] { return static_cast<uint64_t>(reinterpret_cast<std::uintptr_t>(wglGetCurrentContext())); };
+    e.nativeCurrent = [] {
+        return static_cast<uint64_t>(reinterpret_cast<std::uintptr_t>(wglGetCurrentContext()));
+    };
     interop::nativeHandles(wglHooks(), e);
 
     // The native objects are real: the DC and context can be used directly by another library.
@@ -473,7 +514,8 @@ static void testNativeHandles() {
     EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_SUCCESS);
     TesseraNativeHandles nh = tesseraDefaultNativeHandles();
     EXPECT(tesseraGetNativeHandles(ctx, &nh), TESSERA_SUCCESS);
-    CHECK(GetPixelFormat(reinterpret_cast<HDC>(static_cast<std::uintptr_t>(nh.handles[1]))) == static_cast<int>(nh.handles[4]));
+    CHECK(GetPixelFormat(reinterpret_cast<HDC>(static_cast<std::uintptr_t>(nh.handles[1]))) ==
+          static_cast<int>(nh.handles[4]));
     CHECK(IsWindow(reinterpret_cast<HWND>(static_cast<std::uintptr_t>(nh.handles[2]))));
     EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
 
@@ -489,7 +531,8 @@ static void testNativeHandles() {
 }
 
 static HWND rawWindow(bool withPixelFormat, bool doubleBuffer) {
-    HWND w = CreateWindowExW(0, L"STATIC", L"attach", WS_POPUP, 0, 0, 64, 64, nullptr, nullptr, nullptr, nullptr);
+    HWND w =
+        CreateWindowExW(0, L"STATIC", L"attach", WS_POPUP, 0, 0, 64, 64, nullptr, nullptr, nullptr, nullptr);
     if (w && withPixelFormat) {
         HDC dc = GetDC(w);
         PIXELFORMATDESCRIPTOR pfd = {};
@@ -513,7 +556,9 @@ static int windowPixelFormat(HWND w) {
     return pf;
 }
 
-static uint64_t id(HWND w) { return static_cast<uint64_t>(reinterpret_cast<std::uintptr_t>(w)); }
+static uint64_t id(HWND w) {
+    return static_cast<uint64_t>(reinterpret_cast<std::uintptr_t>(w));
+}
 
 static void testWindowAttach() {
     using GlClearColor = void(WINAPI*)(float, float, float, float);
@@ -522,7 +567,8 @@ static void testWindowAttach() {
     TesseraContextConfig cfg = baseConfig(); // asks for a double-buffered format
     TesseraContext ctx = 0;
 
-    // A window that has no pixel format: refused unless the caller allows us to give it one, and left exactly as it was.
+    // A window that has no pixel format: refused unless the caller allows us to give it one, and left exactly
+    // as it was.
     HWND fresh = rawWindow(false, false);
     CHECK(fresh != nullptr);
     EXPECT(tesseraCreateContextForWindow(&cfg, id(fresh), 0, &ctx), TESSERA_ERROR_INVALID_ARGUMENT);
@@ -531,7 +577,8 @@ static void testWindowAttach() {
     CHECK(windowPixelFormat(fresh) == 0);
 
     // With permission: Tessera sets the pixel format (once, for good) and renders into the window.
-    EXPECT(tesseraCreateContextForWindow(&cfg, id(fresh), TESSERA_ATTACH_ALLOW_PIXEL_FORMAT, &ctx), TESSERA_SUCCESS);
+    EXPECT(tesseraCreateContextForWindow(&cfg, id(fresh), TESSERA_ATTACH_ALLOW_PIXEL_FORMAT, &ctx),
+           TESSERA_SUCCESS);
     if (ctx) {
         CHECK(windowPixelFormat(fresh) != 0);
         TesseraContextInfo info = tesseraDefaultContextInfo();
@@ -565,18 +612,22 @@ static void testWindowAttach() {
 
         // The window now has a format, so it can be attached again without any permission: it is adopted.
         EXPECT(tesseraCreateContextForWindow(&cfg, id(fresh), 0, &ctx), TESSERA_SUCCESS);
-        if (ctx) EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
+        if (ctx)
+            EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
     }
 
-    // A window whose owner already chose a (single-buffered) format: adopted as it is, then checked against the request.
+    // A window whose owner already chose a (single-buffered) format: adopted as it is, then checked against
+    // the request.
     HWND owned = rawWindow(true, false);
     TesseraContextConfig strict = cfg;
-    strict.fallback = TESSERA_FALLBACK_STRICT; // wants double buffering, which this window's format cannot give
+    strict.fallback =
+        TESSERA_FALLBACK_STRICT; // wants double buffering, which this window's format cannot give
     EXPECT(tesseraCreateContextForWindow(&strict, id(owned), 0, &ctx), TESSERA_ERROR_NO_MATCHING_CONFIG);
     CHECK(ctx == TESSERA_NULL_HANDLE);
     TesseraContextConfig relaxed = cfg;
     relaxed.fallback = TESSERA_FALLBACK_BEST_EFFORT;
-    EXPECT(tesseraCreateContextForWindow(&relaxed, id(owned), TESSERA_ATTACH_ALLOW_PIXEL_FORMAT, &ctx), TESSERA_SUCCESS);
+    EXPECT(tesseraCreateContextForWindow(&relaxed, id(owned), TESSERA_ATTACH_ALLOW_PIXEL_FORMAT, &ctx),
+           TESSERA_SUCCESS);
     if (ctx) {
         TesseraContextInfo info = tesseraDefaultContextInfo();
         tesseraGetContextInfo(ctx, &info);
@@ -584,9 +635,11 @@ static void testWindowAttach() {
         EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
     }
 
-    // A window destroyed while a context renders into it: errors, never a crash, and the context can still be destroyed.
+    // A window destroyed while a context renders into it: errors, never a crash, and the context can still be
+    // destroyed.
     HWND doomed = rawWindow(false, false);
-    EXPECT(tesseraCreateContextForWindow(&relaxed, id(doomed), TESSERA_ATTACH_ALLOW_PIXEL_FORMAT, &ctx), TESSERA_SUCCESS);
+    EXPECT(tesseraCreateContextForWindow(&relaxed, id(doomed), TESSERA_ATTACH_ALLOW_PIXEL_FORMAT, &ctx),
+           TESSERA_SUCCESS);
     if (ctx) {
         EXPECT(tesseraMakeCurrent(ctx), TESSERA_SUCCESS);
         DestroyWindow(doomed);
@@ -597,11 +650,14 @@ static void testWindowAttach() {
         EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
     }
 
-    // Created on another thread than the one that owns the window: windows are thread-affine for messages, not for rendering.
+    // Created on another thread than the one that owns the window: windows are thread-affine for messages,
+    // not for rendering.
     HWND crossThread = rawWindow(false, false);
     std::thread([&] {
         TesseraContext c = 0;
-        EXPECT(tesseraCreateContextForWindow(&relaxed, id(crossThread), TESSERA_ATTACH_ALLOW_PIXEL_FORMAT, &c), TESSERA_SUCCESS);
+        EXPECT(
+            tesseraCreateContextForWindow(&relaxed, id(crossThread), TESSERA_ATTACH_ALLOW_PIXEL_FORMAT, &c),
+            TESSERA_SUCCESS);
         if (c) {
             EXPECT(tesseraMakeCurrent(c), TESSERA_SUCCESS);
             EXPECT(tesseraSwapBuffers(c), TESSERA_SUCCESS);
@@ -613,8 +669,10 @@ static void testWindowAttach() {
     // Argument handling.
     TesseraContext none = 0;
     EXPECT(tesseraCreateContextForWindow(&cfg, 0, 0, &none), TESSERA_ERROR_INVALID_ARGUMENT);
-    EXPECT(tesseraCreateContextForWindow(&cfg, 0x1234, 0, &none), TESSERA_ERROR_INVALID_ARGUMENT); // not a window
-    EXPECT(tesseraCreateContextForWindow(&cfg, id(owned), 0x80, &none), TESSERA_ERROR_INVALID_ARGUMENT); // unknown flag
+    EXPECT(tesseraCreateContextForWindow(&cfg, 0x1234, 0, &none),
+           TESSERA_ERROR_INVALID_ARGUMENT); // not a window
+    EXPECT(tesseraCreateContextForWindow(&cfg, id(owned), 0x80, &none),
+           TESSERA_ERROR_INVALID_ARGUMENT); // unknown flag
     EXPECT(tesseraCreateContextForWindow(nullptr, id(owned), 0, &none), TESSERA_ERROR_INVALID_ARGUMENT);
     EXPECT(tesseraCreateContextForWindow(&cfg, id(owned), 0, nullptr), TESSERA_ERROR_INVALID_ARGUMENT);
     TesseraContextConfig wrongSurface = relaxed;
@@ -623,7 +681,8 @@ static void testWindowAttach() {
     TesseraContextConfig windowSurface = relaxed;
     windowSurface.surface = TESSERA_SURFACE_WINDOW; // accepted as an alias of DEFAULT here...
     EXPECT(tesseraCreateContextForWindow(&windowSurface, id(owned), 0, &none), TESSERA_SUCCESS);
-    if (none) tesseraDestroyContext(none);
+    if (none)
+        tesseraDestroyContext(none);
     // ... but not as a request for an ordinary context.
     TesseraContext ordinary = 0;
     EXPECT(tesseraCreateContext(&windowSurface, &ordinary), TESSERA_ERROR_INVALID_ARGUMENT);
@@ -645,14 +704,17 @@ int main() {
         TesseraContext probe = 0;
         const TesseraResult r = tesseraCreateContext(&cfg, &probe);
         if (r != TESSERA_SUCCESS) {
-            std::fprintf(stderr, "test_wgl: cannot create a basic context here: %s (%s)\n", tesseraResultString(r),
-                         tesseraGetLastErrorMessage());
+            std::fprintf(stderr, "test_wgl: cannot create a basic context here: %s (%s)\n",
+                         tesseraResultString(r), tesseraGetLastErrorMessage());
             return 1;
         }
         tesseraDestroyContext(probe);
     }
 
-    struct Section { const char* name; void (*fn)(); };
+    struct Section {
+        const char* name;
+        void (*fn)();
+    };
     const Section sections[] = {
         {"basic create/info", testBasicCreateAndInfo},
         {"foreign context untouched", testForeignContextUntouched},
@@ -680,6 +742,7 @@ int main() {
     }
 
     tesseraTerminate();
-    if (g_failures == 0) std::puts("test_wgl: OK");
+    if (g_failures == 0)
+        std::puts("test_wgl: OK");
     return g_failures == 0 ? 0 : 1;
 }
