@@ -156,4 +156,20 @@ TESSERA_API TesseraResult TESSERA_CALL tesseraCreateContextForWindow(const Tesse
     });
 }
 
+TESSERA_API TesseraResult TESSERA_CALL tesseraProbe(const TesseraContextConfig* config, TesseraProbeReport* outReport) {
+    return guarded([&]() -> TesseraResult {
+        if (!outReport) return fail(TESSERA_ERROR_INVALID_ARGUMENT, "outReport is NULL");
+        const uint32_t callerSize = outReport->structSize;
+        if (callerSize < sizeof(uint32_t) * 2) return fail(TESSERA_ERROR_INVALID_ARGUMENT, "outReport->structSize not set");
+        TesseraContextConfig normalized;
+        if (TesseraResult r = normalizeConfig(config, normalized); r != TESSERA_SUCCESS) return r;
+        TesseraProbeReport full = tesseraDefaultProbeReport();
+        const TesseraResult result = Runtime::instance().probe(normalized, full);
+        // Write at most what the caller's (possibly older/newer) struct can hold.
+        full.structSize = callerSize < sizeof full ? callerSize : static_cast<uint32_t>(sizeof full);
+        std::memcpy(outReport, &full, full.structSize);
+        return result;
+    });
+}
+
 } // extern "C"

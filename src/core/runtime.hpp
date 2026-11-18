@@ -44,6 +44,7 @@ class Runtime {
     TesseraResult getNativeHandles(TesseraContext handle, TesseraNativeHandles& out);
     TesseraResult createContextForWindow(const TesseraContextConfig& config, uint64_t nativeWindow, uint32_t flags, TesseraContext& out);
     TesseraResult prewarm(const TesseraContextConfig& config, int32_t count);
+    TesseraResult probe(const TesseraContextConfig& config, TesseraProbeReport& report);
     std::size_t pooledContexts() const;
 
     /* Called from a thread_local destructor on an exiting thread; see ThreadExitGuard. */

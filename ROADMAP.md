@@ -61,6 +61,7 @@ Phases 0-9 are **built and tested on the one machine this was developed on** (Wi
 | 7 Java | JNI (11+) and FFM (22+) in one multi-release jar, LWJGL adapter, JavaFX coexistence tests | ADR 0009, `docs/java.md` |
 | 8 Interop & advanced | Native handles (GL<->D3D11 shared texture proven), window attach (WGL, GLX), context pre-warming, GPU selection by index/render node/PCI | ADR 0010, `docs/interop.md` |
 | 9 Hardening | Seeded fuzzing under sanitizers (found and fixed an over-read), leak-tracked soak (10,200 cycles flat on Windows), security self-review, threading/coexistence/troubleshooting/compat docs, verified CMake package | `docs/security-review.md`, `docs/compat.md` |
+| post-9 Diagnostics | `tesseraProbe` (ABI 0.6.0) and the `tessera-diag` tool | `docs/diag.md` |
 
 Verified here: WGL (NVIDIA), GLX and EGL (Mesa), Java JNI+FFM on Windows (JavaFX D3D and software pipelines), ASan/UBSan/TSan on everything that needs no GPU. See Phase 10 for everything else.
 
@@ -111,7 +112,7 @@ Everything here was implemented-but-untested, deliberately skipped, or needs som
 
 ### 10.4 Release engineering
 
-- [ ] **Java bindings for the Phase 8 calls** (`getNativeHandles`, `prewarm`, window attach) and tests; choose the real package name (`dev.tessera` is a placeholder); consider a `module-info`.
+- [ ] **Java bindings for the Phase 8 and probe calls** (`getNativeHandles`, `prewarm`, window attach, `probe`) and tests; choose the real package name (`dev.tessera` is a placeholder); consider a `module-info`.
 - [ ] **Maven Central artifact** with per-platform natives (the jar currently embeds only the natives of the machine that built it), signing, javadoc/sources jars.
 - [ ] **vcpkg and Conan recipes** (the CMake package itself is verified).
 - [ ] Generated API reference (the header comments are the reference today).
@@ -133,10 +134,10 @@ Everything here was implemented-but-untested, deliberately skipped, or needs som
 
 ## Phase 11 — Feature candidates (post-1.0 unless noted)
 
-New capabilities worth considering, with a recommendation. None are started. Ordered by value per effort.
+New capabilities worth considering, with a recommendation. Items 1 and 2 are done; the rest are not started. Ordered by value per effort.
 
-1. **`tessera-diag` command-line tool** (recommended, small, pre-1.0 friendly). Prints a capability report: backends found, platform/driver/renderer strings, which versions/profiles/flags each backend can actually create, extension availability, device list. It would be the standard way to fill `docs/compat.md` from other people's machines and to answer bug reports ("run this and paste the output").
-2. **Capability probe API** (`tesseraProbe(config, &report)`): "would this request succeed, and what would I get?" without keeping a context. Today the only way is to create one. Useful for applications choosing between versions and for the diag tool. Backed by pooling, it can reuse the same machinery.
+1. ~~**`tessera-diag` command-line tool**~~ **Done** (`docs/diag.md`): text and JSON report, per-backend strict-request matrix, runs on Windows (WGL) and Linux (GLX, EGL under WSLg); macOS/CGL untested like the rest of CGL.
+2. ~~**Capability probe API**~~ **Done**: `tesseraProbe` (ABI 0.6.0), tested on WGL/GLX/EGL with a foreign context current, on the fake backend, fuzzed, and under ASan/UBSan/TSan. Not done: a Java binding for it.
 3. **Software/headless fallback backend** (OSMesa or a bundled llvmpipe/WARP path): guarantees `createContext` works on machines with no GPU or broken drivers (CI runners, remote desktops, containers). Related to the "do we ship Mesa" decision.
 4. **Windows multi-GPU selection** (10.3) exposed as a config field (`adapterPreference`: default / high-performance / low-power / by LUID), with the same "never silently another GPU" rule used for EGL.
 5. **Context-loss recovery helper**: a callback or event when a context is lost, plus an opt-in "recreate and re-share" helper, so applications do not each write the same polling loop.

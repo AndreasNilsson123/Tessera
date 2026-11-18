@@ -184,4 +184,50 @@ inline void nativeHandles(const robust::Hooks& h, const HandleExpectations& e) {
     EXPECT(tesseraGetNativeHandles(ctx, &nh), TESSERA_ERROR_INVALID_HANDLE); // gone with the context
 }
 
+// ---------------------------------------------------------------- probing
+
+inline void probe(const robust::Hooks& h) {
+    TesseraContextConfig cfg = h.base;
+    cfg.fallback = TESSERA_FALLBACK_BEST_EFFORT;
+
+    // The probe reports exactly what a real context of the same request has.
+    TesseraContext real = 0;
+    EXPECT(tesseraCreateContext(&cfg, &real), TESSERA_SUCCESS);
+    TesseraContextInfo want = tesseraDefaultContextInfo();
+    if (real) tesseraGetContextInfo(real, &want);
+
+    if (h.armForeign) h.armForeign();
+    TesseraProbeReport rep = tesseraDefaultProbeReport();
+    EXPECT(tesseraProbe(&cfg, &rep), TESSERA_SUCCESS);
+    if (h.foreignIntact) CHECK(h.foreignIntact()); // the caller's context is undisturbed
+    CHECK(rep.result == TESSERA_SUCCESS && rep.message[0] == '\0');
+    CHECK(rep.backend[0] != '\0');
+    CHECK(rep.info.versionMajor == want.versionMajor && rep.info.versionMinor == want.versionMinor);
+    CHECK(rep.info.profile == want.profile && rep.info.flags == want.flags && rep.info.depthBits == want.depthBits);
+    CHECK(std::strcmp(rep.info.renderer, want.renderer) == 0 && std::strcmp(rep.info.vendor, want.vendor) == 0);
+    std::printf("  probe: %s via %s\n", rep.info.renderer, rep.backend);
+    CHECK(tesseraGetCurrentContext() == TESSERA_NULL_HANDLE); // nothing of ours was left current
+
+    // A request that cannot be met: same code as a real create, with a reason, and no side effects.
+    TesseraContextConfig impossible = cfg;
+    impossible.fallback = TESSERA_FALLBACK_STRICT;
+    impossible.versionMajor = 9;
+    impossible.versionMinor = 9;
+    TesseraContext none = 0;
+    const TesseraResult expected = tesseraCreateContext(&impossible, &none);
+    CHECK(expected != TESSERA_SUCCESS);
+    TesseraProbeReport bad = tesseraDefaultProbeReport();
+    const TesseraResult got = tesseraProbe(&impossible, &bad);
+    CHECK(got == expected && bad.result == expected);
+    CHECK(bad.message[0] != '\0' && bad.info.versionMajor == 0);
+    if (h.foreignIntact) CHECK(h.foreignIntact());
+
+    // Probing repeatedly does not accumulate anything.
+    for (int i = 0; i < 20; ++i) {
+        TesseraProbeReport r = tesseraDefaultProbeReport();
+        EXPECT(tesseraProbe(&cfg, &r), TESSERA_SUCCESS);
+    }
+    if (real) EXPECT(tesseraDestroyContext(real), TESSERA_SUCCESS);
+}
+
 } // namespace interop

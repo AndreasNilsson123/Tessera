@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstdio>
 #include <cstring>
 
 #include "boundary.hpp"
@@ -317,6 +318,47 @@ TesseraResult Runtime::prewarm(const TesseraContextConfig& config, int32_t count
         pool_.push_back({config, std::move(created)});
     }
     return TESSERA_SUCCESS;
+}
+
+TesseraResult Runtime::probe(const TesseraContextConfig& config, TesseraProbeReport& report) {
+    report.result = TESSERA_SUCCESS;
+    if (!contexts_.isOpen()) {
+        report.result = fail(TESSERA_ERROR_NOT_INITIALIZED, "tesseraInit has not been called");
+        std::snprintf(report.message, sizeof report.message, "%s", tesseraGetLastErrorMessage());
+        return report.result;
+    }
+    if (config.shareWith != TESSERA_NULL_HANDLE) {
+        report.result = fail(TESSERA_ERROR_INVALID_ARGUMENT, "a probe cannot share objects with a context");
+        std::snprintf(report.message, sizeof report.message, "%s", tesseraGetLastErrorMessage());
+        return report.result;
+    }
+    std::vector<std::shared_ptr<Backend>> backends;
+    {
+        std::lock_guard<std::mutex> lock(lifecycle_);
+        backends = backends_;
+    }
+    TesseraResult result = TESSERA_ERROR_UNSUPPORTED;
+    std::shared_ptr<ContextObject> created;
+    for (const auto& backend : backends) {
+        std::snprintf(report.backend, sizeof report.backend, "%s", backend->name());
+        created.reset();
+        result = backend->createContext(config, nullptr, created);
+        if (result != TESSERA_ERROR_UNSUPPORTED) break;
+    }
+    if (result == TESSERA_SUCCESS && !created) result = fail(TESSERA_ERROR_UNKNOWN, "backend reported success without a context");
+    if (result == TESSERA_SUCCESS) {
+        TesseraContextInfo info;
+        std::memset(&info, 0, sizeof info);
+        info.structSize = static_cast<uint32_t>(sizeof info);
+        result = created->describe(info);
+        if (result == TESSERA_SUCCESS) report.info = info;
+    }
+    created.reset(); // native teardown happens here, on this thread, while nothing of ours is current
+    report.result = result;
+    if (result == TESSERA_SUCCESS) report.message[0] = '\0';
+    else if (backends.empty()) std::snprintf(report.message, sizeof report.message, "%s", "no OpenGL backend is available in this build/platform");
+    else std::snprintf(report.message, sizeof report.message, "%s", tesseraGetLastErrorMessage());
+    return result;
 }
 
 TesseraResult Runtime::getNativeHandles(TesseraContext handle, TesseraNativeHandles& out) {

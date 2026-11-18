@@ -138,7 +138,7 @@ void fuzzConfigs() {
         Exact e = configImage();
         const auto* cfg = reinterpret_cast<const TesseraContextConfig*>(e.data.get());
         TesseraContext ctx = 0xDEADBEEF;
-        switch (pick(4)) {
+        switch (pick(5)) {
             case 0: {
                 const TesseraResult r = tesseraCreateContext(cfg, &ctx);
                 if (r == TESSERA_SUCCESS) live.push_back(ctx); else CHECK(ctx == TESSERA_NULL_HANDLE);
@@ -153,6 +153,16 @@ void fuzzConfigs() {
                 // Counts are capped, so a hostile one is rejected rather than allocating; the pool is emptied again below.
                 const TesseraResult r = tesseraPrewarmContexts(cfg, static_cast<int32_t>(pick(3) ? pick(3) : interesting()));
                 (void)r;
+                break;
+            }
+            case 3: {
+                // Probe into a report buffer of exactly the claimed size.
+                const std::size_t rsz = pick(4) ? sizeof(TesseraProbeReport) : 4 + pick(static_cast<uint32_t>(sizeof(TesseraProbeReport)) + 40);
+                Exact rep = exactBuffer(rsz);
+                uint32_t claim = pick(6) == 0 ? pick(4) : static_cast<uint32_t>(rsz);
+                std::memcpy(rep.data.get(), &claim, sizeof claim);
+                tesseraProbe(cfg, reinterpret_cast<TesseraProbeReport*>(rep.data.get()));
+                tesseraProbe(cfg, nullptr);
                 break;
             }
             default: {

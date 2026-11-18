@@ -27,5 +27,4 @@ First: `tesseraGetLastErrorMessage()` (Java: `TesseraException.getMessage()`) na
 
 ## Reporting a problem
 
-Include: OS, GPU and driver version, the `tesseraGetContextInfo` output of a `BEST_EFFORT` context, the exact config, the
-error message, and the log callback output. For soak-type problems run `test_soak` (`docs/ci.md`) and attach its table.
+Include: the output of `tessera-diag --json` (`docs/diag.md`), the exact config, the error message, and the log callback output. For soak-type problems run `test_soak` (`docs/ci.md`) and attach its table.

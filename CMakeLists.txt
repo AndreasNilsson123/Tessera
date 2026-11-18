@@ -21,6 +21,7 @@ option(TESSERA_BUILD_SHARED "Build Tessera as a shared library" ON)
 option(TESSERA_BUILD_TESTS "Build Tessera tests" ${BUILD_TESTING})
 option(TESSERA_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 option(TESSERA_CLANG_TIDY "Run clang-tidy on the library sources during the build" OFF)
+option(TESSERA_BUILD_TOOLS "Build the tessera-diag command-line tool" ON)
 option(TESSERA_BUILD_JAVA "Build the Java bindings: JNI glue inside the library plus bindings/java (needs a JDK 11+)" OFF)
 option(TESSERA_SANITIZE "Sanitizer to enable: address, undefined, thread (or empty)" "")
 
@@ -138,6 +139,10 @@ set_target_properties(tessera PROPERTIES
 
 if(TESSERA_BUILD_TESTS)
     add_subdirectory(tests)
+endif()
+
+if(TESSERA_BUILD_TOOLS)
+    add_subdirectory(tools/diag)
 endif()
 
 if(TESSERA_BUILD_JAVA)

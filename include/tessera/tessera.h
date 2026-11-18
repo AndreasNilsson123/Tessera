@@ -29,7 +29,7 @@ extern "C" {
 /* ---------------------------------------------------------------- version */
 
 #define TESSERA_VERSION_MAJOR 0
-#define TESSERA_VERSION_MINOR 5
+#define TESSERA_VERSION_MINOR 6
 #define TESSERA_VERSION_PATCH 0
 
 /* Incremented on every incompatible change to the C ABI, independent of the semantic version. */
@@ -280,6 +280,34 @@ TESSERA_API int32_t TESSERA_CALL tesseraPooledContextCount(void);
 
 TESSERA_API TesseraResult TESSERA_CALL tesseraCreateContextForWindow(const TesseraContextConfig* config, uint64_t nativeWindow,
                                                                      uint32_t flags, TesseraContext* outContext);
+
+/* ------------------------------------------------------------------------ probing
+ *
+ * "Would this request work here, and what would I get?" Creates the context for real (that is the only honest answer),
+ * records what the driver reports, and destroys it again. No handle is returned, the pool is bypassed (a probe must test the
+ * driver, not a cached context), nothing is left current, and the caller's current context is undisturbed.
+ *
+ * Returns what tesseraCreateContext would return for the same request. `report` is filled in whenever `config` and
+ * `report` themselves are valid, success or not; with INVALID_ARGUMENT for those two it is left untouched.
+ */
+typedef struct TesseraProbeReport {
+    uint32_t structSize;      /* in: sizeof(TesseraProbeReport) */
+    TesseraResult result;     /* same as the return value */
+    TesseraContextInfo info;  /* what the driver gave; all zero unless result == TESSERA_SUCCESS */
+    char backend[32];         /* "wgl", "glx", "egl", "cgl": the backend that answered, or the last one that was asked */
+    char message[256];        /* why it failed (truncated); empty on success */
+    uint64_t reserved[4];
+} TesseraProbeReport;
+
+static inline TesseraProbeReport tesseraDefaultProbeReport(void) {
+    TesseraProbeReport r;
+    memset(&r, 0, sizeof r);
+    r.structSize = (uint32_t)sizeof r;
+    r.info.structSize = (uint32_t)sizeof r.info;
+    return r;
+}
+
+TESSERA_API TesseraResult TESSERA_CALL tesseraProbe(const TesseraContextConfig* config, TesseraProbeReport* outReport);
 
 /* ------------------------------------------------- reset notification and context loss
  *

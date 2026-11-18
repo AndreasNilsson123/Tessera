@@ -887,6 +887,70 @@ static void testPoolAndNativeApi() {
     EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
 }
 
+static void testProbe() {
+    TesseraContextConfig cfg = tesseraDefaultContextConfig();
+    cfg.api = TESSERA_API_OPENGL;
+    const std::size_t liveBefore = tessera::Runtime::instance().liveContexts();
+    const int32_t pooledBefore = tesseraPooledContextCount();
+
+    TesseraProbeReport rep = tesseraDefaultProbeReport();
+    EXPECT(tesseraProbe(&cfg, &rep), TESSERA_SUCCESS);
+    CHECK(rep.result == TESSERA_SUCCESS && std::strcmp(rep.backend, "robust-fake") == 0 && rep.message[0] == '\0');
+    CHECK(g_liveRobust == 0); // created and destroyed again
+    CHECK(tessera::Runtime::instance().liveContexts() == liveBefore); // no handle was registered
+    CHECK(tesseraPooledContextCount() == pooledBefore);
+
+    // A probe never takes a pooled context (it must test the driver, not a cache).
+    EXPECT(tesseraPrewarmContexts(&cfg, 1), TESSERA_SUCCESS);
+    EXPECT(tesseraProbe(&cfg, &rep), TESSERA_SUCCESS);
+    CHECK(tesseraPooledContextCount() == pooledBefore + 1 && g_liveRobust == 1);
+
+    // Argument errors: report untouched for a bad config/report, filled in for a request-level failure.
+    TesseraProbeReport untouched = tesseraDefaultProbeReport();
+    untouched.message[0] = 'x';
+    TesseraContextConfig bad = cfg;
+    bad.samples = 99;
+    EXPECT(tesseraProbe(&bad, &untouched), TESSERA_ERROR_INVALID_ARGUMENT);
+    CHECK(untouched.message[0] == 'x');
+    EXPECT(tesseraProbe(nullptr, &rep), TESSERA_ERROR_INVALID_ARGUMENT);
+    EXPECT(tesseraProbe(&cfg, nullptr), TESSERA_ERROR_INVALID_ARGUMENT);
+    TesseraProbeReport unsized;
+    std::memset(&unsized, 0, sizeof unsized);
+    EXPECT(tesseraProbe(&cfg, &unsized), TESSERA_ERROR_INVALID_ARGUMENT);
+    TesseraContextConfig sharing = cfg;
+    sharing.shareWith = 1;
+    rep = tesseraDefaultProbeReport();
+    EXPECT(tesseraProbe(&sharing, &rep), TESSERA_ERROR_INVALID_ARGUMENT);
+    CHECK(rep.result == TESSERA_ERROR_INVALID_ARGUMENT && std::strstr(rep.message, "share") != nullptr);
+
+    // A caller with a smaller report struct gets only what fits.
+    unsigned char raw[16 + 8];
+    std::memset(raw, 0xCD, sizeof raw);
+    auto* small = reinterpret_cast<TesseraProbeReport*>(raw);
+    small->structSize = 8;
+    EXPECT(tesseraProbe(&cfg, small), TESSERA_SUCCESS);
+    CHECK(small->structSize == 8 && small->result == TESSERA_SUCCESS && raw[8] == 0xCD);
+
+    // Many threads probing at once.
+    std::vector<std::thread> threads;
+    for (int t = 0; t < 4; ++t)
+        threads.emplace_back([&] {
+            for (int i = 0; i < 50; ++i) {
+                TesseraProbeReport r = tesseraDefaultProbeReport();
+                EXPECT(tesseraProbe(&cfg, &r), TESSERA_SUCCESS);
+            }
+        });
+    for (auto& th : threads) th.join();
+    CHECK(g_liveRobust == 1); // only the pooled one remains
+    EXPECT(tesseraTerminate(), TESSERA_SUCCESS);
+    CHECK(g_liveRobust == 0);
+    TesseraProbeReport before = tesseraDefaultProbeReport();
+    EXPECT(tesseraProbe(&cfg, &before), TESSERA_ERROR_NOT_INITIALIZED);
+    CHECK(before.result == TESSERA_ERROR_NOT_INITIALIZED);
+    EXPECT(tesseraInit(), TESSERA_SUCCESS);
+    tessera::Runtime::instance().registerBackend(std::make_shared<RobustFakeBackend>());
+}
+
 static void testLifecycleRobustness() {
     CHECK(tesseraInit() == TESSERA_SUCCESS);
     tessera::Runtime::instance().registerBackend(std::make_shared<RobustFakeBackend>());
@@ -895,6 +959,7 @@ static void testLifecycleRobustness() {
     testDeferredDestruction();
     testResourceWarnings();
     testPoolAndNativeApi();
+    testProbe();
     CHECK(tesseraTerminate() == TESSERA_SUCCESS);
 }
 

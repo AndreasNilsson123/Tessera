@@ -448,6 +448,16 @@ static void testAttributeMatrix() {
 // ---------------------------------------------------------------- Phase 8
 
 static void testPrewarm() { interop::prewarm(wglHooks()); }
+static void testProbe() {
+    ForeignContext foreign; // a context from "another library" must survive every probe
+    robust::Hooks h = wglHooks();
+    if (foreign.create()) {
+        h.armForeign = [&] { foreign.makeCurrent(); };
+        h.foreignIntact = [&] { return foreign.isCurrent(); };
+    }
+    interop::probe(h);
+    foreign.destroy();
+}
 
 static void testNativeHandles() {
     interop::HandleExpectations e;
@@ -657,6 +667,7 @@ int main() {
         {"debug message forwarding", testDebugForwarding},
         {"attribute matrix", testAttributeMatrix},
         {"pre-warmed contexts", testPrewarm},
+        {"probe", testProbe},
         {"native handles", testNativeHandles},
         {"window attach", testWindowAttach},
         {"terminate / re-init", testTerminateAndReinit},

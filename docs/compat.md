@@ -32,6 +32,7 @@ JDKs: SelfTest ran on 17 and 21 (JNI), 22, 25 and 28 (FFM), 19 (JNI, FFM preview
 
 ```
 cmake --preset ci && cmake --build --preset ci
+build/ci/tools/diag/tessera-diag --json > diag.json   # what this machine can create (docs/diag.md)
 ctest --preset ci-gpu                           # needs a real driver; prints the renderer string
 TESSERA_SOAK_CYCLES=3000 build/ci/tests/test_soak   # leak table
 ```

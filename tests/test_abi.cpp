@@ -18,6 +18,7 @@ static int g_failures = 0;
 static_assert(sizeof(TesseraHandle) == 8, "handles are 64-bit");
 static_assert(sizeof(TesseraResult) == 4, "results are 32-bit");
 static_assert(sizeof(TesseraContextInfo) == 504, "TesseraContextInfo layout");
+static_assert(sizeof(TesseraProbeReport) == 832, "TesseraProbeReport layout");
 static_assert(sizeof(TesseraContextConfig) == 4 * 15 + 4 /*pad*/ + 8 + 64, "TesseraContextConfig layout");
 
 int main() {
