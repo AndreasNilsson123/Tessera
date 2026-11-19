@@ -3,20 +3,31 @@ name: Claude Code Review
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review, reopened]
-    # Optional: Only run on specific file changes
-    # paths:
-    #   - "src/**/*.ts"
-    #   - "src/**/*.tsx"
-    #   - "src/**/*.js"
-    #   - "src/**/*.jsx"
+    # Only code and build changes are reviewed; docs-only PRs skip it (saves tokens).
+    paths:
+      - "src/**"
+      - "include/**"
+      - "bindings/**"
+      - "tests/**"
+      - "tools/**"
+      - "cmake/**"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - ".github/workflows/**"
+
+# A new push to the same PR supersedes the review still running for the previous one.
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   claude-review:
-    # Optional: Filter by PR author
-    # if: |
-    #   github.event.pull_request.user.login == 'external-contributor' ||
-    #   github.event.pull_request.user.login == 'new-developer' ||
-    #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
+    # Forks (and Dependabot) do not receive repository secrets, so the review could only fail there; skip
+    # them. Drafts are reviewed when they are marked ready (ready_for_review).
+    if: |
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'dependabot[bot]' &&
+      github.event.pull_request.draft == false
 
     runs-on: ubuntu-latest
     permissions:

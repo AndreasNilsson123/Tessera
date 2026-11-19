@@ -12,6 +12,7 @@ license Apache-2.0, copyright "Tessera contributors". Pre-1.0: the ABI may chang
 | `tessera-<v>.jar`: one multi-release jar, natives for Windows, Linux (x86_64) and macOS (aarch64), `module-info`, license files | `scripts/assemble-release.py` | **Run on a Windows + Linux pair**: the assembled jar runs `SelfTest` on Windows (JNI and FFM) and on Linux (JNI) from its embedded natives, and as a named module; output is byte-for-byte reproducible. The macOS native is taken from CI and has never been run |
 | `-sources.jar`, `-javadoc.jar`, `tessera-lwjgl-<v>.jar` (+ both), POMs | same | built and inspected |
 | `tessera-<v>.cdx.json` (CycloneDX SBOM: no third-party code is embedded) | same | generated |
+| `tessera-<v>-c-api-docs.zip`: HTML reference of `tessera.h` (Doxygen, warnings are errors) | `doxygen docs/Doxyfile` | built locally; the release workflow step has not run |
 | `SHA256SUMS`, `maven/` bundle with `.md5/.sha1/.sha256` (and `.asc` when signing) | same | generated; **signing and Central upload untested** |
 | Conan recipe `packaging/conan` | `conan create` | **verified** (build + consumer test on Linux) |
 | vcpkg port `packaging/vcpkg/ports/tessera` | - | **untested** (vcpkg could not be run here) |

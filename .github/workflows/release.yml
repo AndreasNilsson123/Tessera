@@ -115,6 +115,10 @@ jobs:
         with:
           path: artifacts
       - run: python3 scripts/fetch-java-deps.py --lwjgl # the LWJGL jars for the adapter's javadoc classpath
+      - name: C API reference (Doxygen)
+        run: |
+          sudo apt-get install -y doxygen
+          doxygen docs/Doxyfile
       - name: Assemble
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
@@ -138,6 +142,8 @@ jobs:
         run: |
           cp artifacts/native-*/tessera-*.zip artifacts/native-*/tessera-*.tar.gz release/ 2>/dev/null || true
           (cd release && sha256sum *.zip *.tar.gz *.jar *.pom *.json > SHA256SUMS)
+          (cd build/doxygen/html && zip -qr "$GITHUB_WORKSPACE/release/tessera-${{ needs.version.outputs.version }}-c-api-docs.zip" .)
+          (cd release && sha256sum tessera-*-c-api-docs.zip >> SHA256SUMS)
           cd release/maven && zip -qr ../tessera-${{ needs.version.outputs.version }}-maven-bundle.zip .
       - uses: actions/upload-artifact@v4
         with:
