@@ -50,9 +50,13 @@ Context onScreen = Context.createForWindow(config, hwndOrXWindow, /* allowSettin
 `NativeHandles` documents which entry means what per platform (WGL, GLX, EGL, CGL). Tested against LWJGL's own `WGL` and `GLX`
 bindings: the handles are the objects the driver reports as current (Windows handles are 32-bit values and may appear
 sign-extended). `createForWindow` borrows a window you own (Windows `HWND`, X11 `Window`; `UNSUPPORTED` elsewhere): Tessera never
-destroys, resizes or shows it, and sets a Windows pixel format only if you say the window is fresh (`ADR 0010`). The Java tests
-cover argument validation only: creating a real native window needs a toolkit, and the native tests (`test_wgl`, `test_glx`)
-cover the actual attach.
+destroys, resizes or shows it, and sets a Windows pixel format only if you say the window is fresh (`ADR 0010`).
+`createForNativeWindow(config, NativeWindow.wayland(wlDisplay, wlSurface, w, h), false)` does the same for a Wayland surface
+through EGL (also `NativeWindow.win32(hwnd)` and `NativeWindow.x11(window)`; `NativeWindow.cocoa` is `UNSUPPORTED`), and
+`ctx.resizeWindow(w, h)` tells the context the window changed size (ADR 0014). The Java tests attach to real windows: GLFW's
+`GLFW_NO_API` window on Windows and X11, and GLFW's Wayland platform window (`java_glfw_wayland`, skipped without a compositor);
+the native tests (`test_wgl`, `test_glx`, `test_eglwindow`) cover the same paths below the binding. Not tested: AWT/Swing windows
+(their native window ids are not part of the public AWT API).
 
 ## Threads
 

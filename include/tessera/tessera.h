@@ -31,7 +31,7 @@ extern "C" {
 /* ---------------------------------------------------------------- version */
 
 #define TESSERA_VERSION_MAJOR 0
-#define TESSERA_VERSION_MINOR 11
+#define TESSERA_VERSION_MINOR 12
 #define TESSERA_VERSION_PATCH 0
 
 /** Incremented on every incompatible change to the C ABI, independent of the semantic version. */
@@ -491,6 +491,64 @@ TESSERA_API TesseraResult TESSERA_CALL tesseraSwapBuffers(TesseraContext context
  * Success means the driver accepted the call, not that this is the interval you now get (drivers clamp, and a
  * compositor can override): ask tesseraGetSwapControl what is in effect. */
 TESSERA_API TesseraResult TESSERA_CALL tesseraSetSwapInterval(TesseraContext context, int32_t interval);
+
+/**
+ * @name Windows of other toolkits (HWND, X11, Wayland, ...)
+ * tesseraCreateContextForWindow takes one integer, which is all a Win32 or X11 window needs. A Wayland
+ * surface cannot be attached without the connection it belongs to, and a window handle without saying which
+ * kind it is invites the wrong guess, so this describes the window. The same borrowing rules apply as for
+ * tesseraCreateContextForWindow: Tessera never destroys, hides, moves or subclasses the window, and the
+ * window must outlive the context (destroy the context first).
+ *
+ *  - TESSERA_WINDOW_WIN32: `window` is an HWND (WGL; flags as for tesseraCreateContextForWindow).
+ *  - TESSERA_WINDOW_X11: `window` is an X11 Window id on the server of $DISPLAY (GLX, or EGL when that is the
+ * backend in use). `display` may be a Display* only for documentation: Tessera always uses its own connection
+ * to the same server.
+ *  - TESSERA_WINDOW_WAYLAND: `window` is a wl_surface*, `display` the wl_display* it belongs to (EGL).
+ * `width`/`height` give the size of the surface's buffer. Tessera creates a wl_egl_window for it, which it
+ * owns and destroys with the context; the wl_surface and wl_display stay yours, and your event queue must be
+ * dispatched by you (Tessera does not). After the window changes size call tesseraResizeWindow.
+ *  - TESSERA_WINDOW_COCOA: reserved for an NSView; UNSUPPORTED today (see docs/adr/0014).
+ * @{
+ */
+#define TESSERA_WINDOW_WIN32 1u
+#define TESSERA_WINDOW_X11 2u
+#define TESSERA_WINDOW_WAYLAND 3u
+#define TESSERA_WINDOW_COCOA 4u
+
+typedef struct TesseraNativeWindow {
+    uint32_t structSize; /**< in: sizeof(TesseraNativeWindow) */
+    uint32_t kind;       /**< TESSERA_WINDOW_* */
+    uint64_t window;     /**< HWND, X11 Window, wl_surface*, NSView*; pointers stored as integers */
+    uint64_t display;    /**< Wayland: wl_display* (required); X11: ignored; others 0 */
+    int32_t width;       /**< Wayland: initial buffer width in pixels (required, > 0); others ignored */
+    int32_t height;      /**< Wayland: initial buffer height in pixels (required, > 0); others ignored */
+    uint64_t reserved[4];
+} TesseraNativeWindow;
+
+static inline TesseraNativeWindow tesseraDefaultNativeWindow(void) {
+    TesseraNativeWindow w;
+    memset(&w, 0, sizeof w);
+    w.structSize = (uint32_t)sizeof w;
+    return w;
+}
+
+/** Like tesseraCreateContextForWindow for any kind of window. `flags`: TESSERA_ATTACH_ALLOW_PIXEL_FORMAT
+ * (WIN32 only). */
+TESSERA_API TesseraResult TESSERA_CALL tesseraCreateContextForNativeWindow(const TesseraContextConfig* config,
+                                                                           const TesseraNativeWindow* window,
+                                                                           uint32_t flags,
+                                                                           TesseraContext* outContext);
+
+/**
+ * Tells the context's surface that its window changed size (Wayland: resizes the wl_egl_window; the other
+ * kinds follow the window by themselves and accept the call). `context` must be current on the calling
+ * thread, and the next tesseraSwapBuffers presents a buffer of the new size. INVALID_ARGUMENT for a
+ * non-positive size, UNSUPPORTED for a context that has no window.
+ */
+TESSERA_API TesseraResult TESSERA_CALL tesseraResizeWindow(TesseraContext context, int32_t width,
+                                                           int32_t height);
+/** @} */
 
 /**
  * @name Swap control and frame pacing

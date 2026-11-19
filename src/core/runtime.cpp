@@ -650,6 +650,51 @@ TesseraResult Runtime::setSwapInterval(TesseraContext handle, int32_t interval) 
     return r;
 }
 
+TesseraResult Runtime::createContextForNativeWindow(const TesseraContextConfig& config,
+                                                    const TesseraNativeWindow& window, uint32_t flags,
+                                                    TesseraContext& out) {
+    out = TESSERA_NULL_HANDLE;
+    if (window.window == 0)
+        return fail(TESSERA_ERROR_INVALID_ARGUMENT, "window is 0");
+    if (flags & ~TESSERA_ATTACH_ALLOW_PIXEL_FORMAT)
+        return fail(TESSERA_ERROR_INVALID_ARGUMENT, "unknown attach flags");
+    switch (window.kind) {
+    case TESSERA_WINDOW_WIN32:
+    case TESSERA_WINDOW_X11:
+        break;
+    case TESSERA_WINDOW_WAYLAND:
+        if (window.display == 0)
+            return fail(TESSERA_ERROR_INVALID_ARGUMENT, "a Wayland window needs its wl_display");
+        if (window.width <= 0 || window.height <= 0 || window.width > 65536 || window.height > 65536)
+            return fail(TESSERA_ERROR_INVALID_ARGUMENT, "a Wayland window needs a buffer size in 1..65536");
+        break;
+    case TESSERA_WINDOW_COCOA:
+        return fail(TESSERA_ERROR_UNSUPPORTED, "attaching to an NSView is not implemented (docs/adr/0014)");
+    default:
+        return fail(TESSERA_ERROR_INVALID_ARGUMENT, "unknown window kind");
+    }
+    return createWith(
+        config, false,
+        [&](Backend& backend, const std::shared_ptr<ContextObject>& share,
+            std::shared_ptr<ContextObject>& created) {
+            return backend.createContextForNativeWindow(config, window, flags, share, created);
+        },
+        out);
+}
+
+TesseraResult Runtime::resizeWindow(TesseraContext handle, int32_t width, int32_t height) {
+    auto object = contexts_.get(handle);
+    if (!object)
+        return fail(TESSERA_ERROR_INVALID_HANDLE, "not a live context handle");
+    if (width <= 0 || height <= 0 || width > 65536 || height > 65536)
+        return fail(TESSERA_ERROR_INVALID_ARGUMENT, "the size must be in 1..65536");
+    if (object->lost.load())
+        return fail(TESSERA_ERROR_CONTEXT_LOST, "the context was lost; recreate it");
+    if (!object->affinity.ownedBy(currentThreadToken()))
+        return fail(TESSERA_ERROR_WRONG_THREAD, "context is not current on the calling thread");
+    return object->resizeWindow(width, height);
+}
+
 TesseraResult Runtime::getSwapControl(TesseraContext handle, TesseraSwapControl& out) {
     auto object = contexts_.get(handle);
     if (!object)

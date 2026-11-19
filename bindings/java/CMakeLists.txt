@@ -248,6 +248,12 @@ if(_have_lwjgl_api AND _have_lwjgl_gl)
             endif()
             tessera_java_test(java_glfw io.github.andreasnilsson123.tessera.lwjgl.GlfwCoexistence BINDING jni NATIVE_LIB CLASSPATH ${_lwjgl_cp} ${_native_access} ${_glfw_jvm})
             set(_glfw_tests java_glfw)
+            if(UNIX AND NOT APPLE)
+                # GLFW's Wayland platform: its windows are wl_surfaces, which Tessera attaches to through EGL. Skips (77) where GLFW
+                # cannot start on Wayland (no compositor, e.g. the Xvfb jobs).
+                tessera_java_test(java_glfw_wayland io.github.andreasnilsson123.tessera.lwjgl.GlfwCoexistence BINDING jni NATIVE_LIB CLASSPATH ${_lwjgl_cp} ${_native_access} JVM_OPTIONS -Dglfw.platform=wayland)
+                list(APPEND _glfw_tests java_glfw_wayland)
+            endif()
             if(Java_VERSION_MAJOR GREATER_EQUAL 22)
                 tessera_java_test(java_glfw_ffm io.github.andreasnilsson123.tessera.lwjgl.GlfwCoexistence BINDING ffm NATIVE_LIB NATIVE_ACCESS CLASSPATH ${_lwjgl_cp} ${_glfw_jvm})
                 list(APPEND _glfw_tests java_glfw_ffm)

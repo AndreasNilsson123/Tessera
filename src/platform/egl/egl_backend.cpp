@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <mutex>
 #include <string>
 #include <utility>
@@ -99,6 +100,68 @@ std::vector<std::string> splitWords(const char* list) {
 
 bool contains(const std::vector<std::string>& v, const char* word) {
     return std::find(v.begin(), v.end(), word) != v.end();
+}
+
+// ---- native window systems, loaded on demand ------------------------------------------------------
+
+/* libwayland-egl: the bridge between a caller's wl_surface and an EGL window surface. Leaked on purpose (like
+ * the other libraries: dlclose of a GL stack is hazardous). */
+struct WaylandEgl {
+    DynamicLibrary lib;
+    void* (*create)(void* surface, int width, int height) = nullptr;
+    void (*destroy)(void* window) = nullptr;
+    void (*resize)(void* window, int width, int height, int dx, int dy) = nullptr;
+};
+
+const WaylandEgl* waylandEgl() noexcept {
+    static const WaylandEgl* api = []() -> const WaylandEgl* {
+        auto* w = new WaylandEgl();
+        w->lib = DynamicLibrary::open("libwayland-egl.so.1");
+        if (w->lib) {
+            w->create = reinterpret_cast<decltype(w->create)>(w->lib.symbol("wl_egl_window_create"));
+            w->destroy = reinterpret_cast<decltype(w->destroy)>(w->lib.symbol("wl_egl_window_destroy"));
+            w->resize = reinterpret_cast<decltype(w->resize)>(w->lib.symbol("wl_egl_window_resize"));
+        }
+        if (!w->lib || !w->create || !w->destroy || !w->resize) {
+            delete w;
+            return nullptr;
+        }
+        return w;
+    }();
+    return api;
+}
+
+/* The one Xlib connection EGL's X11 platform uses, opened on first use and kept for the life of the process
+ * (the server is $DISPLAY's, the same one a window of the caller's lives on). Xlib threading is made safe the
+ * same way the GLX backend does (ADR 0005/0013): the host's own call is detected, and TESSERA_NO_XINITTHREADS
+ * opts out. */
+void* x11Display(std::string& error) {
+    static std::mutex mutex;
+    static void* display = nullptr;
+    std::lock_guard<std::mutex> lock(mutex);
+    if (display)
+        return display;
+    static DynamicLibrary x11 = DynamicLibrary::open("libX11.so.6");
+    if (!x11) {
+        error = "libX11 is not available";
+        return nullptr;
+    }
+    using OpenFn = void* (*)(const char*);
+    using ThreadsFn = int (*)();
+    auto open = reinterpret_cast<OpenFn>(x11.symbol("XOpenDisplay"));
+    auto initThreads = reinterpret_cast<ThreadsFn>(x11.symbol("XInitThreads"));
+    if (!open) {
+        error = "libX11 has no XOpenDisplay";
+        return nullptr;
+    }
+    void* const* lock_ = static_cast<void* const*>(x11.symbol("_Xglobal_lock"));
+    const bool hostDidIt = lock_ && *lock_ != nullptr;
+    if (initThreads && !hostDidIt && !std::getenv("TESSERA_NO_XINITTHREADS"))
+        initThreads();
+    display = open(nullptr);
+    if (!display)
+        error = "cannot open the X display for EGL";
+    return display;
 }
 
 // ---- the display ----------------------------------------------------------------------------------
@@ -272,6 +335,46 @@ class EglShared {
         return false;
     }
 
+    /* An EGLDisplay for a caller's window system (X11: our own connection to $DISPLAY; Wayland: the caller's
+     * wl_display). EGL hands out the same EGLDisplay for the same native display, so it may already be
+     * initialised by the host: that is fine, and it is never terminated (see the class comment). */
+    bool openNative(EGLenum platformEnum, void* nativeDisplay, const char* name, std::string& error) {
+        const EglFns& f = api->fn;
+        const std::vector<std::string> client = splitWords(f.eglQueryString(nullptr, kExtensions));
+        const bool wayland = platformEnum == kPlatformWayland;
+        if (!f.eglGetPlatformDisplayEXT || !contains(client, "EGL_EXT_platform_base")) {
+            error = "this EGL cannot create displays for a window system (EGL_EXT_platform_base)";
+            return false;
+        }
+        if (!contains(client, wayland ? "EGL_EXT_platform_wayland" : "EGL_EXT_platform_x11") &&
+            !contains(client, wayland ? "EGL_KHR_platform_wayland" : "EGL_KHR_platform_x11")) {
+            error = std::string("this EGL has no ") + name + " platform";
+            return false;
+        }
+        EGLDisplay d = f.eglGetPlatformDisplayEXT(platformEnum, nativeDisplay, nullptr);
+        if (!d) {
+            error = std::string("eglGetPlatformDisplay failed for the ") + name + " display";
+            return false;
+        }
+        EGLint maj = 0, min = 0;
+        if (!f.eglInitialize(d, &maj, &min) || maj < 1 || (maj == 1 && min < 4)) {
+            error = std::string("the EGL ") + name + " display could not be initialised";
+            return false;
+        }
+        const char* apis = f.eglQueryString(d, kClientApis);
+        if (!apis || !*apis) {
+            error = std::string("the EGL ") + name + " display offers no client API";
+            return false;
+        }
+        dpy = d;
+        major = maj;
+        minor = min;
+        platform = name;
+        clientApis = apis;
+        exts = splitWords(f.eglQueryString(d, kExtensions));
+        return finish();
+    }
+
   private:
     bool finish() const {
         logf(TESSERA_LOG_DEBUG, "EGL %d.%d via %s platform, client APIs: %s, %zu extensions", major, minor,
@@ -320,7 +423,25 @@ class EglContext final : public ContextObject {
 
     // Pbuffers and surfaceless contexts have nothing to present.
     TesseraResult swapBuffers() noexcept override {
+        if (!windowSurface)
+            return TESSERA_SUCCESS;
+        const EglFns& f = shared_->api->fn;
+        if (!f.eglSwapBuffers(shared_->dpy, surface)) {
+            const EGLint err = f.eglGetError();
+            return fail(err == kContextLost ? TESSERA_ERROR_CONTEXT_LOST : TESSERA_ERROR_PLATFORM,
+                        eglErrorText("eglSwapBuffers failed (is the window gone?)", err));
+        }
         return TESSERA_SUCCESS;
+    }
+
+    TesseraResult resizeWindow(int32_t width, int32_t height) noexcept override {
+        if (!windowSurface)
+            return fail(TESSERA_ERROR_UNSUPPORTED, "this context has no window to resize");
+        if (waylandWindow && wl) {
+            wl->resize(waylandWindow, width, height, 0, 0); // a Wayland buffer's size is ours to set
+            return TESSERA_SUCCESS;
+        }
+        return TESSERA_SUCCESS; // X11: the surface follows the window
     }
 
     TesseraResult nativeHandles(TesseraNativeHandles& out) const noexcept override {
@@ -333,9 +454,28 @@ class EglContext final : public ContextObject {
         return TESSERA_SUCCESS;
     }
 
-    TesseraResult setSwapInterval(int32_t) noexcept override {
-        return fail(TESSERA_ERROR_UNSUPPORTED,
-                    "swap interval does not apply to EGL pbuffer/surfaceless drawables");
+    TesseraResult setSwapInterval(int32_t interval) noexcept override {
+        if (!windowSurface)
+            return fail(TESSERA_ERROR_UNSUPPORTED,
+                        "swap interval does not apply to EGL pbuffer/surfaceless drawables");
+        if (interval < 0)
+            return fail(TESSERA_ERROR_INVALID_ARGUMENT, "EGL has no adaptive vsync");
+        const EglFns& f = shared_->api->fn;
+        if (!f.eglSwapInterval(shared_->dpy, interval)) // acts on the current draw surface, which is ours
+            return fail(TESSERA_ERROR_PLATFORM, eglErrorText("eglSwapInterval failed", f.eglGetError()));
+        return TESSERA_SUCCESS;
+    }
+
+    // EGL can set the interval and clamps it to the config's range, but offers no way to read the result
+    // back.
+    TesseraResult getSwapControl(TesseraSwapControl& out) noexcept override {
+        if (!windowSurface)
+            return TESSERA_SUCCESS;
+        out.caps = TESSERA_SWAP_CAP_CONTROL;
+        EGLint maxInterval = 0;
+        if (shared_->api->fn.eglGetConfigAttrib(shared_->dpy, config, kMaxSwapInterval, &maxInterval))
+            out.maxInterval = maxInterval;
+        return TESSERA_SUCCESS;
     }
 
     TesseraResult queryResetStatus(int32_t& out) noexcept override {
@@ -347,6 +487,10 @@ class EglContext final : public ContextObject {
     EGLenum apiEnum = kOpenGlApi;
     EGLConfig config = nullptr;
     EGLSurface surface = nullptr; // null = surfaceless
+    bool windowSurface = false;   // a caller's window (X11 or Wayland), not a pbuffer
+    void* waylandWindow =
+        nullptr; // the wl_egl_window we created for the caller's wl_surface; ours to destroy
+    const WaylandEgl* wl = nullptr;
     EGLContext ctx = nullptr;
     std::shared_ptr<EglContext> parent; // keeps a share parent's native context alive as long as we are
     TesseraContextInfo info = {};
@@ -365,19 +509,24 @@ class EglContext final : public ContextObject {
             f.eglDestroySurface(shared_->dpy, surface);
             surface = nullptr;
         }
+        if (waylandWindow && wl) { // after the surface that uses it; the wl_surface itself is the caller's
+            wl->destroy(waylandWindow);
+            waylandWindow = nullptr;
+        }
         // Deliberately no eglTerminate: the display may be shared with other users in this process.
     }
 };
 
 // ---- configuration --------------------------------------------------------------------------------
 
-std::vector<EGLint> configAttribs(const TesseraContextConfig& c, const FormatAttempt& a, bool floatColor) {
+std::vector<EGLint> configAttribs(const TesseraContextConfig& c, const FormatAttempt& a, bool floatColor,
+                                  EGLint surfaceBit = kPbufferBit) {
     std::vector<EGLint> v;
     auto add = [&v](EGLint key, EGLint value) {
         v.push_back(key);
         v.push_back(value);
     };
-    add(kSurfaceType, kPbufferBit);
+    add(kSurfaceType, surfaceBit);
     EGLint renderable = kOpenGlBit;
     if (c.api == TESSERA_API_OPENGL_ES)
         renderable = c.versionMajor >= 3 ? kOpenGlEs3Bit : kOpenGlEs2Bit;
@@ -418,12 +567,13 @@ struct EglPlan {
     std::vector<EGLint> flagAttribs; // key,value pairs independent of the version
 };
 
-TesseraResult planEgl(const EglShared& sh, const TesseraContextConfig& c, EglPlan& plan) {
+TesseraResult planEgl(const EglShared& sh, const TesseraContextConfig& c, EglPlan& plan,
+                      bool window = false) {
     const bool strict = c.fallback == TESSERA_FALLBACK_STRICT;
     plan = EglPlan{};
 
     // EGL pbuffers and surfaceless contexts are single-buffered: there is no swap chain to double.
-    if (c.flags & TESSERA_FLAG_DOUBLE_BUFFER) {
+    if ((c.flags & TESSERA_FLAG_DOUBLE_BUFFER) && !window) {
         if (strict)
             return fail(TESSERA_ERROR_NO_MATCHING_CONFIG,
                         "EGL pbuffer/surfaceless drawables are single-buffered: drop "
@@ -461,7 +611,7 @@ TesseraResult planEgl(const EglShared& sh, const TesseraContextConfig& c, EglPla
                     "float color buffers are not available (EGL_EXT_pixel_format_float)");
     plan.samples = c.samples;
 
-    plan.surfaceless = c.surface == TESSERA_SURFACE_NONE && sh.has("EGL_KHR_surfaceless_context");
+    plan.surfaceless = !window && c.surface == TESSERA_SURFACE_NONE && sh.has("EGL_KHR_surfaceless_context");
 
     // Context attributes (EGL 1.5 core, or EGL_KHR_create_context).
     const bool createContextExt = sh.has("EGL_KHR_create_context", true);
@@ -607,9 +757,98 @@ bool queryInfo(const EglShared& sh, const EglContext& ctx, bool wantSrgb, Tesser
         if (f.eglQuerySurface(sh.dpy, ctx.surface, kGlColorspace, &cs) && cs == kGlColorspaceSrgb)
             flags |= TESSERA_FLAG_SRGB;
     }
+    if (ctx.windowSurface) {
+        EGLint buffer = 0;
+        if (f.eglQuerySurface(sh.dpy, ctx.surface, kRenderBuffer, &buffer) && buffer == kBackBuffer)
+            flags |= TESSERA_FLAG_DOUBLE_BUFFER; // a window surface renders to a back buffer and swaps
+    }
     info.flags = flags;
-    info.surface = ctx.surface ? TESSERA_SURFACE_PBUFFER : TESSERA_SURFACE_NONE;
+    info.surface = ctx.windowSurface ? TESSERA_SURFACE_WINDOW
+                                     : (ctx.surface ? TESSERA_SURFACE_PBUFFER : TESSERA_SURFACE_NONE);
     return true;
+}
+
+// ---- surfaces for a caller's window -----------------------------------------------------------------
+
+/* The caller's window as an EGL window surface. EGL cannot say up front which config suits a given native
+ * window (X11 needs the visual to match, Wayland takes any), so the candidates of each negotiation step are
+ * tried in turn until the driver accepts one. On success `ctx` has its config, surface and (Wayland)
+ * wl_egl_window. */
+TesseraResult createWindowSurface(EglShared& sh, EglContext& ctx, const TesseraContextConfig& c,
+                                  const EglPlan& plan, const TesseraNativeWindow& win) {
+    const EglFns& f = sh.api->fn;
+    const bool strict = c.fallback == TESSERA_FALLBACK_STRICT;
+    const bool wayland = win.kind == TESSERA_WINDOW_WAYLAND;
+
+    // The native object EGL wants: Wayland needs a wl_egl_window wrapped around the caller's wl_surface
+    // (ours, destroyed with the context); X11 takes the Window id (by pointer for the platform entry point).
+    void* nativeWindow = nullptr;
+    unsigned long xid = static_cast<unsigned long>(win.window);
+    if (wayland) {
+        const WaylandEgl* wlApi = waylandEgl();
+        if (!wlApi)
+            return fail(TESSERA_ERROR_UNSUPPORTED, "libwayland-egl is not available");
+        ctx.waylandWindow = wlApi->create(reinterpret_cast<void*>(static_cast<std::uintptr_t>(win.window)),
+                                          win.width, win.height);
+        ctx.wl = wlApi;
+        if (!ctx.waylandWindow)
+            return fail(TESSERA_ERROR_PLATFORM, "wl_egl_window_create failed (is the wl_surface valid?)");
+        nativeWindow = ctx.waylandWindow;
+    }
+
+    EGLint lastError = 0;
+    // sRGB cannot be asked for in the config: try the sRGB surface first, then (best effort) without.
+    for (int srgbPass = plan.srgb ? 0 : 1; srgbPass < 2; ++srgbPass) {
+        const bool wantSrgb = srgbPass == 0;
+        for (const FormatAttempt& a : formatAttempts(plan.samples, false, strict)) {
+            const std::vector<EGLint> attribs = configAttribs(c, a, plan.floatColor, kWindowBit);
+            EGLConfig configs[32] = {};
+            EGLint count = 0;
+            if (!f.eglChooseConfig(sh.dpy, attribs.data(), configs, 32, &count) || count <= 0)
+                continue;
+            for (EGLint i = 0; i < count; ++i) {
+                std::vector<EGLint> surfaceAttribs;
+                if (wantSrgb)
+                    surfaceAttribs = {kGlColorspace, kGlColorspaceSrgb};
+                surfaceAttribs.push_back(kNone);
+                EGLSurface surface = nullptr;
+                void* const nativeArg = wayland ? nativeWindow : static_cast<void*>(&xid);
+                if (f.eglCreatePlatformWindowSurfaceEXT) {
+                    surface = f.eglCreatePlatformWindowSurfaceEXT(sh.dpy, configs[i], nativeArg,
+                                                                  surfaceAttribs.data());
+                } else if (f.eglCreatePlatformWindowSurface) {
+                    // EGLAttrib is pointer-sized
+                    std::vector<intptr_t> wide(surfaceAttribs.begin(), surfaceAttribs.end());
+                    surface = f.eglCreatePlatformWindowSurface(sh.dpy, configs[i], nativeArg, wide.data());
+                } else {
+                    surface = f.eglCreateWindowSurface(sh.dpy, configs[i],
+                                                       wayland ? nativeWindow : reinterpret_cast<void*>(xid),
+                                                       surfaceAttribs.data());
+                }
+                if (!surface) {
+                    lastError = f.eglGetError();
+                    continue;
+                }
+                ctx.config = configs[i];
+                ctx.surface = surface;
+                ctx.windowSurface = true;
+                if (a.samples != plan.samples || a.relaxDepth)
+                    logf(TESSERA_LOG_INFO, "EGL: window config relaxed (samples %d->%d, depth relaxed %d)",
+                         c.samples, a.samples, a.relaxDepth);
+                return TESSERA_SUCCESS;
+            }
+        }
+        if (wantSrgb) {
+            if (strict)
+                return fail(TESSERA_ERROR_NO_MATCHING_CONFIG,
+                            eglErrorText("no EGL config can back an sRGB window surface", lastError));
+            logf(TESSERA_LOG_INFO, "EGL: sRGB window surface unavailable, request dropped");
+        }
+    }
+    if (lastError == kBadAlloc)
+        return fail(TESSERA_ERROR_OUT_OF_MEMORY, eglErrorText("eglCreateWindowSurface failed", lastError));
+    return fail(TESSERA_ERROR_NO_MATCHING_CONFIG,
+                eglErrorText("no EGL config can render into this window", lastError));
 }
 
 // ---- the backend --------------------------------------------------------------------------------
@@ -627,6 +866,57 @@ class EglBackend final : public Backend {
         std::shared_ptr<EglShared> sh = getShared(error);
         if (!sh)
             return fail(TESSERA_ERROR_UNSUPPORTED, error);
+        return create(sh, c, shareWith, nullptr, out);
+    }
+
+    /* A caller's X11 window (through our own connection to its server) or Wayland surface (on the caller's
+     * wl_display). */
+    TesseraResult createContextForNativeWindow(const TesseraContextConfig& c,
+                                               const TesseraNativeWindow& window, uint32_t /*flags*/,
+                                               const std::shared_ptr<ContextObject>& shareWith,
+                                               std::shared_ptr<ContextObject>& out) override {
+        if (window.kind != TESSERA_WINDOW_X11 && window.kind != TESSERA_WINDOW_WAYLAND)
+            return TESSERA_ERROR_UNSUPPORTED;
+        const EglApi* api = eglApi();
+        if (!api)
+            return fail(TESSERA_ERROR_UNSUPPORTED, "libEGL is not available on this system");
+        const bool wayland = window.kind == TESSERA_WINDOW_WAYLAND;
+        std::string error;
+        void* nativeDisplay = nullptr;
+        if (wayland) {
+            nativeDisplay = reinterpret_cast<void*>(static_cast<std::uintptr_t>(window.display));
+        } else {
+            nativeDisplay = x11Display(error);
+            if (!nativeDisplay)
+                return fail(TESSERA_ERROR_UNSUPPORTED, error);
+        }
+        std::shared_ptr<EglShared> sh;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            const auto key = std::make_pair(window.kind, reinterpret_cast<std::uintptr_t>(nativeDisplay));
+            auto it = windowDisplays_.find(key);
+            if (it == windowDisplays_.end()) {
+                auto s = std::make_shared<EglShared>();
+                s->api = api;
+                if (!s->openNative(wayland ? kPlatformWayland : kPlatformX11, nativeDisplay,
+                                   wayland ? "wayland" : "x11", error))
+                    return fail(TESSERA_ERROR_UNSUPPORTED, error);
+                it = windowDisplays_.emplace(key, std::move(s)).first;
+            }
+            sh = it->second;
+        }
+        return create(sh, c, shareWith, &window, out);
+    }
+
+    uint32_t nativeWindowKind() const noexcept override {
+        return 0; // this backend takes its windows as TesseraNativeWindow only
+    }
+
+    /* The creation path shared by pbuffer/surfaceless contexts (`window` null) and contexts for a caller's
+     * window. */
+    TesseraResult create(const std::shared_ptr<EglShared>& sh, const TesseraContextConfig& c,
+                         const std::shared_ptr<ContextObject>& shareWith, const TesseraNativeWindow* window,
+                         std::shared_ptr<ContextObject>& out) {
         const EglFns& f = sh->api->fn;
 
         const EGLenum apiEnum = c.api == TESSERA_API_OPENGL_ES ? kOpenGlEsApi : kOpenGlApi;
@@ -644,13 +934,16 @@ class EglBackend final : public Backend {
             if (parent->apiEnum != apiEnum)
                 return fail(TESSERA_ERROR_INVALID_ARGUMENT,
                             "cannot share objects between OpenGL and OpenGL ES contexts");
+            if (parent->shared_->dpy != sh->dpy)
+                return fail(TESSERA_ERROR_INVALID_ARGUMENT,
+                            "cannot share objects between contexts on different EGL displays");
         }
 
         // EGL state is per thread and per API; put the caller's all back on every path.
         crossapi::EglGuard guard;
 
         EglPlan plan;
-        if (TesseraResult r = planEgl(*sh, c, plan); r != TESSERA_SUCCESS)
+        if (TesseraResult r = planEgl(*sh, c, plan, window != nullptr); r != TESSERA_SUCCESS)
             return r;
 
         auto ctx = std::make_shared<EglContext>(sh); // RAII: any failure below cleans up through ~EglContext
@@ -658,10 +951,14 @@ class EglBackend final : public Backend {
         if (!f.eglBindAPI(apiEnum))
             return fail(TESSERA_ERROR_UNSUPPORTED, eglErrorText("eglBindAPI failed", f.eglGetError()));
 
-        if (TesseraResult r = chooseConfig(*sh, c, plan, ctx->config); r != TESSERA_SUCCESS)
+        if (window) {
+            if (TesseraResult r = createWindowSurface(*sh, *ctx, c, plan, *window); r != TESSERA_SUCCESS)
+                return r;
+        } else if (TesseraResult r = chooseConfig(*sh, c, plan, ctx->config); r != TESSERA_SUCCESS) {
             return r;
+        }
 
-        if (!plan.surfaceless) {
+        if (!window && !plan.surfaceless) {
             auto makePbuffer = [&](bool srgb) {
                 std::vector<EGLint> attribs = {kWidth, 1, kHeight, 1};
                 if (srgb)
@@ -760,6 +1057,8 @@ class EglBackend final : public Backend {
 
     std::mutex mutex_;
     std::shared_ptr<EglShared> shared_;
+    // One EGLDisplay per caller window system connection: (window kind, native display) -> display state.
+    std::map<std::pair<uint32_t, std::uintptr_t>, std::shared_ptr<EglShared>> windowDisplays_;
 };
 
 } // namespace

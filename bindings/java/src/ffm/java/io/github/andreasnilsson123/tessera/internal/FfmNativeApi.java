@@ -39,6 +39,8 @@ final class FfmNativeApi implements NativeApi {
 
     // TesseraNativeHandles (88 bytes): structSize, kind, handles[6] at 8, reserved[4]
     private static final long NH_SIZE = 88, NH_KIND = 4, NH_HANDLES = 8;
+    // TesseraNativeWindow (64 bytes): structSize, kind at 4, window at 8, display at 16, width at 24, height at 28, reserved[4]
+    private static final long NW_SIZE = 64, NW_KIND = 4, NW_WINDOW = 8, NW_DISPLAY = 16, NW_WIDTH = 24, NW_HEIGHT = 28;
     // TesseraSwapControl (56 bytes): structSize, caps at 4, requested at 8, applied at 12, maxInterval at 16
     private static final long SC_SIZE = 56, SC_CAPS = 4, SC_REQUESTED = 8, SC_APPLIED = 12, SC_MAX = 16;
     // TesseraProbeReport (832 bytes): structSize, result, info (a TesseraContextInfo) at 8, backend[32] at 512, message[256] at 544
@@ -48,7 +50,7 @@ final class FfmNativeApi implements NativeApi {
     private static volatile LostSink lostSink;
 
     private final MethodHandle hInit, hTerminate, hAbi, hVersion, hCreate, hDestroy, hInfo, hMakeCurrent, hCurrent, hProc, hSwap,
-            hSwapInterval, hReset, hRecreate, hLastError, hResultString, hSetLog, hNativeHandles, hPrewarm, hPooled, hCreateForWindow, hProbe, hPoolTopUp, hPooledCountFor, hPoolClear, hIsLost, hSetLost, hSwapControl;
+            hSwapInterval, hReset, hRecreate, hLastError, hResultString, hSetLog, hNativeHandles, hPrewarm, hPooled, hCreateForWindow, hProbe, hPoolTopUp, hPooledCountFor, hPoolClear, hIsLost, hSetLost, hSwapControl, hCreateForNativeWindow, hResizeWindow;
     private final MemorySegment logStub, lostStub;
 
     public FfmNativeApi(Path library) {
@@ -80,6 +82,9 @@ final class FfmNativeApi implements NativeApi {
         hLastError = down(linker, lookup, "tesseraGetLastErrorMessage", FunctionDescriptor.of(ValueLayout.ADDRESS));
         hResultString = down(linker, lookup, "tesseraResultString", FunctionDescriptor.of(ValueLayout.ADDRESS, INT));
         hSetLog = down(linker, lookup, "tesseraSetLogCallback", FunctionDescriptor.ofVoid(ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+        hCreateForNativeWindow = down(linker, lookup, "tesseraCreateContextForNativeWindow",
+                FunctionDescriptor.of(INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS, INT, ValueLayout.ADDRESS));
+        hResizeWindow = down(linker, lookup, "tesseraResizeWindow", FunctionDescriptor.of(INT, LONG, INT, INT));
         hSwapControl = down(linker, lookup, "tesseraGetSwapControl", FunctionDescriptor.of(INT, LONG, ValueLayout.ADDRESS));
         hIsLost = down(linker, lookup, "tesseraIsContextLost", FunctionDescriptor.of(INT, LONG, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
         hSetLost = down(linker, lookup, "tesseraSetContextLostCallback", FunctionDescriptor.ofVoid(ValueLayout.ADDRESS, ValueLayout.ADDRESS));
@@ -240,6 +245,36 @@ final class FfmNativeApi implements NativeApi {
             final int r = (int) hCreate.invokeExact(c, out);
             outHandle[0] = out.get(LONG, 0);
             return r;
+        } catch (Throwable t) {
+            throw failed(t);
+        }
+    }
+
+    @Override
+    public int createContextForNativeWindow(int[] cfg, long shareWith, int kind, long window, long display, int width, int height,
+                                            int flags, long[] outHandle) {
+        try (Arena arena = Arena.ofConfined()) {
+            final MemorySegment c = config(arena, cfg, shareWith);
+            final MemorySegment w = arena.allocate(NW_SIZE, 8);
+            w.set(INT, 0, (int) NW_SIZE);
+            w.set(INT, NW_KIND, kind);
+            w.set(LONG, NW_WINDOW, window);
+            w.set(LONG, NW_DISPLAY, display);
+            w.set(INT, NW_WIDTH, width);
+            w.set(INT, NW_HEIGHT, height);
+            final MemorySegment out = arena.allocate(8, 8);
+            final int r = (int) hCreateForNativeWindow.invokeExact(c, w, flags, out);
+            outHandle[0] = out.get(LONG, 0);
+            return r;
+        } catch (Throwable t) {
+            throw failed(t);
+        }
+    }
+
+    @Override
+    public int resizeWindow(long handle, int width, int height) {
+        try {
+            return (int) hResizeWindow.invokeExact(handle, width, height);
         } catch (Throwable t) {
             throw failed(t);
         }

@@ -25,7 +25,7 @@ constexpr EGLint kAlphaSize = 0x3021, kBlueSize = 0x3022, kGreenSize = 0x3023, k
 constexpr EGLint kDepthSize = 0x3025, kStencilSize = 0x3026;
 constexpr EGLint kSamples = 0x3031, kSampleBuffers = 0x3032;
 constexpr EGLint kSurfaceType = 0x3033, kRenderableType = 0x3040;
-constexpr EGLint kPbufferBit = 0x0001;
+constexpr EGLint kPbufferBit = 0x0001, kWindowBit = 0x0004;
 constexpr EGLint kOpenGlEsBit = 0x0001, kOpenGlEs2Bit = 0x0004, kOpenGlBit = 0x0008, kOpenGlEs3Bit = 0x0040;
 constexpr EGLint kWidth = 0x3057, kHeight = 0x3056;
 constexpr EGLint kColorComponentType = 0x3339, kColorComponentFloat = 0x333B; // EGL_EXT_pixel_format_float
@@ -42,6 +42,10 @@ constexpr EGLint kContextResetStrategy = 0x31BD, kLoseContextOnReset = 0x31BF;
 constexpr EGLint kContextReleaseBehavior = 0x2097, kContextReleaseFlush = 0x2098;
 constexpr EGLint kProfileCore = 0x1, kProfileCompat = 0x2;
 
+constexpr EGLint kRenderBuffer = 0x3086, kBackBuffer = 0x3084;
+constexpr EGLint kMinSwapInterval = 0x303B, kMaxSwapInterval = 0x303C;
+constexpr EGLenum kPlatformX11 = 0x31D5;         // EGL_EXT_platform_x11 / EGL_KHR_platform_x11
+constexpr EGLenum kPlatformWayland = 0x31D8;     // EGL_EXT_platform_wayland / EGL_KHR_platform_wayland
 constexpr EGLenum kPlatformDevice = 0x313F;      // EGL_EXT_platform_device
 constexpr EGLenum kPlatformSurfaceless = 0x31DD; // EGL_MESA_platform_surfaceless
 
@@ -67,6 +71,9 @@ struct EglFns {
     EGLSurface (*eglCreatePbufferSurface)(EGLDisplay, EGLConfig, const EGLint*) = nullptr;
     EGLBoolean (*eglDestroySurface)(EGLDisplay, EGLSurface) = nullptr;
     EGLBoolean (*eglQuerySurface)(EGLDisplay, EGLSurface, EGLint, EGLint*) = nullptr;
+    EGLBoolean (*eglSwapBuffers)(EGLDisplay, EGLSurface) = nullptr;
+    EGLBoolean (*eglSwapInterval)(EGLDisplay, EGLint) = nullptr;
+    EGLSurface (*eglCreateWindowSurface)(EGLDisplay, EGLConfig, void*, const EGLint*) = nullptr;
     void* (*eglGetProcAddress)(const char*) = nullptr;
 
     // Resolved through eglGetProcAddress; may be null.
@@ -74,6 +81,11 @@ struct EglFns {
     EGLBoolean (*eglQueryDevicesEXT)(EGLint, void**, EGLint*) = nullptr;
     const char* (*eglQueryDeviceStringEXT)(void*, EGLint) = nullptr;
     EGLBoolean (*eglQueryContext)(EGLDisplay, EGLContext, EGLint, EGLint*) = nullptr; // optional
+    // The native window object is a wl_egl_window*, or a pointer to an X11 Window. The EXT entry point takes
+    // EGLint attributes; the EGL 1.5 core one takes EGLAttrib (pointer-sized) attributes, so the two must not
+    // be mixed up.
+    EGLSurface (*eglCreatePlatformWindowSurfaceEXT)(EGLDisplay, EGLConfig, void*, const EGLint*) = nullptr;
+    EGLSurface (*eglCreatePlatformWindowSurface)(EGLDisplay, EGLConfig, void*, const intptr_t*) = nullptr;
     EGLBoolean (*eglQueryDeviceBinaryEXT)(void*, EGLint, EGLint, void*,
                                           EGLint*) = nullptr; // EGL_EXT_device_persistent_id
 };

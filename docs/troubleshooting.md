@@ -8,7 +8,7 @@ First: `tesseraGetLastErrorMessage()` (Java: `TesseraException.getMessage()`) na
 |---|---|
 | `NO_MATCHING_CONFIG` | `TESSERA_FALLBACK_STRICT` (default) and the driver cannot give everything asked for. Check `tesseraGetContextInfo` on a `BEST_EFFORT` context to see what is obtainable. GL 2.1 + forward-compatible is rejected (forward-compat needs 3.0+). |
 | `UNSUPPORTED` on every call | No backend could serve the request. The message lists what was tried. Check `TESSERA_BACKEND`, `DISPLAY` (GLX), and that libEGL/libGL/libX11 exist. |
-| `UNSUPPORTED` from `tesseraCreateContextForWindow` | Window attach exists for WGL and GLX only. |
+| `UNSUPPORTED` from `tesseraCreateContextForWindow` / `...ForNativeWindow` | The integer form is for Win32 and X11 windows. Wayland surfaces and X11-through-EGL need `tesseraCreateContextForNativeWindow` (EGL); an `NSView` is not implemented (ADR 0014). |
 | `INVALID_ARGUMENT` from window attach, "does not modify windows it does not own" | The window has no pixel format; pass `TESSERA_ATTACH_ALLOW_PIXEL_FORMAT` if you know it is fresh. |
 | `WRONG_THREAD` | The context is current on another thread; release it there first. Java: a context held by a thread that just exited is retried for 2 s. |
 | `CONTEXT_LOST` | GPU reset (robust contexts) or the window vanished. Use `tesseraRecreateContext`. |

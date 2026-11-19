@@ -41,7 +41,24 @@ tesseraCreateContextForWindow(&cfg, (uint64_t)(uintptr_t)hwnd, 0, &ctx);   // WG
 - If it has none, the call **fails** unless you pass `TESSERA_ATTACH_ALLOW_PIXEL_FORMAT` (a window's format can be set only
   once, ever, so only you know whether it is fresh).
 - Present with `tesseraSwapBuffers`; `info.surface == TESSERA_SURFACE_WINDOW`.
-- EGL/CGL: `TESSERA_ERROR_UNSUPPORTED`.
+- The integer form takes a Win32 `HWND` (WGL) or an X11 `Window` (GLX). For anything else describe the window (ADR 0014):
+
+```c
+TesseraNativeWindow w = tesseraDefaultNativeWindow();
+w.kind = TESSERA_WINDOW_WAYLAND;                 // or TESSERA_WINDOW_X11 / TESSERA_WINDOW_WIN32
+w.window = (uint64_t)(uintptr_t)wlSurface;       // wl_surface*
+w.display = (uint64_t)(uintptr_t)wlDisplay;      // wl_display* the surface belongs to
+w.width = 640; w.height = 480;                   // size of the surface's buffer
+tesseraCreateContextForNativeWindow(&cfg, &w, 0, &ctx);   // through EGL: the wl_surface is wrapped in a wl_egl_window we own
+tesseraMakeCurrent(ctx);
+tesseraSetSwapInterval(ctx, 0);                  // a surface the compositor has not mapped never gets a frame callback
+...
+tesseraResizeWindow(ctx, newWidth, newHeight);   // when the window changed size (current on this thread)
+```
+
+  Wayland needs EGL (no GLX there); an X11 window goes to GLX first and to EGL (Tessera's own connection to `$DISPLAY`) when GLX
+  is unavailable or `TESSERA_BACKEND=egl`. You keep dispatching your own Wayland queue. `TESSERA_WINDOW_COCOA` (an `NSView`) is
+  `UNSUPPORTED`: the design is in ADR 0014. CGL has no window attach.
 
 ## Pooling
 

@@ -5,12 +5,14 @@ package io.github.andreasnilsson123.tessera.lwjgl;
 import io.github.andreasnilsson123.tessera.Context;
 import io.github.andreasnilsson123.tessera.ContextConfig;
 import io.github.andreasnilsson123.tessera.ContextInfo;
+import io.github.andreasnilsson123.tessera.NativeWindow;
 import io.github.andreasnilsson123.tessera.Result;
 import io.github.andreasnilsson123.tessera.TesseraException;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.glfw.GLFW;
 import org.lwjgl.glfw.GLFWErrorCallback;
 import org.lwjgl.glfw.GLFWNativeWin32;
+import org.lwjgl.glfw.GLFWNativeWayland;
 import org.lwjgl.glfw.GLFWNativeX11;
 import org.lwjgl.opengl.GL;
 import org.lwjgl.opengl.GL11C;
@@ -243,8 +245,7 @@ public final class GlfwCoexistence {
             sizeBefore[1] = h0[0];
         }
         if (WAYLAND) {
-            System.out.println("  (a Wayland window has no X11/Win32 id: attach is not applicable)");
-            GLFW.glfwDestroyWindow(win);
+            attachToWaylandWindow(win, sizeBefore);
             return;
         }
         final long id = WINDOWS ? GLFWNativeWin32.glfwGetWin32Window(win) : GLFWNativeX11.glfwGetX11Window(win);
@@ -294,6 +295,58 @@ public final class GlfwCoexistence {
         } catch (TesseraException e) {
             // Linux: nothing is adopted or refused for X11; either way it must not be a crash. Windows must succeed.
             check(!WINDOWS, "re-attaching to a window that now has a pixel format: " + e);
+        }
+        // The same window through the described form (the integer form above is what older code uses).
+        try (Context viaNative = Context.createForNativeWindow(plain(), WINDOWS ? NativeWindow.win32(id) : NativeWindow.x11(id), false)) {
+            viaNative.makeCurrent();
+            GL.createCapabilities();
+            check(is(clearAndRead(0.5f, 0f, 1f), 128, 0, 255), "attached through createForNativeWindow");
+            viaNative.resizeWindow(w[0], h[0]); // a no-op for these window systems, but legal
+            Context.releaseCurrent();
+        } catch (TesseraException e) {
+            check(false, "createForNativeWindow on a GLFW window: " + e);
+        }
+        GLFW.glfwDestroyWindow(win);
+    }
+
+    /** GLFW's Wayland platform: attach to its wl_surface through EGL (Tessera has no GLX on Wayland). */
+    private static void attachToWaylandWindow(long win, int[] size) {
+        final long display = GLFWNativeWayland.glfwGetWaylandDisplay();
+        final long surface = GLFWNativeWayland.glfwGetWaylandWindow(win);
+        check(display != 0L && surface != 0L, "GLFW exposes the wl_display and wl_surface");
+        if (display == 0L || surface == 0L) {
+            GLFW.glfwDestroyWindow(win);
+            return;
+        }
+        final NativeWindow window = NativeWindow.wayland(display, surface, size[0], size[1]);
+        try (Context ctx = Context.createForNativeWindow(plain(), window, false)) {
+            check(ctx.info().surface() == ContextConfig.Surface.WINDOW, "reported as a window context: " + ctx.info().surface());
+            ctx.makeCurrent();
+            ctx.setSwapInterval(0); // a hidden surface never receives the frame callback a vsync swap waits for
+            GL.createCapabilities();
+            check(is(clearAndRead(1f, 0.5f, 0f), 255, 128, 0), "rendered into the GLFW Wayland window's back buffer");
+            ctx.swapBuffers();
+            ctx.resizeWindow(size[0] + 16, size[1] + 16);
+            check(is(clearAndRead(0f, 0.5f, 1f), 0, 128, 255), "rendering continues after the resize");
+            ctx.swapBuffers();
+            Context.releaseCurrent();
+        } catch (TesseraException e) {
+            if (e.result() == Result.UNSUPPORTED) {
+                System.out.println("  (Wayland attach is not available here: " + e.getMessage() + ")");
+            } else {
+                check(false, "createForNativeWindow on GLFW's Wayland window: " + e);
+            }
+        }
+        // GLFW's window is untouched and attachable again.
+        check(!GLFW.glfwWindowShouldClose(win), "the window survived the context");
+        try (Context again = Context.createForNativeWindow(plain(), window, false)) {
+            again.makeCurrent();
+            again.setSwapInterval(0);
+            GL.createCapabilities();
+            check(is(clearAndRead(0f, 1f, 0f), 0, 255, 0), "attached a second time");
+            Context.releaseCurrent();
+        } catch (TesseraException e) {
+            check(e.result() == Result.UNSUPPORTED, "re-attaching to the Wayland window: " + e);
         }
         GLFW.glfwDestroyWindow(win);
     }

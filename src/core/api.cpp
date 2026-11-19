@@ -263,6 +263,54 @@ TESSERA_API TesseraResult TESSERA_CALL tesseraCreateContextForWindow(const Tesse
     });
 }
 
+TESSERA_API TesseraResult TESSERA_CALL tesseraCreateContextForNativeWindow(const TesseraContextConfig* config,
+                                                                           const TesseraNativeWindow* window,
+                                                                           uint32_t flags,
+                                                                           TesseraContext* outContext) {
+    return guarded([&]() -> TesseraResult {
+        if (!outContext)
+            return fail(TESSERA_ERROR_INVALID_ARGUMENT, "outContext is NULL");
+        *outContext = TESSERA_NULL_HANDLE;
+        if (!config)
+            return fail(TESSERA_ERROR_INVALID_ARGUMENT, "config is NULL");
+        if (!window)
+            return fail(TESSERA_ERROR_INVALID_ARGUMENT, "window is NULL");
+        // Only the caller's structSize bytes of each struct may be read (they can be older and smaller than
+        // ours).
+        TesseraNativeWindow w = tesseraDefaultNativeWindow();
+        const uint32_t wsize = window->structSize;
+        constexpr std::size_t kMinWindow = offsetof(TesseraNativeWindow, display);
+        if (wsize < kMinWindow)
+            return fail(TESSERA_ERROR_INVALID_ARGUMENT, "window->structSize is too small");
+        std::memcpy(&w, window, wsize < sizeof w ? wsize : sizeof w);
+        for (uint64_t r : w.reserved)
+            if (r != 0)
+                return fail(TESSERA_ERROR_INVALID_ARGUMENT, "reserved fields must be zero");
+        TesseraContextConfig copy;
+        std::memset(&copy, 0, sizeof copy);
+        const uint32_t claimed = config->structSize;
+        std::memcpy(&copy, config, claimed < sizeof copy ? claimed : sizeof copy);
+        constexpr std::size_t kSurfaceEnd = offsetof(TesseraContextConfig, surface) + sizeof(TesseraEnum);
+        if (claimed >= kSurfaceEnd) {
+            if (copy.surface == TESSERA_SURFACE_WINDOW)
+                copy.surface = TESSERA_SURFACE_DEFAULT;
+            else if (copy.surface != TESSERA_SURFACE_DEFAULT)
+                return fail(TESSERA_ERROR_INVALID_ARGUMENT,
+                            "the surface of a context for a window must be TESSERA_SURFACE_DEFAULT or "
+                            "TESSERA_SURFACE_WINDOW");
+        }
+        TesseraContextConfig normalized;
+        if (TesseraResult r = normalizeConfig(&copy, normalized); r != TESSERA_SUCCESS)
+            return r;
+        return Runtime::instance().createContextForNativeWindow(normalized, w, flags, *outContext);
+    });
+}
+
+TESSERA_API TesseraResult TESSERA_CALL tesseraResizeWindow(TesseraContext context, int32_t width,
+                                                           int32_t height) {
+    return guarded([&] { return Runtime::instance().resizeWindow(context, width, height); });
+}
+
 TESSERA_API TesseraResult TESSERA_CALL tesseraProbe(const TesseraContextConfig* config,
                                                     TesseraProbeReport* outReport) {
     return guarded([&]() -> TesseraResult {

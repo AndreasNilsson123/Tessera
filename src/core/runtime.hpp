@@ -49,6 +49,10 @@ class Runtime {
     TesseraResult getNativeHandles(TesseraContext handle, TesseraNativeHandles& out);
     TesseraResult createContextForWindow(const TesseraContextConfig& config, uint64_t nativeWindow,
                                          uint32_t flags, TesseraContext& out);
+    TesseraResult createContextForNativeWindow(const TesseraContextConfig& config,
+                                               const TesseraNativeWindow& window, uint32_t flags,
+                                               TesseraContext& out);
+    TesseraResult resizeWindow(TesseraContext handle, int32_t width, int32_t height);
     TesseraResult prewarm(const TesseraContextConfig& config, int32_t count);
     TesseraResult probe(const TesseraContextConfig& config, TesseraProbeReport& report);
     std::size_t pooledContexts() const;

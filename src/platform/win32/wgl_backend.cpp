@@ -249,6 +249,14 @@ class WglContext final : public ContextObject {
         return TESSERA_SUCCESS;
     }
 
+    // A caller's window is resized by its owner and the surface follows by itself; our own hidden window has
+    // no one to tell.
+    TesseraResult resizeWindow(int32_t, int32_t) noexcept override {
+        return foreignWindow
+                   ? TESSERA_SUCCESS
+                   : fail(TESSERA_ERROR_UNSUPPORTED, "this context has no window of a caller's to resize");
+    }
+
     TesseraResult queryResetStatus(int32_t& out) noexcept override {
         return queryResetStatusFrom(resetFn, info.flags, out);
     }
@@ -601,6 +609,10 @@ class WglBackend final : public Backend {
      * allowed it, because a window's pixel format can be set exactly once and a window that is not ours must
      * not be changed behind its owner's back.
      */
+    uint32_t nativeWindowKind() const noexcept override {
+        return TESSERA_WINDOW_WIN32;
+    }
+
     TesseraResult createContextForWindow(const TesseraContextConfig& c, uint64_t nativeWindow, uint32_t flags,
                                          const std::shared_ptr<ContextObject>& shareWith,
                                          std::shared_ptr<ContextObject>& out) override {

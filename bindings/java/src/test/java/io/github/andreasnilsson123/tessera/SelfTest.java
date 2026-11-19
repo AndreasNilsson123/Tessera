@@ -387,6 +387,41 @@ public final class SelfTest {
                     "a bogus window id -> INVALID_ARGUMENT (WGL, GLX) or UNSUPPORTED (EGL, CGL), was " + bogus.result());
         }
         check(Context.current() == null, "failed attaches leave nothing current");
+
+        // The described form: a Wayland window is refused without its display or size, and the kinds nobody implements say so.
+        final TesseraException noDisplay = expect(TesseraException.class, "wayland without a display",
+                () -> Context.createForNativeWindow(plain(), NativeWindow.wayland(0L, 0x1000L, 64, 64), false).close());
+        if (noDisplay != null) {
+            check(noDisplay.result() == Result.INVALID_ARGUMENT, "wayland without display -> INVALID_ARGUMENT, was " + noDisplay.result());
+        }
+        final TesseraException noSize = expect(TesseraException.class, "wayland without a size",
+                () -> Context.createForNativeWindow(plain(), NativeWindow.wayland(0x2000L, 0x1000L, 0, 64), false).close());
+        if (noSize != null) {
+            check(noSize.result() == Result.INVALID_ARGUMENT, "wayland without size -> INVALID_ARGUMENT, was " + noSize.result());
+        }
+        final TesseraException cocoa = expect(TesseraException.class, "an NSView",
+                () -> Context.createForNativeWindow(plain(), NativeWindow.cocoa(0x1000L), false).close());
+        if (cocoa != null) {
+            check(cocoa.result() == Result.UNSUPPORTED, "an NSView -> UNSUPPORTED, was " + cocoa.result());
+        }
+        final TesseraException zero = expect(TesseraException.class, "native window 0",
+                () -> Context.createForNativeWindow(plain(), NativeWindow.x11(0L), false).close());
+        if (zero != null) {
+            check(zero.result() == Result.INVALID_ARGUMENT, "window 0 -> INVALID_ARGUMENT, was " + zero.result());
+        }
+        try (Context ctx = Context.create(plain())) {
+            ctx.makeCurrent();
+            final TesseraException noWindow = expect(TesseraException.class, "resize without a window", () -> ctx.resizeWindow(10, 10));
+            if (noWindow != null) {
+                check(noWindow.result() == Result.UNSUPPORTED, "resize on a windowless context -> UNSUPPORTED, was " + noWindow.result());
+            }
+            final TesseraException badSize = expect(TesseraException.class, "resize to nothing", () -> ctx.resizeWindow(0, 10));
+            if (badSize != null) {
+                check(badSize.result() == Result.INVALID_ARGUMENT, "zero size -> INVALID_ARGUMENT, was " + badSize.result());
+            }
+            Context.releaseCurrent();
+        }
+        check(Context.current() == null, "failed attaches leave nothing current");
     }
 
     static void gpuSelection() {

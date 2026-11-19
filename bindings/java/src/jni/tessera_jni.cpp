@@ -208,6 +208,32 @@ TESSERA_JNI(jint, nCreateContextForWindow)
     return r;
 }
 
+TESSERA_JNI(jint, nCreateContextForNativeWindow)
+(JNIEnv* env, jclass, jintArray cfg, jlong share, jint kind, jlong window, jlong display, jint width,
+ jint height, jint flags, jlongArray out) {
+    if (!cfg || !out || env->GetArrayLength(cfg) < kConfigInts || env->GetArrayLength(out) < 1)
+        return TESSERA_ERROR_INVALID_ARGUMENT;
+    jint v[kConfigInts];
+    env->GetIntArrayRegion(cfg, 0, kConfigInts, v);
+    const TesseraContextConfig c = configFrom(v, static_cast<TesseraContext>(share));
+    TesseraNativeWindow w = tesseraDefaultNativeWindow();
+    w.kind = static_cast<uint32_t>(kind);
+    w.window = static_cast<uint64_t>(window);
+    w.display = static_cast<uint64_t>(display);
+    w.width = width;
+    w.height = height;
+    TesseraContext handle = TESSERA_NULL_HANDLE;
+    const TesseraResult r =
+        tesseraCreateContextForNativeWindow(&c, &w, static_cast<uint32_t>(flags), &handle);
+    const jlong result = static_cast<jlong>(handle);
+    env->SetLongArrayRegion(out, 0, 1, &result);
+    return r;
+}
+
+TESSERA_JNI(jint, nResizeWindow)(JNIEnv*, jclass, jlong ctx, jint width, jint height) {
+    return tesseraResizeWindow(static_cast<TesseraContext>(ctx), width, height);
+}
+
 TESSERA_JNI(jint, nNativeHandles)(JNIEnv* env, jclass, jlong ctx, jintArray kindOut, jlongArray handlesOut) {
     if (!kindOut || !handlesOut || env->GetArrayLength(kindOut) < 1 || env->GetArrayLength(handlesOut) < 6)
         return TESSERA_ERROR_INVALID_ARGUMENT;

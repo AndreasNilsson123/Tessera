@@ -115,6 +115,36 @@ public final class Context implements AutoCloseable {
     }
 
     /**
+     * Creates a context that renders into a window of another toolkit: {@link NativeWindow#win32}, {@link NativeWindow#x11}
+     * or {@link NativeWindow#wayland}. The same borrowing rules as {@link #createForWindow} apply. Which window systems work
+     * depends on the platform and backend (Wayland needs EGL; {@link NativeWindow#cocoa} is not implemented and fails with
+     * {@link Result#UNSUPPORTED}).
+     *
+     * @param allowSettingPixelFormat Win32 only, as for {@link #createForWindow}
+     */
+    public static Context createForNativeWindow(ContextConfig config, NativeWindow window, boolean allowSettingPixelFormat) {
+        Objects.requireNonNull(config, "config");
+        Objects.requireNonNull(window, "window");
+        final NativeApi api = Tessera.apiInitialized();
+        final Context share = config.shareWith();
+        final long shareHandle = share == null ? 0L : share.handle();
+        final long[] out = new long[1];
+        Tessera.check(api, api.createContextForNativeWindow(config.toNative(), shareHandle, window.kind().nativeValue, window.window(),
+                window.display(), window.width(), window.height(), allowSettingPixelFormat ? 1 : 0, out));
+        return new Context(out[0], config);
+    }
+
+    /**
+     * The window this context renders into changed size (it matters for Wayland, where the buffer's size is the context's to
+     * set; other window systems follow their window and accept the call). The context must be current on this thread; the next
+     * {@link #swapBuffers()} presents a buffer of the new size.
+     */
+    public void resizeWindow(int width, int height) {
+        final NativeApi api = Tessera.api();
+        Tessera.check(api, api.resizeWindow(handle(), width, height));
+    }
+
+    /**
      * The operating-system objects behind this context, for interop with other libraries; borrowed, valid until this context
      * is closed (see {@link NativeHandles}).
      */

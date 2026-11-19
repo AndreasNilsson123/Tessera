@@ -149,6 +149,14 @@ if(UNIX AND NOT APPLE AND TESSERA_BUILD_SHARED)
     tessera_apply_options(test_egl)
     add_test(NAME egl COMMAND test_egl)
     set_tests_properties(egl PROPERTIES LABELS "gpu" TIMEOUT 180 SKIP_RETURN_CODE 77)
+
+    # Windows of a caller's window system through EGL: an X11 window and a Wayland surface, both made by the test itself.
+    add_executable(test_eglwindow test_eglwindow.cpp)
+    target_link_libraries(test_eglwindow PRIVATE Tessera::tessera Threads::Threads ${CMAKE_DL_LIBS})
+    tessera_apply_options(test_eglwindow)
+    add_test(NAME eglwindow_x11 COMMAND test_eglwindow x11)
+    add_test(NAME eglwindow_wayland COMMAND test_eglwindow wayland)
+    set_tests_properties(eglwindow_x11 eglwindow_wayland PROPERTIES LABELS "gpu" TIMEOUT 120 SKIP_RETURN_CODE 77)
 endif()
 
 # macOS backend logic, run against a fake OpenGL.framework (tests/fake_cgl.cpp) on any POSIX platform. Verifies the

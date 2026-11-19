@@ -7,6 +7,7 @@
 #include <atomic>
 #include <memory>
 
+#include "boundary.hpp"
 #include "thread_affinity.hpp"
 
 namespace tessera {
@@ -31,6 +32,12 @@ class ContextObject {
     }
     /* Called only while the context is current on the calling thread. */
     virtual TesseraResult setSwapInterval(int32_t /*interval*/) noexcept {
+        return TESSERA_ERROR_UNSUPPORTED;
+    }
+
+    /* The window this context renders into changed size (Wayland). Called with the context current.
+     * UNSUPPORTED = nothing to do or no window; kinds that follow the window by themselves return SUCCESS. */
+    virtual TesseraResult resizeWindow(int32_t /*width*/, int32_t /*height*/) noexcept {
         return TESSERA_ERROR_UNSUPPORTED;
     }
 
@@ -92,6 +99,21 @@ class Backend {
                                                  const std::shared_ptr<ContextObject>& /*shareWith*/,
                                                  std::shared_ptr<ContextObject>& /*out*/) {
         return TESSERA_ERROR_UNSUPPORTED;
+    }
+    /* Renders into a caller-owned window of any kind (see tesseraCreateContextForNativeWindow). The default
+     * serves the kinds the integer form already covers (Win32 and X11) through createContextForWindow;
+     * anything else is UNSUPPORTED. */
+    virtual TesseraResult createContextForNativeWindow(const TesseraContextConfig& config,
+                                                       const TesseraNativeWindow& window, uint32_t flags,
+                                                       const std::shared_ptr<ContextObject>& shareWith,
+                                                       std::shared_ptr<ContextObject>& out) {
+        if (window.kind == nativeWindowKind())
+            return createContextForWindow(config, window.window, flags, shareWith, out);
+        return fail(TESSERA_ERROR_UNSUPPORTED, "this backend cannot attach to that kind of window");
+    }
+    /* The TESSERA_WINDOW_* kind whose handle createContextForWindow takes (0 = none). */
+    virtual uint32_t nativeWindowKind() const noexcept {
+        return 0;
     }
     /* Null if unknown. May be called with or without a context current. */
     virtual void* getProcAddress(const char* /*name*/) noexcept {

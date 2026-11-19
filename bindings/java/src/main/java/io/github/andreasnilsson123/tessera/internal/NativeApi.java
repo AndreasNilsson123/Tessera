@@ -80,6 +80,13 @@ public interface NativeApi {
     /** Like {@link #createContext} for a caller's window; {@code flags} bit 0 = allow setting the pixel format. */
     int createContextForWindow(int[] cfg, long shareWith, long window, int flags, long[] outHandle);
 
+    /** For any kind of window (1 Win32, 2 X11, 3 Wayland, 4 Cocoa); {@code flags} bit 0 = allow setting the pixel format. */
+    int createContextForNativeWindow(int[] cfg, long shareWith, int kind, long window, long display, int width, int height, int flags,
+                                     long[] outHandle);
+
+    /** The window changed size; the context must be current on the calling thread. */
+    int resizeWindow(long handle, int width, int height);
+
     /**
      * Returns the probe's result code. infoInts as in {@link #contextInfo}; strings: vendor, renderer, version, backend, message.
      * The report is filled whether or not the request could be met; if the arguments themselves were rejected the strings stay null.

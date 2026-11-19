@@ -251,6 +251,14 @@ class GlxContext final : public ContextObject {
         return fail(TESSERA_ERROR_UNSUPPORTED, "no GLX swap-control extension is available");
     }
 
+    // A caller's window is resized by its owner and the drawable follows by itself; our own hidden window has
+    // no one to tell.
+    TesseraResult resizeWindow(int32_t, int32_t) noexcept override {
+        return foreignWindow
+                   ? TESSERA_SUCCESS
+                   : fail(TESSERA_ERROR_UNSUPPORTED, "this context has no window of a caller's to resize");
+    }
+
     GlxSwapInputs swapInputs() const {
         GlxSwapInputs in;
         in.hasExt = shared_->has("GLX_EXT_swap_control");
@@ -530,6 +538,10 @@ class GlxBackend final : public Backend {
      * window. A window created with a visual that has no GLX framebuffer configuration cannot be used (GLX
      * cannot change a window's visual afterwards).
      */
+    uint32_t nativeWindowKind() const noexcept override {
+        return TESSERA_WINDOW_X11;
+    }
+
     TesseraResult createContextForWindow(const TesseraContextConfig& c, uint64_t nativeWindow,
                                          uint32_t /*flags*/, const std::shared_ptr<ContextObject>& shareWith,
                                          std::shared_ptr<ContextObject>& out) override {

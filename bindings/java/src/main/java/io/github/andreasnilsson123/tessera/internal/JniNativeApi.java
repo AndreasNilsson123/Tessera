@@ -150,6 +150,17 @@ public final class JniNativeApi implements NativeApi {
     }
 
     @Override
+    public int createContextForNativeWindow(int[] cfg, long shareWith, int kind, long window, long display, int width, int height,
+                                            int flags, long[] outHandle) {
+        return nCreateContextForNativeWindow(cfg, shareWith, kind, window, display, width, height, flags, outHandle);
+    }
+
+    @Override
+    public int resizeWindow(long handle, int width, int height) {
+        return nResizeWindow(handle, width, height);
+    }
+
+    @Override
     public int createContextForWindow(int[] cfg, long shareWith, long window, int flags, long[] outHandle) {
         return nCreateContextForWindow(cfg, shareWith, window, flags, outHandle);
     }
@@ -199,6 +210,11 @@ public final class JniNativeApi implements NativeApi {
     private static native int nPooledCountFor(int[] cfg, int[] count1);
 
     private static native int nPoolClear();
+
+    private static native int nCreateContextForNativeWindow(int[] cfg, long shareWith, int kind, long window, long display, int width,
+                                                            int height, int flags, long[] outHandle);
+
+    private static native int nResizeWindow(long handle, int width, int height);
 
     private static native int nCreateContextForWindow(int[] cfg, long shareWith, long window, int flags, long[] outHandle);
 

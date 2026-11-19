@@ -51,6 +51,9 @@ const EglApi* loadApi() noexcept {
                         load(api->lib, "eglCreatePbufferSurface", f.eglCreatePbufferSurface) &&
                         load(api->lib, "eglDestroySurface", f.eglDestroySurface) &&
                         load(api->lib, "eglQuerySurface", f.eglQuerySurface) &&
+                        load(api->lib, "eglSwapBuffers", f.eglSwapBuffers) &&
+                        load(api->lib, "eglSwapInterval", f.eglSwapInterval) &&
+                        load(api->lib, "eglCreateWindowSurface", f.eglCreateWindowSurface) &&
                         load(api->lib, "eglGetProcAddress", f.eglGetProcAddress);
         if (!ok) {
             logf(TESSERA_LOG_ERROR, "EGL backend unavailable: libEGL is missing core entry points");
@@ -65,6 +68,10 @@ const EglApi* loadApi() noexcept {
             f.eglGetProcAddress("eglQueryDeviceStringEXT"));
         f.eglQueryContext =
             reinterpret_cast<decltype(f.eglQueryContext)>(f.eglGetProcAddress("eglQueryContext"));
+        f.eglCreatePlatformWindowSurfaceEXT = reinterpret_cast<decltype(f.eglCreatePlatformWindowSurfaceEXT)>(
+            f.eglGetProcAddress("eglCreatePlatformWindowSurfaceEXT"));
+        f.eglCreatePlatformWindowSurface = reinterpret_cast<decltype(f.eglCreatePlatformWindowSurface)>(
+            f.eglGetProcAddress("eglCreatePlatformWindowSurface"));
         f.eglQueryDeviceBinaryEXT = reinterpret_cast<decltype(f.eglQueryDeviceBinaryEXT)>(
             f.eglGetProcAddress("eglQueryDeviceBinaryEXT"));
         return api;

@@ -793,6 +793,54 @@ static void testWindowAttach() {
         EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
     }
 
+    // The described form of the same thing: a Win32 window is attached exactly like the integer form, other
+    // kinds are not WGL's business, and Wayland needs more than a handle.
+    {
+        TesseraNativeWindow nw = tesseraDefaultNativeWindow();
+        nw.kind = TESSERA_WINDOW_WIN32;
+        nw.window = id(owned);
+        TesseraContext viaNative = 0;
+        EXPECT(tesseraCreateContextForNativeWindow(&relaxed, &nw, 0, &viaNative), TESSERA_SUCCESS);
+        if (viaNative) {
+            TesseraContextInfo info = tesseraDefaultContextInfo();
+            EXPECT(tesseraGetContextInfo(viaNative, &info), TESSERA_SUCCESS);
+            CHECK(info.surface == TESSERA_SURFACE_WINDOW);
+            EXPECT(tesseraMakeCurrent(viaNative), TESSERA_SUCCESS);
+            EXPECT(tesseraResizeWindow(viaNative, 64, 64),
+                   TESSERA_SUCCESS); // WGL follows the window by itself
+            EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS);
+            EXPECT(tesseraDestroyContext(viaNative), TESSERA_SUCCESS);
+        }
+        HWND unformatted = rawWindow(false, false);
+        nw.window = id(unformatted);
+        EXPECT(tesseraCreateContextForNativeWindow(&cfg, &nw, 0, &viaNative), TESSERA_ERROR_INVALID_ARGUMENT);
+        CHECK(viaNative == TESSERA_NULL_HANDLE);
+        EXPECT(tesseraCreateContextForNativeWindow(&cfg, &nw, TESSERA_ATTACH_ALLOW_PIXEL_FORMAT, &viaNative),
+               TESSERA_SUCCESS);
+        if (viaNative)
+            EXPECT(tesseraDestroyContext(viaNative), TESSERA_SUCCESS);
+        DestroyWindow(unformatted);
+        nw.kind = TESSERA_WINDOW_X11; // not WGL's kind
+        EXPECT(tesseraCreateContextForNativeWindow(&cfg, &nw, 0, &viaNative), TESSERA_ERROR_UNSUPPORTED);
+        nw.kind = TESSERA_WINDOW_WAYLAND;
+        EXPECT(tesseraCreateContextForNativeWindow(&cfg, &nw, 0, &viaNative), TESSERA_ERROR_INVALID_ARGUMENT);
+        nw.kind = TESSERA_WINDOW_COCOA;
+        EXPECT(tesseraCreateContextForNativeWindow(&cfg, &nw, 0, &viaNative), TESSERA_ERROR_UNSUPPORTED);
+        nw.kind = 77;
+        EXPECT(tesseraCreateContextForNativeWindow(&cfg, &nw, 0, &viaNative), TESSERA_ERROR_INVALID_ARGUMENT);
+        nw.kind = TESSERA_WINDOW_WIN32;
+        nw.window = 0;
+        EXPECT(tesseraCreateContextForNativeWindow(&cfg, &nw, 0, &viaNative), TESSERA_ERROR_INVALID_ARGUMENT);
+        EXPECT(tesseraCreateContextForNativeWindow(&cfg, nullptr, 0, &viaNative),
+               TESSERA_ERROR_INVALID_ARGUMENT);
+        EXPECT(tesseraCreateContextForNativeWindow(nullptr, &nw, 0, &viaNative),
+               TESSERA_ERROR_INVALID_ARGUMENT);
+        EXPECT(tesseraCreateContextForNativeWindow(&cfg, &nw, 0, nullptr), TESSERA_ERROR_INVALID_ARGUMENT);
+        nw.window = id(owned);
+        nw.reserved[0] = 1;
+        EXPECT(tesseraCreateContextForNativeWindow(&cfg, &nw, 0, &viaNative), TESSERA_ERROR_INVALID_ARGUMENT);
+    }
+
     // A window destroyed while a context renders into it: errors, never a crash, and the context can still be
     // destroyed.
     HWND doomed = rawWindow(false, false);
@@ -908,7 +956,8 @@ static void testSwapControlAndPacing() {
     pbCfg.surface = TESSERA_SURFACE_PBUFFER;
     TesseraContext pb = 0;
     const TesseraResult pbr = tesseraCreateContext(&pbCfg, &pb);
-    CHECK(pbr == TESSERA_SUCCESS || pbr == TESSERA_ERROR_NO_MATCHING_CONFIG || pbr == TESSERA_ERROR_UNSUPPORTED);
+    CHECK(pbr == TESSERA_SUCCESS || pbr == TESSERA_ERROR_NO_MATCHING_CONFIG ||
+          pbr == TESSERA_ERROR_UNSUPPORTED);
     TesseraSwapControl sc = tesseraDefaultSwapControl();
     EXPECT(tesseraGetSwapControl(hidden, &sc), TESSERA_ERROR_WRONG_THREAD); // must be current
     if (pb) {
