@@ -353,13 +353,12 @@ Items 1, 3, 4, 5, 6, 7 and 8 together are the **0.10.0** ABI batch: do the ABI-t
 
 Phases 10 and 11 above are the backlog; this is the order to work through it. Each chunk is a unit that can be finished, tested and committed on its own. "Needs" says what, besides this machine (Windows 11 + NVIDIA, WSL Ubuntu with Mesa) and GitHub Actions, a chunk depends on.
 
-### Chunk 1 - Remote CI and release pipeline proof (first: it unblocks macOS and the release)
-Needs: nothing. The first real macOS run (19 Nov) failed to link (`makeCglBackend` was not linked into `test_core`/`test_fuzz`); that is fixed, the next run is the first real CGL result.
-- [ ] Get both macOS jobs green: read the first real `test_cgl` result, fix the hand-written CGL constants / alpha-in-ColorSize / forward-compatible-bit risks listed in 10.1, then run the Java tests on the runner.
-- [ ] Dispatch `release.yml` as a dry run (no tag), fix whatever breaks (multi-platform assemble, the Doxygen zip, the macOS native), and download and inspect the artifacts.
-- [ ] Confirm `nightly.yml` runs (soak + fault sweeps + fuzz) and record the first results; fix flakes.
-- [ ] Run vcpkg for real (a CI job) against `packaging/vcpkg`, fix the port, and put the result in `docs/releasing.md`.
-- [ ] Doc the review/`@claude` workflows (model pin, cost, who can trigger) in `docs/ci.md`.
+### Chunk 1 - Remote CI and release pipeline proof - DONE
+- [x] Both macOS jobs green (first real CGL run 19 Nov 2026: `test_cgl` passes on Apple's software renderer; Java JNI+FFM pass); two real bugs found and fixed (link error, CGL "relaxed" log).
+- [x] `release.yml` dry run succeeds end to end (three native builds, assemble, Doxygen zip); first run had found a missing output directory and the GDI-renderer test failure.
+- [x] `nightly.yml` runs; the first run found the soak ctest timeout (fixed); the rerun passes.
+- [x] vcpkg port installs and links a C-only consumer on Linux, Windows and macOS in CI (found two packaging bugs, fixed).
+- [x] Workflows documented in `docs/ci.md` (models, triggers, cost controls).
 
 ### Chunk 2 - Swap control and frame pacing (ABI 0.10.0) - DONE (ADR 0012)
 Needs: nothing (real vsync behaviour needs a display; window attach tests already exist on WGL/GLX).
@@ -388,7 +387,7 @@ Needs: WSL for the sanitizer builds. A real GPU reset needs the owner's consent 
 - [x] ASan/UBSan and TSan on Linux (WSL, gcc 11) over everything added since ABI 0.7.0: pass, including the new threaded lost-callback test (4 threads losing contexts while the callback is replaced). The GPU-backed tests stay out of the sanitizer presets (NVIDIA's WSL driver is uninstrumented).
 - [x] Fuzzing the newer entry points: `fuzz_api` (libFuzzer: **11.1 million inputs in 2 minutes**, no findings) and the seeded `test_fuzz` cover `tesseraGetSwapControl`, the pool (`TopUp`, `GetPooledCount`, `Clear`), `tesseraIsContextLost` and the lost callback; and a new Java layer fuzzer, `NativeFuzz`, throws hostile handles/arrays/strings at every JNI and FFM entry point under `-Xcheck:jni` (JNI misuse fails the test). It found **no Tessera bug**. On Linux it did find the Mesa D3D12 problem already noted in 10.1: it reproduced through Tessera (heap corruption detected by glibc in about 90% of seeds) as soon as the fuzzer let a dozen GLX contexts stay alive; ASan on Tessera's own code stayed clean, and with the live-context count bounded 0 of 30 seeds fail.
 - [x] Lost events through the real upcalls: the `java` preset builds a test hook (`TESSERA_TEST_HOOKS`, never in a release) that makes `swapBuffers` report a lost context; `LostEventsTest` follows the event through JNI and FFM (once per context, on the detecting thread, recreate from inside the listener, a throwing listener, removal, a second thread).
-- [x] The longer coexistence run as a scheduled job: `coexistence-long.yml` (weekly, or on demand with 1-5 hours): soak on Linux and Windows and the JavaFX stress next to Tessera, tables in the job summaries. First run (1 hour): see `docs/compat.md`.
+- [x] The longer coexistence run as a scheduled job: `coexistence-long.yml` (weekly, or on demand with 1-5 hours): soak on Linux and Windows and the JavaFX stress next to Tessera, tables in the job summaries. First run (1 hour, 19 Nov 2026): Linux and Windows soaks passed 3600 s; the JavaFX es2 stress next to Tessera passed (1191 s).
 - [ ] A real GPU reset on Windows: **not done, waiting for the owner's go-ahead**. Provoking a TDR (a deliberately long shader) can blank the screen and make other applications lose their GPU context; the test is easy to write (robust context, run the shader in a throwaway process, expect `GUILTY`/`INNOCENT`, recreate), but it should be run on purpose, not as a side effect.
 
 ### Chunk 6 - 1.0 decisions and the freeze machinery
