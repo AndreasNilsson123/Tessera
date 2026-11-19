@@ -118,6 +118,7 @@ jobs:
       - name: C API reference (Doxygen)
         run: |
           sudo apt-get install -y doxygen
+          mkdir -p build
           doxygen docs/Doxyfile
       - name: Assemble
         env:
