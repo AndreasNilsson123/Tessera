@@ -117,16 +117,52 @@ public final class NativeFuzz {
         return sb.toString();
     }
 
+    /** -Dtessera.fuzz.ops=0,3,5 restricts the run to those operations (for bisecting a finding); empty = all. */
+    private static final java.util.Set<Integer> ONLY = new java.util.HashSet<>();
+
+    static {
+        final String ops = System.getProperty("tessera.fuzz.ops", "");
+        for (String part : ops.split(",")) {
+            if (!part.trim().isEmpty()) {
+                ONLY.add(Integer.parseInt(part.trim()));
+            }
+        }
+    }
+
+    /**
+     * Takes ownership of a handle the library handed out: kept (so later calls reach a live object) while few are alive,
+     * destroyed otherwise. The bound matters: Mesa's D3D12 driver (WSLg) corrupts the heap once about a dozen GLX contexts are
+     * alive at the same time (see ROADMAP 10.1), which this test must not mistake for a Tessera bug.
+     */
+    private void adopt(long[] out) {
+        if (out == null || out.length == 0 || out[0] == 0L) {
+            return;
+        }
+        if (live.size() < 5) {
+            live.add(out[0]);
+        } else {
+            api.destroyContext(out[0]);
+        }
+    }
+
+    /** Counts that reach the pool's code without creating many contexts at once: hostile only on the non-positive side. */
+    private int poolCount() {
+        final int pick = rnd.nextInt(6);
+        return pick == 0 ? Integer.MIN_VALUE : pick == 1 ? -1 : pick == 2 ? 0 : rnd.nextInt(3);
+    }
+
     private void step() {
         calls++;
-        switch (rnd.nextInt(24)) {
+        final int op = rnd.nextInt(25);
+        if (!ONLY.isEmpty() && !ONLY.contains(op) && op != 0 && op != 24) { // creation and release always run: later ops need handles
+            return;
+        }
+        switch (op) {
             case 0: {
                 final long[] out = longs(1);
                 final int r = api.createContext(config(), rnd.nextInt(4) == 0 ? anyHandle() : 0L, out);
-                if (r == 0 && out != null && out.length > 0 && live.size() < 6) {
-                    live.add(out[0]);
-                } else if (r == 0 && out != null && out.length > 0) {
-                    api.destroyContext(out[0]);
+                if (r == 0) {
+                    adopt(out);
                 }
                 break;
             }
@@ -154,9 +190,13 @@ public final class NativeFuzz {
             case 7:
                 api.swapControl(anyHandle(), ints(4));
                 break;
-            case 8:
-                api.recreate(anyHandle(), longs(1), ints(1));
+            case 8: {
+                final long[] out = longs(1);
+                if (api.recreate(anyHandle(), out, ints(1)) == 0) {
+                    adopt(out);
+                }
                 break;
+            }
             case 9:
                 api.isContextLost(anyHandle(), ints(2));
                 break;
@@ -164,10 +204,12 @@ public final class NativeFuzz {
                 api.nativeHandles(anyHandle(), ints(1), longs(6));
                 break;
             case 11:
-                api.prewarm(config(), rnd.nextInt(3) == 0 ? anyInt() : rnd.nextInt(3));
+                api.prewarm(config(), poolCount());
+                api.poolClear();
                 break;
             case 12:
-                api.poolTopUp(config(), rnd.nextInt(3) == 0 ? anyInt() : rnd.nextInt(3), ints(1));
+                api.poolTopUp(config(), poolCount(), ints(1));
+                api.poolClear();
                 break;
             case 13:
                 api.pooledCountFor(config(), ints(1));
@@ -181,9 +223,22 @@ public final class NativeFuzz {
             case 16:
                 api.probe(config(), ints(14), strings(5));
                 break;
-            case 17:
-                api.createContextForWindow(config(), anyHandle(), rnd.nextLong(), anyInt(), longs(1));
+            case 17: {
+                final long[] out = longs(1);
+                if (api.createContextForWindow(config(), anyHandle(), rnd.nextLong(), anyInt(), out) == 0) {
+                    adopt(out);
+                }
                 break;
+            }
+            case 23: {
+                final long[] out = longs(1);
+                if (api.createContextForNativeWindow(config(), anyHandle(), rnd.nextInt(6), rnd.nextLong(), rnd.nextLong(),
+                        anyInt(), anyInt(), anyInt(), out) == 0) {
+                    adopt(out);
+                }
+                api.resizeWindow(anyHandle(), anyInt(), anyInt());
+                break;
+            }
             case 18: {
                 final String name = anyString();
                 if (name != null) {
@@ -206,7 +261,7 @@ public final class NativeFuzz {
                 api.setLostSink(rnd.nextBoolean() ? (handle, status) -> {
                 } : null);
                 break;
-            default:
+            default: // 24
                 api.makeCurrent(0L); // release whatever this thread holds
                 break;
         }

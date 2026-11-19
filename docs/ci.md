@@ -5,13 +5,16 @@ configure the project identically.
 
 | Job | What it runs | Blocking |
 |---|---|---|
-| `build` | MSVC (Debug+Release), gcc (Debug+Release), clang: build with warnings as errors, run all tests that need no GPU (`abi`, `header_c`, `core`, `fuzz`, `cgl_fake`, ...). The macOS arm64 entry is `experimental` | yes (macOS: no) |
+| `build` | MSVC (Debug+Release), gcc (Debug+Release), clang, macOS arm64: build with warnings as errors, run all tests that need no GPU (`abi`, `header_c`, `core`, `fuzz`, `cgl_fake`, ...) | yes (macOS: informational, but green since 19 Nov 2026) |
 | `sanitizers` | clang ASan+UBSan and TSan over the same tests | yes |
 | `wgl-integration` | the WGL test, soak and diag against the hosted runner's software OpenGL (GDI Generic, GL 1.1) | yes |
 | `gl-linux-software` | the GLX and EGL tests under Xvfb with Mesa llvmpipe (software GL, no GPU) | yes |
-| `java-linux` | the Java bindings and their tests (JNI on JDK 21, FFM on JDK 25, LWJGL, JavaFX software and OpenGL pipelines) on Linux under Xvfb + Mesa | yes |
-| `lint` | clang-format 18.1.8 check, clang-tidy build | yes |
-| `cgl-macos` | the CGL test against the real OpenGL.framework on a hosted macOS VM | no (informational: has never produced a result) |
+| `java-linux` | the Java bindings and their tests (JNI on JDK 21, FFM on JDK 25, LWJGL, GLFW, JavaFX software and OpenGL pipelines) on Linux under Xvfb + Mesa | yes |
+| `java-macos` | the Java bindings on the hosted macOS VM (JDK 21 and 25) | no (informational) |
+| `cgl-macos` | the CGL test against the real OpenGL.framework on the hosted macOS VM (Apple Software Renderer), then `tessera-diag` | no (informational) |
+| `conan`, `vcpkg` | the Conan recipe (Linux) and the vcpkg port (Linux, Windows, macOS): install from the checkout, then build a C-only consumer with `find_package(Tessera)` | yes |
+| `libfuzzer` | libFuzzer on the C API and the version parser, 1 minute | yes |
+| `lint` | clang-format 18.1.8 check, clang-tidy build, the Doxygen C API reference with warnings as errors | yes |
 
 `cgl_fake` (the macOS backend against a fake framework, including a fault-injection sweep) and the two unavailable-library runs execute on every POSIX job and in the sanitizer presets; `core` includes the lifecycle/threading tests that need no GPU. Tests labelled `gpu` (`wgl` on Windows, `glx` and `egl` on Linux, `cgl` on macOS) need a real OpenGL driver and a display and are excluded from the default `ci` test preset.
 
@@ -34,19 +37,26 @@ CI job lowers `vm.mmap_rnd_bits`.
 
 ## Status and known gaps
 
-- Verified locally: the `ci` preset on Windows/MSVC (including the real-GPU `wgl` test), and `ci`, `asan-ubsan`, `tsan` on Ubuntu 22.04/gcc 11 (WSL), where the `glx` and `egl` tests also ran against WSLg (Mesa D3D12).
+- Verified locally: the `ci` preset on Windows/MSVC (including the real-GPU `wgl` test), and `ci`, `asan-ubsan`, `tsan` on Ubuntu 22.04 (WSL), where the `glx`, `egl` and `eglwindow_*` tests also ran against WSLg (Mesa D3D12, X11 and a real Wayland compositor).
 - The `glx`/`egl` tests under TSan report races inside NVIDIA's WSL driver (uninstrumented, none with Tessera code on the accessing side); GPU tests are therefore excluded from the sanitizer presets.
-- The workflow has run on GitHub Actions since the first push, and every job except the two macOS ones passes. The macOS jobs
-  were cancelled within a second with no runner assigned (the `macos-14` label never got a machine), so the label was changed to
-  `macos-latest`; **whether the CGL backend passes on a real macOS VM is still unknown.**
-- What the hosted runners exercise that local runs cannot: clang 18 and gcc 13 warnings, GDI Generic GL 1.1 on Windows (it
-  found that best-effort requests must still honour the minimum version), Mesa llvmpipe, and JavaFX es2 (which needs
-  `-Dprism.forceGPU=true` to accept Mesa).
-- `lint`: the code base is formatted with clang-format 18.1.8 (the version CI pins; checked with
-  `git ls-files '*.c' '*.cpp' '*.h' '*.hpp' | xargs clang-format --dry-run --Werror`, 0 violations). Run clang-format before
-  committing. Do not let it reorder Windows headers: `<windows.h>` must precede `<psapi.h>` (guarded with
-  `// clang-format off`). The clang-tidy step passes in CI.
+- Everything above runs on GitHub Actions. What the hosted runners exercise that local runs cannot: clang 18 and gcc 13 warnings (gcc's `-Wpedantic` rejects `dlsym` results cast to function pointers), GDI Generic GL 1.1 on Windows (best-effort requests below the minimum version; best-effort priority on a driver without `ARB_create_context`), Mesa llvmpipe, JavaFX es2 (needs `-Dprism.forceGPU=true` to accept Mesa), the **first real macOS run** (a link error: the CGL backend was not linked into two test executables; then a CGL "relaxed" log that never fired because CGL hands back the closest pixel format instead of failing), and the vcpkg job (found that the CMake package did not call `find_dependency(Threads)` and that a static `libtessera` did not carry the C++ runtime for C-only consumers).
+- `lint`: the code base is formatted with clang-format 18.1.8 (the version CI pins; checked with `git ls-files '*.c' '*.cpp' '*.h' '*.hpp' | xargs clang-format --dry-run --Werror`, 0 violations). Run clang-format before committing. Do not let it reorder Windows headers: `<windows.h>` must precede `<psapi.h>` (guarded with `// clang-format off`). The Doxygen step needs `HAVE_DOT = NO`: the runner has no Graphviz.
 - No x86-64 macOS job, and no GPU job: real-driver coverage comes from local runs until a self-hosted runner exists.
+
+## The Claude workflows
+
+| Workflow | Trigger | What it does | Cost control |
+|---|---|---|---|
+| `claude-code-review.yml` | a PR from this repository that touches `src/`, `include/`, `bindings/`, `tests/`, `tools/`, `cmake/`, the CMake files or the workflows, not a draft, not Dependabot | runs `/code-review:code-review` and comments on the PR | `paths:` filter (docs-only PRs are skipped); `concurrency` cancels the review of a superseded push; forks are skipped (no secrets); pinned to **Sonnet 5.5** |
+| `claude.yml` | a comment, review or issue containing `@claude` | does what the comment asks, on the PR or issue; has write access to contents, pull requests and issues | the action only responds to users with write access; pinned to **Sonnet 5.5** |
+
+Both authenticate with the `CLAUDE_CODE_OAUTH_TOKEN` repository secret (created by `/install-github-app`). To change the model edit `claude_args: '--model ...'` in the workflow file; leaving it out uses whatever default the action ships.
+
+## The other workflows
+
+- **`nightly.yml`** (03:17 UTC, or on demand): 30-minute soak and the fault sweeps on Linux/Mesa, a 15-minute soak on Windows/GDI, libFuzzer for 10 minutes per target, the JavaFX/GLFW/AWT stress (30,000 frames). The soak test sets its own duration, so its ctest timeout is effectively unlimited (a 900 s ctest timeout had cut both soaks off on the first run). Failures do not block merges.
+- **`coexistence-long.yml`** (Sundays, or on demand with `hours` 1-5): the same checks for hours: soak on Linux and Windows and the JavaFX stress at 40 frames/s x hours. Results are in the job summaries.
+- **`release.yml`** (a `vX.Y.Z` tag, or on demand as a dry run): builds the native library on Windows, Linux and macOS, assembles the multi-platform jar, the Doxygen C API reference, the SBOM and checksums, and drafts a GitHub release. See `docs/releasing.md`.
 
 ## Java
 
