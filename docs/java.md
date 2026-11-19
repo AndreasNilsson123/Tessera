@@ -34,7 +34,9 @@ Context ctx = Context.create(config);           // an identical request takes a 
 
 A probe really creates, inspects and destroys a context, so cache the answer; it never throws for a request that cannot be met
 (only for an invalid configuration). Only never-used contexts are pooled, so a pooled context is indistinguishable from a
-fresh one; the pool holds at most 64 and is emptied at shutdown. See `diag.md` and `interop.md`.
+fresh one; the pool holds at most 64 and is emptied at shutdown. Keep it full from a thread of yours with
+`Tessera.topUpPool(config, n)` (creates only what is missing; Tessera starts no threads), inspect it with
+`Tessera.pooledContextCount(config)` and empty it with `Tessera.clearPool()`. See `diag.md` and `interop.md`.
 
 ## Interop and rendering into your own window
 
