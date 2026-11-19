@@ -721,8 +721,12 @@ class EglBackend final : public Backend {
         const EglApi* api = eglApi();
         if (!api || !name)
             return nullptr;
-        // GLVND hands out a dispatch stub for any name; every GL function starts with "gl".
-        if (name[0] != 'g' || name[1] != 'l')
+        // GLVND hands out a dispatch stub for any name; every GL function starts with "gl" and every EGL
+        // function (core and extension: eglCreateImageKHR, eglExportDMABUFImageMESA, ...) with "egl", which
+        // interop code needs through this call.
+        const bool gl = name[0] == 'g' && name[1] == 'l';
+        const bool egl = name[0] == 'e' && name[1] == 'g' && name[2] == 'l';
+        if (!gl && !egl)
             return nullptr;
         return api->fn.eglGetProcAddress(name);
     }

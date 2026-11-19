@@ -49,6 +49,9 @@ class Runtime {
     TesseraResult prewarm(const TesseraContextConfig& config, int32_t count);
     TesseraResult probe(const TesseraContextConfig& config, TesseraProbeReport& report);
     std::size_t pooledContexts() const;
+    std::size_t pooledContextsFor(const TesseraContextConfig& config) const;
+    TesseraResult topUp(const TesseraContextConfig& config, int32_t target, int32_t& created);
+    std::size_t clearPool();
 
     /* Called from a thread_local destructor on an exiting thread; see ThreadExitGuard. */
     void releaseAtThreadExit(TesseraContext handle, const std::shared_ptr<ThreadToken>& thread) noexcept;

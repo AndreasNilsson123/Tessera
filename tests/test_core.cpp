@@ -1202,6 +1202,27 @@ static void testAdapterRequestsAgainstFake() {
     EXPECT(tesseraDestroyContext(plain), TESSERA_SUCCESS);
 }
 
+static void testPoolTopUpAgainstFake() {
+    TesseraContextConfig cfg = tesseraDefaultContextConfig();
+    cfg.api = TESSERA_API_OPENGL;
+    tesseraPoolClear();
+    int32_t created = -1;
+    EXPECT(tesseraPoolTopUp(&cfg, 3, &created), TESSERA_SUCCESS);
+    CHECK(created == 3 && g_liveRobust == 3);
+    EXPECT(tesseraPoolTopUp(&cfg, 3, &created), TESSERA_SUCCESS);
+    CHECK(created == 0 && g_liveRobust == 3);
+    CHECK(tesseraPoolClear() == 3 && g_liveRobust == 0); // clearing destroys the native contexts
+    EXPECT(tesseraPoolTopUp(&cfg, 2, &created), TESSERA_SUCCESS);
+    EXPECT(tesseraTerminate(), TESSERA_SUCCESS); // terminate empties the pool too
+    CHECK(g_liveRobust == 0 && tesseraPooledContextCount() == 0);
+    int32_t count = 7;
+    EXPECT(tesseraGetPooledCount(&cfg, &count), TESSERA_SUCCESS);
+    CHECK(count == 0);
+    EXPECT(tesseraPoolTopUp(&cfg, 1, &created), TESSERA_ERROR_NOT_INITIALIZED);
+    EXPECT(tesseraInit(), TESSERA_SUCCESS);
+    tessera::Runtime::instance().registerBackend(std::make_shared<RobustFakeBackend>());
+}
+
 static void testLifecycleRobustness() {
     CHECK(tesseraInit() == TESSERA_SUCCESS);
     tessera::Runtime::instance().registerBackend(std::make_shared<RobustFakeBackend>());
@@ -1215,6 +1236,7 @@ static void testLifecycleRobustness() {
 #endif
     testProbe();
     testAdapterRequestsAgainstFake();
+    testPoolTopUpAgainstFake();
 #ifndef TESSERA_RSS_TEST_OFF
     testNoGrowthWithManyContexts();
 #endif

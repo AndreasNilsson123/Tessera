@@ -55,6 +55,14 @@ public interface NativeApi {
 
     int pooledCount();
 
+    /** Brings the pool for exactly this request up to {@code target}; {@code created1[0]} = how many were created. */
+    int poolTopUp(int[] cfg, int target, int[] created1);
+
+    int pooledCountFor(int[] cfg, int[] count1);
+
+    /** Returns how many contexts were destroyed. */
+    int poolClear();
+
     /** Like {@link #createContext} for a caller's window; {@code flags} bit 0 = allow setting the pixel format. */
     int createContextForWindow(int[] cfg, long shareWith, long window, int flags, long[] outHandle);
 

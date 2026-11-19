@@ -139,6 +139,47 @@ TESSERA_API TesseraResult TESSERA_CALL tesseraPrewarmContexts(const TesseraConte
     });
 }
 
+TESSERA_API TesseraResult TESSERA_CALL tesseraPoolTopUp(const TesseraContextConfig* config, int32_t target,
+                                                        int32_t* outCreated) {
+    return guarded([&]() -> TesseraResult {
+        if (outCreated)
+            *outCreated = 0;
+        TesseraContextConfig normalized;
+        if (TesseraResult r = normalizeConfig(config, normalized); r != TESSERA_SUCCESS)
+            return r;
+        if (normalized.shareWith != TESSERA_NULL_HANDLE)
+            return fail(TESSERA_ERROR_INVALID_ARGUMENT,
+                        "pre-warmed contexts cannot share with a specific context");
+        int32_t created = 0;
+        const TesseraResult r = Runtime::instance().topUp(normalized, target, created);
+        if (outCreated)
+            *outCreated = created;
+        return r;
+    });
+}
+
+TESSERA_API TesseraResult TESSERA_CALL tesseraGetPooledCount(const TesseraContextConfig* config,
+                                                             int32_t* outCount) {
+    return guarded([&]() -> TesseraResult {
+        if (!outCount)
+            return fail(TESSERA_ERROR_INVALID_ARGUMENT, "outCount is NULL");
+        *outCount = 0;
+        TesseraContextConfig normalized;
+        if (TesseraResult r = normalizeConfig(config, normalized); r != TESSERA_SUCCESS)
+            return r;
+        *outCount = static_cast<int32_t>(Runtime::instance().pooledContextsFor(normalized));
+        return TESSERA_SUCCESS;
+    });
+}
+
+TESSERA_API int32_t TESSERA_CALL tesseraPoolClear(void) {
+    try {
+        return static_cast<int32_t>(Runtime::instance().clearPool());
+    } catch (...) {
+        return 0;
+    }
+}
+
 TESSERA_API int32_t TESSERA_CALL tesseraPooledContextCount(void) {
     try {
         return static_cast<int32_t>(Runtime::instance().pooledContexts());

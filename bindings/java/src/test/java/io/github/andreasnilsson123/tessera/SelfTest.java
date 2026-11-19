@@ -358,6 +358,28 @@ public final class SelfTest {
         }
     }
 
+    static void poolTopUp() {
+        Tessera.clearPool();
+        final ContextConfig cfg = plain();
+        check(Tessera.topUpPool(cfg, 2) == 2 && Tessera.pooledContextCount(cfg) == 2, "two contexts pooled for this request");
+        check(Tessera.topUpPool(cfg, 2) == 0, "already full: nothing created");
+        try (Context c = Context.create(cfg)) {
+            check(Tessera.pooledContextCount(cfg) == 1, "create took one");
+            check(Tessera.topUpPool(cfg, 2) == 1, "topped up again");
+            c.makeCurrent();
+            Context.releaseCurrent();
+        }
+        final ContextConfig other = ContextConfig.builder().fallback(ContextConfig.Fallback.BEST_EFFORT).depthBits(16).build();
+        check(Tessera.pooledContextCount(other) == 0, "counts are per request");
+        expect(IllegalArgumentException.class, "top-up cannot share", () -> {
+            try (Context share = Context.create(cfg)) {
+                Tessera.topUpPool(ContextConfig.builder().fallback(ContextConfig.Fallback.BEST_EFFORT).shareWith(share).build(), 1);
+            }
+        });
+        expect(TesseraException.class, "target beyond the cap", () -> Tessera.topUpPool(cfg, 65));
+        check(Tessera.clearPool() >= 1 && Tessera.pooledContextCount(cfg) == 0, "cleared");
+    }
+
     static void sharing() {
         final Context a = Context.create(plain());
         try (Context b = Context.create(ContextConfig.builder().fallback(ContextConfig.Fallback.BEST_EFFORT).shareWith(a).build())) {
@@ -455,10 +477,10 @@ public final class SelfTest {
                 + " on Java " + Runtime.version() + (bindingNote() == null ? "" : " (" + bindingNote() + ")"));
 
         final String[] names = {"config and info", "thread rules", "close from another thread", "garbage-collection safety net", "logging",
-                "reset and recreate", "sharing", "probe and pre-warming", "native handles", "window attach (validation)", "GPU selection", "virtual threads",
+                "reset and recreate", "sharing", "probe and pre-warming", "keeping the pool full", "native handles", "window attach (validation)", "GPU selection", "virtual threads",
                 "classloaders"};
         final Body[] bodies = {SelfTest::configAndInfo, SelfTest::threadRules, SelfTest::closeFromAnotherThread, SelfTest::cleanerSafetyNet,
-                SelfTest::logging, SelfTest::resetAndRecreate, SelfTest::sharing, SelfTest::probeAndPool, SelfTest::nativeHandles,
+                SelfTest::logging, SelfTest::resetAndRecreate, SelfTest::sharing, SelfTest::probeAndPool, SelfTest::poolTopUp, SelfTest::nativeHandles,
                 SelfTest::windowAttachValidation, SelfTest::gpuSelection, SelfTest::virtualThreadsAreRefused, SelfTest::classLoaders};
         for (int i = 0; i < bodies.length; i++) {
             if (noLoaders && names[i].equals("classloaders")) {

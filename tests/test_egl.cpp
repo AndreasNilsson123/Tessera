@@ -811,6 +811,9 @@ static void testAttributeMatrix() {
 static void testPrewarm() {
     interop::prewarm(eglHooks());
 }
+static void testTopUp() {
+    interop::topUp(eglHooks());
+}
 static void testAdapterRequests() {
     interop::adapterRequestsRefused(eglHooks());
 }
@@ -848,6 +851,8 @@ static void testNativeHandles() {
         using EglGetCurrentDisplay = void* (*)();
         auto cur = reinterpret_cast<EglGetCurrentContext>(tesseraGetProcAddress("eglGetCurrentContext"));
         auto dpy = reinterpret_cast<EglGetCurrentDisplay>(tesseraGetProcAddress("eglGetCurrentDisplay"));
+        CHECK(cur != nullptr &&
+              dpy != nullptr); // EGL functions resolve through tesseraGetProcAddress (interop needs them)
         if (cur && dpy) {
             CHECK(static_cast<uint64_t>(reinterpret_cast<std::uintptr_t>(cur())) == nh.handles[1]);
             CHECK(static_cast<uint64_t>(reinterpret_cast<std::uintptr_t>(dpy())) == nh.handles[0]);
@@ -906,6 +911,7 @@ int main() {
         {"debug message forwarding", testDebugForwarding},
         {"attribute matrix", testAttributeMatrix},
         {"pre-warmed contexts", testPrewarm},
+        {"keeping the pool full", testTopUp},
         {"probe", testProbe},
         {"GPU requests are refused", testAdapterRequests},
         {"native handles", testNativeHandles},

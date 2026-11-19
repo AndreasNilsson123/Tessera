@@ -344,6 +344,40 @@ TesseraResult Runtime::createContextForWindow(const TesseraContextConfig& config
         out);
 }
 
+std::size_t Runtime::pooledContextsFor(const TesseraContextConfig& config) const {
+    std::lock_guard<std::mutex> lock(poolMutex_);
+    std::size_t n = 0;
+    for (const PoolEntry& e : pool_)
+        if (sameRequest(e.request, config))
+            ++n;
+    return n;
+}
+
+std::size_t Runtime::clearPool() {
+    std::vector<PoolEntry> dropped;
+    {
+        std::lock_guard<std::mutex> lock(poolMutex_);
+        dropped.swap(pool_);
+    }
+    return dropped.size(); // the native contexts are destroyed here, outside the lock, on the calling thread
+}
+
+TesseraResult Runtime::topUp(const TesseraContextConfig& config, int32_t target, int32_t& created) {
+    created = 0;
+    if (target < 0)
+        return fail(TESSERA_ERROR_INVALID_ARGUMENT, "target is negative");
+    const std::size_t have = pooledContextsFor(config);
+    if (static_cast<std::size_t>(target) <= have)
+        return contexts_.isOpen() ? TESSERA_SUCCESS
+                                  : fail(TESSERA_ERROR_NOT_INITIALIZED, "tesseraInit has not been called");
+    const int32_t missing = target - static_cast<int32_t>(have);
+    const std::size_t before = pooledContexts();
+    const TesseraResult r = prewarm(config, missing);
+    // A failure part-way leaves what was created in the pool; report it.
+    created = static_cast<int32_t>(pooledContexts() - before);
+    return r;
+}
+
 TesseraResult Runtime::prewarm(const TesseraContextConfig& config, int32_t count) {
     if (!contexts_.isOpen())
         return fail(TESSERA_ERROR_NOT_INITIALIZED, "tesseraInit has not been called");

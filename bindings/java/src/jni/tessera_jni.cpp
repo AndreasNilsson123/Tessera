@@ -207,6 +207,36 @@ TESSERA_JNI(jint, nPrewarm)(JNIEnv* env, jclass, jintArray cfg, jint count) {
     return tesseraPrewarmContexts(&c, count);
 }
 
+TESSERA_JNI(jint, nPoolTopUp)(JNIEnv* env, jclass, jintArray cfg, jint target, jintArray created) {
+    if (!cfg || !created || env->GetArrayLength(cfg) < kConfigInts || env->GetArrayLength(created) < 1)
+        return TESSERA_ERROR_INVALID_ARGUMENT;
+    jint v[kConfigInts];
+    env->GetIntArrayRegion(cfg, 0, kConfigInts, v);
+    const TesseraContextConfig c = configFrom(v, TESSERA_NULL_HANDLE);
+    int32_t made = 0;
+    const TesseraResult r = tesseraPoolTopUp(&c, target, &made);
+    const jint out = made;
+    env->SetIntArrayRegion(created, 0, 1, &out);
+    return r;
+}
+
+TESSERA_JNI(jint, nPooledCountFor)(JNIEnv* env, jclass, jintArray cfg, jintArray count) {
+    if (!cfg || !count || env->GetArrayLength(cfg) < kConfigInts || env->GetArrayLength(count) < 1)
+        return TESSERA_ERROR_INVALID_ARGUMENT;
+    jint v[kConfigInts];
+    env->GetIntArrayRegion(cfg, 0, kConfigInts, v);
+    const TesseraContextConfig c = configFrom(v, TESSERA_NULL_HANDLE);
+    int32_t n = 0;
+    const TesseraResult r = tesseraGetPooledCount(&c, &n);
+    const jint out = n;
+    env->SetIntArrayRegion(count, 0, 1, &out);
+    return r;
+}
+
+TESSERA_JNI(jint, nPoolClear)(JNIEnv*, jclass) {
+    return tesseraPoolClear();
+}
+
 TESSERA_JNI(jint, nPooledCount)(JNIEnv*, jclass) {
     return tesseraPooledContextCount();
 }

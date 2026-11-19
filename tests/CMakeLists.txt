@@ -86,6 +86,16 @@ if(WIN32 OR (UNIX AND NOT APPLE))
     tessera_apply_options(test_fault)
 endif()
 
+# Linux counterpart of dxinterop: an EGLImage handed from one Tessera context to another through the native handles and proc
+# addresses (EGL_KHR_gl_texture_2D_image + GL_OES_EGL_image). Skips (77) where the extensions are missing.
+if(UNIX AND NOT APPLE AND TESSERA_BUILD_SHARED)
+    add_executable(test_eglimage test_eglimage.cpp)
+    target_link_libraries(test_eglimage PRIVATE Tessera::tessera)
+    tessera_apply_options(test_eglimage)
+    add_test(NAME eglimage COMMAND test_eglimage)
+    set_tests_properties(eglimage PROPERTIES LABELS "gpu" TIMEOUT 120 SKIP_RETURN_CODE 77)
+endif()
+
 # Coverage-guided fuzzing (libFuzzer). Needs clang: configure with the `fuzz` preset, which compiles everything with
 # -fsanitize=fuzzer-no-link,address,undefined; the targets add the fuzzer runtime. Run: tests/fuzz/corpus/<target> holds the seeds.
 if(TESSERA_BUILD_FUZZERS)

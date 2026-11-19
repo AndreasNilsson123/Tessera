@@ -45,7 +45,7 @@ final class FfmNativeApi implements NativeApi {
     private static volatile LogSink sink;
 
     private final MethodHandle hInit, hTerminate, hAbi, hVersion, hCreate, hDestroy, hInfo, hMakeCurrent, hCurrent, hProc, hSwap,
-            hSwapInterval, hReset, hRecreate, hLastError, hResultString, hSetLog, hNativeHandles, hPrewarm, hPooled, hCreateForWindow, hProbe;
+            hSwapInterval, hReset, hRecreate, hLastError, hResultString, hSetLog, hNativeHandles, hPrewarm, hPooled, hCreateForWindow, hProbe, hPoolTopUp, hPooledCountFor, hPoolClear;
     private final MemorySegment logStub;
 
     public FfmNativeApi(Path library) {
@@ -68,6 +68,9 @@ final class FfmNativeApi implements NativeApi {
         hNativeHandles = down(linker, lookup, "tesseraGetNativeHandles", FunctionDescriptor.of(INT, LONG, ValueLayout.ADDRESS));
         hPrewarm = down(linker, lookup, "tesseraPrewarmContexts", FunctionDescriptor.of(INT, ValueLayout.ADDRESS, INT));
         hPooled = down(linker, lookup, "tesseraPooledContextCount", FunctionDescriptor.of(INT));
+        hPoolTopUp = down(linker, lookup, "tesseraPoolTopUp", FunctionDescriptor.of(INT, ValueLayout.ADDRESS, INT, ValueLayout.ADDRESS));
+        hPooledCountFor = down(linker, lookup, "tesseraGetPooledCount", FunctionDescriptor.of(INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+        hPoolClear = down(linker, lookup, "tesseraPoolClear", FunctionDescriptor.of(INT));
         hCreateForWindow = down(linker, lookup, "tesseraCreateContextForWindow",
                 FunctionDescriptor.of(INT, ValueLayout.ADDRESS, LONG, INT, ValueLayout.ADDRESS));
         hProbe = down(linker, lookup, "tesseraProbe", FunctionDescriptor.of(INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
@@ -250,6 +253,39 @@ final class FfmNativeApi implements NativeApi {
     public int prewarm(int[] cfg, int count) {
         try (Arena arena = Arena.ofConfined()) {
             return (int) hPrewarm.invokeExact(config(arena, cfg, 0L), count);
+        } catch (Throwable t) {
+            throw failed(t);
+        }
+    }
+
+    @Override
+    public int poolTopUp(int[] cfg, int target, int[] created1) {
+        try (Arena arena = Arena.ofConfined()) {
+            final MemorySegment out = arena.allocate(4, 4);
+            final int r = (int) hPoolTopUp.invokeExact(config(arena, cfg, 0L), target, out);
+            created1[0] = out.get(INT, 0);
+            return r;
+        } catch (Throwable t) {
+            throw failed(t);
+        }
+    }
+
+    @Override
+    public int pooledCountFor(int[] cfg, int[] count1) {
+        try (Arena arena = Arena.ofConfined()) {
+            final MemorySegment out = arena.allocate(4, 4);
+            final int r = (int) hPooledCountFor.invokeExact(config(arena, cfg, 0L), out);
+            count1[0] = out.get(INT, 0);
+            return r;
+        } catch (Throwable t) {
+            throw failed(t);
+        }
+    }
+
+    @Override
+    public int poolClear() {
+        try {
+            return (int) hPoolClear.invokeExact();
         } catch (Throwable t) {
             throw failed(t);
         }

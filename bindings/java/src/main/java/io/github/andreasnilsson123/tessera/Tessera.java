@@ -94,6 +94,41 @@ public final class Tessera {
     }
 
     /**
+     * Brings the number of waiting pre-warmed contexts for exactly this request up to {@code target}. Tessera starts no threads of
+     * its own: run this on a thread of yours, for example after {@link Context#create} took a pooled context. Only the missing
+     * ones are created (never destroys anything); the total over all requests stays capped at 64.
+     *
+     * @return how many contexts were created
+     */
+    public static int topUpPool(ContextConfig config, int target) {
+        Objects.requireNonNull(config, "config");
+        if (config.shareWith() != null) {
+            throw new IllegalArgumentException("pre-warmed contexts cannot share with a specific context");
+        }
+        final NativeApi api = apiInitialized();
+        final int[] created = new int[1];
+        final int code = api.poolTopUp(config.toNative(), target, created);
+        if (code != 0 && created[0] == 0) {
+            check(api, code);
+        }
+        return created[0]; // a failure part-way keeps what was created; the caller sees the count
+    }
+
+    /** Contexts waiting in the pool for exactly this request. */
+    public static int pooledContextCount(ContextConfig config) {
+        Objects.requireNonNull(config, "config");
+        final NativeApi api = apiInitialized();
+        final int[] count = new int[1];
+        check(api, api.pooledCountFor(config.toNative(), count));
+        return count[0];
+    }
+
+    /** Destroys every waiting pre-warmed context (all requests) and returns how many there were. */
+    public static int clearPool() {
+        return apiInitialized().poolClear();
+    }
+
+    /**
      * Asks "would this request work here, and what would I get?" without keeping anything: a context is really created,
      * inspected and destroyed. A request that cannot be met does not throw; look at {@link ProbeReport#result()}. (An invalid
      * configuration, such as reset notification without robust access, throws {@link TesseraException} with {@link Result#INVALID_ARGUMENT}.) The caller's

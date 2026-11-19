@@ -105,6 +105,21 @@ public final class JniNativeApi implements NativeApi {
     }
 
     @Override
+    public int poolTopUp(int[] cfg, int target, int[] created1) {
+        return nPoolTopUp(cfg, target, created1);
+    }
+
+    @Override
+    public int pooledCountFor(int[] cfg, int[] count1) {
+        return nPooledCountFor(cfg, count1);
+    }
+
+    @Override
+    public int poolClear() {
+        return nPoolClear();
+    }
+
+    @Override
     public int createContextForWindow(int[] cfg, long shareWith, long window, int flags, long[] outHandle) {
         return nCreateContextForWindow(cfg, shareWith, window, flags, outHandle);
     }
@@ -148,6 +163,12 @@ public final class JniNativeApi implements NativeApi {
     private static native int nPrewarm(int[] cfg, int count);
 
     private static native int nPooledCount();
+
+    private static native int nPoolTopUp(int[] cfg, int target, int[] created1);
+
+    private static native int nPooledCountFor(int[] cfg, int[] count1);
+
+    private static native int nPoolClear();
 
     private static native int nCreateContextForWindow(int[] cfg, long shareWith, long window, int flags, long[] outHandle);
 

@@ -495,6 +495,9 @@ static void testAttributeMatrix() {
 static void testPrewarm() {
     interop::prewarm(wglHooks());
 }
+static void testTopUp() {
+    interop::topUp(wglHooks());
+}
 static void testProbe() {
     ForeignContext foreign; // a context from "another library" must survive every probe
     robust::Hooks h = wglHooks();
@@ -883,6 +886,7 @@ int main() {
         {"debug message forwarding", testDebugForwarding},
         {"attribute matrix", testAttributeMatrix},
         {"pre-warmed contexts", testPrewarm},
+        {"keeping the pool full", testTopUp},
         {"probe", testProbe},
         {"native handles", testNativeHandles},
         {"window attach", testWindowAttach},

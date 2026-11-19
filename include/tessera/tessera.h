@@ -31,7 +31,7 @@ extern "C" {
 /* ---------------------------------------------------------------- version */
 
 #define TESSERA_VERSION_MAJOR 0
-#define TESSERA_VERSION_MINOR 7
+#define TESSERA_VERSION_MINOR 8
 #define TESSERA_VERSION_PATCH 0
 
 /* Incremented on every incompatible change to the C ABI, independent of the semantic version. */
@@ -293,6 +293,23 @@ TESSERA_API TesseraResult TESSERA_CALL tesseraPrewarmContexts(const TesseraConte
 
 /* Contexts currently waiting in the pool (all configurations). */
 TESSERA_API int32_t TESSERA_CALL tesseraPooledContextCount(void);
+
+/*
+ * Keeping the pool full. Tessera starts no threads of its own, so refilling is something YOUR thread does,
+ * when it suits you: after creating a context, call tesseraPoolTopUp from a background thread to bring the
+ * number of waiting contexts for exactly this request back to `target`. It creates only what is missing
+ * (`*outCreated`, optional), never destroys anything, and the total for all requests stays capped at 64.
+ */
+TESSERA_API TesseraResult TESSERA_CALL tesseraPoolTopUp(const TesseraContextConfig* config, int32_t target,
+                                                        int32_t* outCreated);
+
+/* Contexts currently waiting for exactly this request (what tesseraPoolTopUp counts). */
+TESSERA_API TesseraResult TESSERA_CALL tesseraGetPooledCount(const TesseraContextConfig* config,
+                                                             int32_t* outCount);
+
+/* Destroys every waiting context (all requests), e.g. before a long idle period. Returns how many there were.
+ */
+TESSERA_API int32_t TESSERA_CALL tesseraPoolClear(void);
 
 /* ----------------------------------------------------------- rendering into a caller's window
  *

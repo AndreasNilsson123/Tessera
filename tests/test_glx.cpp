@@ -717,6 +717,9 @@ static void testAttributeMatrix() {
 static void testPrewarm() {
     interop::prewarm(glxHooks());
 }
+static void testTopUp() {
+    interop::topUp(glxHooks());
+}
 static void testAdapterRequests() {
     interop::adapterRequestsRefused(glxHooks());
 }
@@ -871,6 +874,7 @@ int main() {
         {"debug message forwarding", testDebugForwarding},
         {"attribute matrix", testAttributeMatrix},
         {"pre-warmed contexts", testPrewarm},
+        {"keeping the pool full", testTopUp},
         {"probe", testProbe},
         {"GPU requests are refused", testAdapterRequests},
         {"native handles", testNativeHandles},
