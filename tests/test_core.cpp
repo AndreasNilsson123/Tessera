@@ -788,6 +788,17 @@ static void testContextPriority() {
     cfg.fallback = TESSERA_FALLBACK_BEST_EFFORT;
     CHECK(planArbContext(cfg, "WGL_", true, has(true), plan) == TESSERA_SUCCESS);
 
+    // A driver with no ARB_create_context at all (Microsoft's GDI renderer): best-effort drops the priority
+    // and still gets its legacy context; strict refuses and names the priority.
+    const auto nothing = [](const char*) { return false; };
+    cfg.fallback = TESSERA_FALLBACK_BEST_EFFORT;
+    CHECK(planArbContext(cfg, "WGL_", false, nothing, plan) == TESSERA_SUCCESS && plan.legacy);
+    CHECK(planArbContext(cfg, "GLX_", false, nothing, plan) == TESSERA_SUCCESS && plan.legacy);
+    cfg.fallback = TESSERA_FALLBACK_STRICT;
+    CHECK(planArbContext(cfg, "WGL_", false, nothing, plan) == TESSERA_ERROR_NO_MATCHING_CONFIG);
+    CHECK(planArbContext(cfg, "GLX_", false, nothing, plan) == TESSERA_ERROR_NO_MATCHING_CONFIG);
+    CHECK(std::strstr(tesseraGetLastErrorMessage(), "priority") != nullptr);
+
     // Strict satisfaction compares with what the driver reports it granted.
     TesseraContextConfig want = tesseraDefaultContextConfig();
     want.api = TESSERA_API_OPENGL;

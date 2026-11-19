@@ -77,7 +77,32 @@ TesseraResult planArbContext(const TesseraContextConfig& c, const char* prefix, 
     const bool strict = c.fallback == TESSERA_FALLBACK_STRICT;
     const std::string p = prefix;
 
-    if (legacySuffices(c)) {
+    // A priority request is decided first: it can only be honoured through GLX_EXT_context_priority (which
+    // needs the attribute-based create call); WGL has no such extension at all. Strict refuses what cannot be
+    // honoured, best-effort drops it, and the rest of the plan then proceeds as if it had not been asked for
+    // (so a driver without ARB_create_context still gets its legacy context).
+    TesseraContextConfig eff = c;
+    bool sendPriority = false;
+    if (c.priority != TESSERA_PRIORITY_DEFAULT) {
+        std::string why;
+        if (p != "GLX_")
+            why =
+                "context priority is not available through " + p.substr(0, 3) + " (no such extension exists)";
+        else if (!haveCreateAttribs || !has("GLX_ARB_create_context"))
+            why = "context priority needs GLX_ARB_create_context, which the driver lacks";
+        else if (!has("GLX_EXT_context_priority"))
+            why = "required extension missing: GLX_EXT_context_priority";
+        if (why.empty()) {
+            sendPriority = true;
+        } else if (strict) {
+            return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, why);
+        } else {
+            logf(TESSERA_LOG_INFO, "%s, request dropped", why.c_str());
+            eff.priority = TESSERA_PRIORITY_DEFAULT;
+        }
+    }
+
+    if (legacySuffices(eff)) {
         plan.legacy = true;
         return TESSERA_SUCCESS;
     }
@@ -139,23 +164,8 @@ TesseraResult planArbContext(const TesseraContextConfig& c, const char* prefix, 
             plan.extra.insert(plan.extra.end(), {kCtxReleaseBehavior, kCtxReleaseFlush});
     }
 
-    if (c.priority != TESSERA_PRIORITY_DEFAULT) {
-        if (p == "GLX_") {
-            bool ok = false;
-            if (TesseraResult r = require("GLX_EXT_context_priority", ok); r != TESSERA_SUCCESS)
-                return r;
-            if (ok)
-                plan.extra.insert(plan.extra.end(),
-                                  {kNativeContextPriorityLevel, nativePriority(c.priority)});
-        } else if (strict) {
-            // There is no WGL context-priority extension: say so instead of pretending the request was met.
-            return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, "context priority is not available through " +
-                                                              p.substr(0, 3) + " (no such extension exists)");
-        } else {
-            logf(TESSERA_LOG_INFO, "context priority is not available through %s, request dropped",
-                 p.substr(0, 3).c_str());
-        }
-    }
+    if (sendPriority)
+        plan.extra.insert(plan.extra.end(), {kNativeContextPriorityLevel, nativePriority(c.priority)});
 
     plan.versions = contextVersionLadder(c);
     return TESSERA_SUCCESS;

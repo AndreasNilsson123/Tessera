@@ -39,7 +39,7 @@ jobs:
       - run: cmake --preset ci -DCMAKE_BUILD_TYPE=Release && cmake --build --preset ci --parallel
       - name: Soak
         env:
-          TESSERA_SOAK_SECONDS: ${{ env.HOURS == '1' && '3600' || env.HOURS == '2' && '7200' || env.HOURS == '3' && '10800' || env.HOURS == '5' && '18000' || '14400' }}
+          TESSERA_SOAK_SECONDS: ${{ (github.event.inputs.hours || '4') == '1' && '3600' || (github.event.inputs.hours || '4') == '2' && '7200' || (github.event.inputs.hours || '4') == '3' && '10800' || (github.event.inputs.hours || '4') == '5' && '18000' || '14400' }}
         run: xvfb-run -a -s "-screen 0 1280x1024x24" ctest --test-dir build/ci -R soak --output-on-failure | tee soak.log
       - name: Summary
         if: always()
@@ -59,7 +59,7 @@ jobs:
       - name: Soak
         shell: bash
         env:
-          TESSERA_SOAK_SECONDS: ${{ env.HOURS == '1' && '3600' || env.HOURS == '2' && '7200' || env.HOURS == '3' && '10800' || env.HOURS == '5' && '18000' || '14400' }}
+          TESSERA_SOAK_SECONDS: ${{ (github.event.inputs.hours || '4') == '1' && '3600' || (github.event.inputs.hours || '4') == '2' && '7200' || (github.event.inputs.hours || '4') == '3' && '10800' || (github.event.inputs.hours || '4') == '5' && '18000' || '14400' }}
         run: ctest --test-dir build/ci -C Release -R soak --output-on-failure | tee soak.log
       - name: Summary
         if: always()
@@ -77,7 +77,7 @@ jobs:
     env:
       LIBGL_ALWAYS_SOFTWARE: "1"
       # about 40 frames per second on a hosted runner
-      STRESS_FRAMES: ${{ env.HOURS == '1' && '144000' || env.HOURS == '2' && '288000' || env.HOURS == '3' && '432000' || env.HOURS == '5' && '720000' || '576000' }}
+      STRESS_FRAMES: ${{ (github.event.inputs.hours || '4') == '1' && '144000' || (github.event.inputs.hours || '4') == '2' && '288000' || (github.event.inputs.hours || '4') == '3' && '432000' || (github.event.inputs.hours || '4') == '5' && '720000' || '576000' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
