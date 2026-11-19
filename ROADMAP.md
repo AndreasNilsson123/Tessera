@@ -346,6 +346,66 @@ Items 1, 3, 4, 5, 6, 7 and 8 together are the **0.10.0** ABI batch: do the ABI-t
 
 ---
 
+## Next chunks (planned 2026-11-19)
+
+Phases 10 and 11 above are the backlog; this is the order to work through it. Each chunk is a unit that can be finished, tested and committed on its own. "Needs" says what, besides this machine (Windows 11 + NVIDIA, WSL Ubuntu with Mesa) and GitHub Actions, a chunk depends on.
+
+### Chunk 1 - Remote CI and release pipeline proof (first: it unblocks macOS and the release)
+Needs: nothing. The first real macOS run (19 Nov) failed to link (`makeCglBackend` was not linked into `test_core`/`test_fuzz`); that is fixed, the next run is the first real CGL result.
+- [ ] Get both macOS jobs green: read the first real `test_cgl` result, fix the hand-written CGL constants / alpha-in-ColorSize / forward-compatible-bit risks listed in 10.1, then run the Java tests on the runner.
+- [ ] Dispatch `release.yml` as a dry run (no tag), fix whatever breaks (multi-platform assemble, the Doxygen zip, the macOS native), and download and inspect the artifacts.
+- [ ] Confirm `nightly.yml` runs (soak + fault sweeps + fuzz) and record the first results; fix flakes.
+- [ ] Run vcpkg for real (a CI job) against `packaging/vcpkg`, fix the port, and put the result in `docs/releasing.md`.
+- [ ] Doc the review/`@claude` workflows (model pin, cost, who can trigger) in `docs/ci.md`.
+
+### Chunk 2 - Swap control and frame pacing (ABI 0.10.0)
+Needs: nothing (real vsync behaviour needs a display; window attach tests already exist on WGL/GLX).
+- [ ] Report what was actually applied by `tesseraSetSwapInterval` (read back where the API allows; otherwise "requested / unverifiable") and whether adaptive sync is available (`WGL_EXT_swap_control_tear`, `GLX_EXT_swap_control_tear`).
+- [ ] Cover `GLX_EXT/MESA/SGI_swap_control` and the EGL `eglSwapInterval` clamp; test on a fake backend with the extension matrix, and on real WGL; record that WSLg/llvmpipe advertise none.
+- [ ] A vsync-off benchmark mode in `tessera-diag` for a window-attached context (frame-time min/avg/p99, dropped-frame count).
+- [ ] DWM swap-interval quirk test on Windows (attached window, composited vs. fullscreen).
+- [ ] Java binding, `docs/java.md`, ADR 0012.
+
+### Chunk 3 - Window attach beyond WGL/GLX (needs the 10.5 decision "on-screen in 1.0?")
+Needs: the owner decision; WSLg for X11 and Wayland testing.
+- [ ] EGL window surfaces (an X11 window through EGL), with the same borrow/ownership rules as the WGL/GLX attach.
+- [ ] Wayland `wl_surface` attach, tested against WSLg's compositor (and GLFW's Wayland platform through LWJGL).
+- [ ] Java `createForWindow` exercised with a real window on Linux (GLFW `NO_API` and AWT), not only argument validation.
+- [ ] Design note for macOS `NSView` attach (not implementable without a Mac) and ADR 0013 covering resize, thread and teardown rules for borrowed windows.
+
+### Chunk 4 - Driver features that exist but are unproven or missing
+Needs: nothing extra; multi-GPU and AMD/Intel parts of these stay in 10.1.
+- [ ] Context priority (`EGL_IMG_context_priority`, `WGL_*_priority`): implement, read back what was granted, test on Mesa.
+- [ ] EGL device selection by render node, PCI address and UUID (`EGL_EXT_device_persistent_id`) in `TESSERA_EGL_DEVICE`; test the matching logic with a faked device list.
+- [ ] Detect whether the host already called `XInitThreads` (10.3) and document what Tessera does either way.
+- [ ] A verification matrix for robust access, reset notification, `KHR_no_error` and release-flush on NVIDIA/WGL and Mesa, recorded in `docs/compat.md` (what was granted, what was refused, what is untested).
+
+### Chunk 5 - Verification and hardening of what already exists
+Needs: WSL for the sanitizer builds. A real GPU reset needs the owner's consent to provoke a TDR.
+- [ ] Run ASan/UBSan and TSan on Linux for everything added since ABI 0.7.0 (pool top-up, probe, lost events).
+- [ ] Extend `fuzz_api` / `test_fuzz` to the newer entry points (`tesseraPoolTopUp`, `tesseraGetPooledCount`, `tesseraIsContextLost`, the callbacks) and fuzz the JNI glue.
+- [ ] A Java test that makes lost events travel through the JNI and FFM upcalls end to end (needs a test-only hook in the native library).
+- [ ] A longer coexistence run (hours: JavaFX, GLFW and Java2D next to Tessera) as a scheduled job; record the table.
+- [ ] A real GPU reset on Windows (a deliberately long shader in a throwaway process to trigger TDR) with a robust context, only with the owner's go-ahead; it can blank the screen.
+
+### Chunk 6 - 1.0 decisions and the freeze machinery
+Needs: the owner for the decisions; the tooling needs nothing.
+- [ ] A one-page decision memo with a recommendation for each 10.5 item (on-screen in 1.0, GL/GLES floor, bundled ANGLE/Mesa, names and cadence).
+- [ ] An ABI check in CI: exported symbols and struct layouts compared with a stored baseline, failing on any change that is not an append (`docs/abi-policy.md` made executable).
+- [ ] A compatibility-matrix generator that builds `docs/compat.md` tables from `tessera-diag --json` output, so each new machine is one command.
+- [ ] A release-candidate checklist and the freeze procedure (`0.x` to `1.0.0`: header version, ABI version, tag, notes).
+
+### Chunk 7 - Software/headless fallback and ANGLE/Mesa (needs the 10.5 decision "do we ship Mesa/ANGLE?")
+Needs: the owner decision; downloaded ANGLE or Mesa builds to test against.
+- [ ] ADR on the loader policy (system only vs. bundled), including the `LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR` handling for Windows.
+- [ ] Build the EGL backend on Windows and run it on ANGLE.
+- [ ] A software fallback path (OSMesa or llvmpipe through EGL) selectable by `TESSERA_BACKEND`, and tested on a machine with the GPU driver hidden.
+- [ ] Packaging: where the optional binaries live in the release and how the SBOM lists them.
+
+Suggested order: 1, 2, 4, 5 now (no outside decisions); 6 in parallel with the owner's decisions; 3 and 7 once those are made.
+
+---
+
 ## Coexistence checklist (applies to every change)
 
 - [ ] Does it change anything process-global (DPI awareness, error handlers, signal handlers, locale, env vars, working directory, COM init, `timeBeginPeriod`, AppKit app state)? → Don't, or scope and restore.
