@@ -198,3 +198,7 @@ jobs:
         run: |
           cmake --preset tidy
           cmake --build --preset tidy --parallel
+      - name: C API reference (Doxygen, warnings are errors)
+        run: |
+          sudo apt-get install -y doxygen
+          doxygen docs/Doxyfile

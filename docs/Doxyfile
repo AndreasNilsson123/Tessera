@@ -1,0 +1,14 @@
+# C API reference for include/tessera/tessera.h.  Build: doxygen docs/Doxyfile  (output: build/doxygen/html)
+PROJECT_NAME           = "Tessera C API"
+OUTPUT_DIRECTORY       = build/doxygen
+INPUT                  = include/tessera/tessera.h
+GENERATE_LATEX         = NO
+GENERATE_HTML          = YES
+JAVADOC_AUTOBRIEF      = YES
+EXTRACT_ALL            = YES
+MACRO_EXPANSION        = YES
+ENABLE_PREPROCESSING   = YES
+PREDEFINED             = TESSERA_API= TESSERA_CALL=
+QUIET                  = YES
+WARN_IF_UNDOCUMENTED   = NO
+WARN_AS_ERROR          = YES
