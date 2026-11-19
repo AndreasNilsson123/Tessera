@@ -1,0 +1,255 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Tessera contributors
+package io.github.andreasnilsson123.tessera;
+
+import io.github.andreasnilsson123.tessera.internal.NativeApi;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Random;
+
+/**
+ * Seeded fuzzing of the glue between Java and the C API: every {@link NativeApi} entry point (JNI or FFM, per
+ * {@code -Dtessera.binding}) is called with hostile arguments: made-up, stale and live handles, null / empty / short / long
+ * arrays, extreme and random integers, odd strings. The JVM must neither crash nor exit; with {@code -Xcheck:jni} (the ctest
+ * entry adds it) any JNI misuse prints a warning, which the test treats as a failure. Java-side exceptions from bad array
+ * sizes are tolerated (the FFM binding indexes the arrays it is given; the public API never passes a short one) but counted.
+ *
+ * <p>Usage: {@code NativeFuzz [iterations] [seed]}. Exits 77 where no context can be created at all.
+ */
+public final class NativeFuzz {
+    private static final long[] HOSTILE_HANDLES = {0L, 1L, -1L, Long.MAX_VALUE, Long.MIN_VALUE, 0xDEADBEEFL, 1L << 32, 0xFFFFFFFFL};
+    private static final int[] HOSTILE_INTS = {0, 1, -1, 2, 3, 4, 7, 8, 63, 64, 65, 255, 256, 0x7FFFFFFF, 0x80000000, -2, 1 << 16};
+
+    private final Random rnd;
+    private final NativeApi api;
+    private final List<Long> live = new ArrayList<>();
+    private int javaExceptions;
+    private int calls;
+
+    private NativeFuzz(long seed, NativeApi api) {
+        this.rnd = new Random(seed);
+        this.api = api;
+    }
+
+    private int anyInt() {
+        return rnd.nextInt(3) == 0 ? HOSTILE_INTS[rnd.nextInt(HOSTILE_INTS.length)] : rnd.nextInt();
+    }
+
+    private long anyHandle() {
+        final int pick = rnd.nextInt(4);
+        if (pick == 0 && !live.isEmpty()) {
+            return live.get(rnd.nextInt(live.size()));
+        }
+        if (pick == 1) {
+            return HOSTILE_HANDLES[rnd.nextInt(HOSTILE_HANDLES.length)];
+        }
+        if (pick == 2 && !live.isEmpty()) {
+            return live.get(rnd.nextInt(live.size())) ^ (1L << rnd.nextInt(64)); // one bit off a real handle
+        }
+        return rnd.nextLong();
+    }
+
+    /** null, empty, short, exact or long; the contents random. */
+    private int[] ints(int exact) {
+        final int kind = rnd.nextInt(8);
+        if (kind == 0) {
+            return null;
+        }
+        final int len = kind == 1 ? 0 : kind == 2 ? rnd.nextInt(exact + 1) : kind == 3 ? exact + rnd.nextInt(8) : exact;
+        final int[] a = new int[len];
+        for (int i = 0; i < len; i++) {
+            a[i] = anyInt();
+        }
+        return a;
+    }
+
+    private long[] longs(int exact) {
+        final int kind = rnd.nextInt(8);
+        if (kind == 0) {
+            return null;
+        }
+        final int len = kind == 1 ? 0 : kind == 2 ? rnd.nextInt(exact + 1) : kind == 3 ? exact + rnd.nextInt(8) : exact;
+        final long[] a = new long[len];
+        for (int i = 0; i < len; i++) {
+            a[i] = rnd.nextLong();
+        }
+        return a;
+    }
+
+    private String[] strings(int exact) {
+        final int kind = rnd.nextInt(8);
+        if (kind == 0) {
+            return null;
+        }
+        return new String[kind == 1 ? 0 : kind == 2 ? rnd.nextInt(exact + 1) : exact + rnd.nextInt(3)];
+    }
+
+    /** A plausible config (so creation sometimes succeeds and later calls reach live objects), sometimes corrupted. */
+    private int[] config() {
+        if (rnd.nextInt(3) == 0) {
+            return ints(18);
+        }
+        final int[] c = new int[18];
+        c[0] = 1;                                // OPENGL
+        c[6] = 1;                                // best effort
+        c[13] = rnd.nextInt(3) == 0 ? rnd.nextInt(9) : 0;
+        if (rnd.nextInt(8) == 0) {
+            c[rnd.nextInt(18)] = anyInt();
+        }
+        return c;
+    }
+
+    private String anyString() {
+        final int kind = rnd.nextInt(6);
+        if (kind == 0) {
+            return null;
+        }
+        final StringBuilder sb = new StringBuilder();
+        final int len = kind == 1 ? 0 : kind == 2 ? 5000 : rnd.nextInt(40);
+        final String alphabet = "glGLXwEgl_0129 \t\n/\\.:*%\u0001\u007få中😀";
+        for (int i = 0; i < len; i++) {
+            sb.append(alphabet.charAt(rnd.nextInt(alphabet.length())));
+        }
+        if (rnd.nextInt(3) == 0) {
+            sb.insert(0, "gl");
+        }
+        return sb.toString();
+    }
+
+    private void step() {
+        calls++;
+        switch (rnd.nextInt(24)) {
+            case 0: {
+                final long[] out = longs(1);
+                final int r = api.createContext(config(), rnd.nextInt(4) == 0 ? anyHandle() : 0L, out);
+                if (r == 0 && out != null && out.length > 0 && live.size() < 6) {
+                    live.add(out[0]);
+                } else if (r == 0 && out != null && out.length > 0) {
+                    api.destroyContext(out[0]);
+                }
+                break;
+            }
+            case 1:
+                api.destroyContext(anyHandle());
+                if (rnd.nextInt(3) == 0 && !live.isEmpty()) {
+                    api.destroyContext(live.remove(rnd.nextInt(live.size())));
+                }
+                break;
+            case 2:
+                api.contextInfo(anyHandle(), ints(14), strings(3));
+                break;
+            case 3:
+                api.makeCurrent(anyHandle());
+                break;
+            case 4:
+                api.swapBuffers(anyHandle());
+                break;
+            case 5:
+                api.setSwapInterval(anyHandle(), anyInt());
+                break;
+            case 6:
+                api.resetStatus(anyHandle(), ints(1));
+                break;
+            case 7:
+                api.swapControl(anyHandle(), ints(4));
+                break;
+            case 8:
+                api.recreate(anyHandle(), longs(1), ints(1));
+                break;
+            case 9:
+                api.isContextLost(anyHandle(), ints(2));
+                break;
+            case 10:
+                api.nativeHandles(anyHandle(), ints(1), longs(6));
+                break;
+            case 11:
+                api.prewarm(config(), rnd.nextInt(3) == 0 ? anyInt() : rnd.nextInt(3));
+                break;
+            case 12:
+                api.poolTopUp(config(), rnd.nextInt(3) == 0 ? anyInt() : rnd.nextInt(3), ints(1));
+                break;
+            case 13:
+                api.pooledCountFor(config(), ints(1));
+                break;
+            case 14:
+                api.poolClear();
+                break;
+            case 15:
+                api.pooledCount();
+                break;
+            case 16:
+                api.probe(config(), ints(14), strings(5));
+                break;
+            case 17:
+                api.createContextForWindow(config(), anyHandle(), rnd.nextLong(), anyInt(), longs(1));
+                break;
+            case 18: {
+                final String name = anyString();
+                if (name != null) {
+                    api.procAddress(name);
+                }
+                break;
+            }
+            case 19:
+                api.resultString(anyInt());
+                break;
+            case 20:
+                api.lastError();
+                break;
+            case 21:
+                api.currentContext();
+                break;
+            case 22:
+                api.setLogSink(rnd.nextBoolean() ? (level, message) -> {
+                } : null);
+                api.setLostSink(rnd.nextBoolean() ? (handle, status) -> {
+                } : null);
+                break;
+            default:
+                api.makeCurrent(0L); // release whatever this thread holds
+                break;
+        }
+    }
+
+    public static void main(String[] args) {
+        final int iterations = args.length > 0 ? Integer.parseInt(args[0]) : 3000;
+        final long seed = args.length > 1 ? Long.parseLong(args[1]) : System.nanoTime();
+        System.out.println("NativeFuzz: " + iterations + " iterations, seed " + seed + " (rerun with: NativeFuzz " + iterations + " " + seed + ")");
+
+        final NativeApi api;
+        try {
+            api = Tessera.apiInitialized();
+            final long[] probe = new long[1];
+            final int[] cfg = new int[18];
+            cfg[0] = 1;
+            cfg[6] = 1;
+            if (api.createContext(cfg, 0L, probe) != 0) {
+                System.out.println("NativeFuzz: no context can be created here, skipped");
+                System.exit(77);
+            }
+            api.destroyContext(probe[0]);
+        } catch (RuntimeException e) {
+            System.out.println("NativeFuzz: no usable binding here (" + e + "), skipped");
+            System.exit(77);
+            return;
+        }
+
+        final NativeFuzz fuzz = new NativeFuzz(seed, api);
+        for (int i = 0; i < iterations; i++) {
+            try {
+                fuzz.step();
+            } catch (ArrayIndexOutOfBoundsException | NullPointerException | IllegalArgumentException expected) {
+                fuzz.javaExceptions++; // a hostile array reached Java-side indexing: legitimate, the public API never does this
+            }
+        }
+        for (long h : fuzz.live) {
+            api.destroyContext(h);
+        }
+        api.makeCurrent(0L);
+        api.setLogSink(null);
+        api.setLostSink(null);
+        api.poolClear();
+        System.out.println("NativeFuzz: OK (" + fuzz.calls + " calls, " + fuzz.javaExceptions + " tolerated Java-side exceptions)");
+    }
+}

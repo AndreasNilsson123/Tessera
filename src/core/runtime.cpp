@@ -2,6 +2,8 @@
 // Copyright 2026 Tessera contributors
 #include "runtime.hpp"
 
+#include "env.hpp"
+
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
@@ -619,6 +621,15 @@ TesseraResult Runtime::swapBuffers(TesseraContext handle) {
         return fail(TESSERA_ERROR_CONTEXT_LOST, "the context was lost; recreate it");
     if (!object->affinity.ownedBy(currentThreadToken()))
         return fail(TESSERA_ERROR_WRONG_THREAD, "context is not current on the calling thread");
+#ifdef TESSERA_TEST_HOOKS
+    // Test-only (the `java` preset enables it, a release never does): lets a test make "the driver" report a
+    // lost context at the next swap, so context-lost events can be followed through the real JNI and FFM
+    // upcalls without a GPU reset.
+    if (std::string lose; readEnv("TESSERA_TEST_LOSE_ON_SWAP", lose) && lose == "1") {
+        markLost(handle, *object, TESSERA_RESET_GUILTY);
+        return fail(TESSERA_ERROR_CONTEXT_LOST, "test hook: the context was lost at swap");
+    }
+#endif
     const TesseraResult r = object->swapBuffers();
     if (r == TESSERA_ERROR_CONTEXT_LOST)
         markLost(handle, *object, TESSERA_RESET_UNKNOWN);

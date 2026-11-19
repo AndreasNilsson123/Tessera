@@ -54,7 +54,8 @@
       "displayName": "Java bindings (JNI + FFM jar) with their tests; needs a JDK, JAVA_HOME selects it",
       "inherits": "base",
       "cacheVariables": {
-        "TESSERA_BUILD_JAVA": "ON"
+        "TESSERA_BUILD_JAVA": "ON",
+        "TESSERA_TEST_HOOKS": "ON"
       }
     },
     {

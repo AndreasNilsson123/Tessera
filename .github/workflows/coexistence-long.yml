@@ -1,0 +1,101 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Tessera contributors
+#
+# Long coexistence and leak runs: hours instead of minutes. Weekly, or on demand with the number of hours (a hosted job is limited to
+# 6 hours). Everything runs on software GL (hosted runners have no GPU), so this tests Tessera's own state, its coexistence with
+# JavaFX / Mesa / GDI, and leaks in the process (handles, memory), not vendor drivers. Failures do not block merges.
+# Results: the job summaries (and the logs) carry the leak tables; docs/compat.md records the runs that were reviewed.
+name: Long coexistence
+
+on:
+  schedule:
+    - cron: '41 2 * * 0' # Sundays
+  workflow_dispatch:
+    inputs:
+      hours:
+        description: "How long each job runs (1-5)"
+        type: string
+        default: "4"
+
+permissions:
+  contents: read
+
+env:
+  HOURS: ${{ github.event.inputs.hours || '4' }}
+
+jobs:
+  soak-linux:
+    name: soak (Linux, Mesa llvmpipe)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 345
+    env:
+      LIBGL_ALWAYS_SOFTWARE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install X server and Mesa
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgl1 libgl1-mesa-dri libglx-mesa0 libegl1 libegl-mesa0 libgles2
+      - run: cmake --preset ci -DCMAKE_BUILD_TYPE=Release && cmake --build --preset ci --parallel
+      - name: Soak
+        env:
+          TESSERA_SOAK_SECONDS: ${{ env.HOURS == '1' && '3600' || env.HOURS == '2' && '7200' || env.HOURS == '3' && '10800' || env.HOURS == '5' && '18000' || '14400' }}
+        run: xvfb-run -a -s "-screen 0 1280x1024x24" ctest --test-dir build/ci -R soak --output-on-failure | tee soak.log
+      - name: Summary
+        if: always()
+        run: |
+          echo "### Linux soak (${HOURS} h requested)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          grep -E "cycles|handles|memory|PASS|FAIL|growth" soak.log | tail -40 >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+  soak-windows:
+    name: soak (Windows, GDI software renderer)
+    runs-on: windows-2022
+    timeout-minutes: 345
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake --preset ci && cmake --build --preset ci --config Release --parallel
+      - name: Soak
+        shell: bash
+        env:
+          TESSERA_SOAK_SECONDS: ${{ env.HOURS == '1' && '3600' || env.HOURS == '2' && '7200' || env.HOURS == '3' && '10800' || env.HOURS == '5' && '18000' || '14400' }}
+        run: ctest --test-dir build/ci -C Release -R soak --output-on-failure | tee soak.log
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          echo "### Windows soak (${HOURS} h requested)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          grep -E "cycles|handles|memory|PASS|FAIL|growth" soak.log | tail -40 >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+  javafx-glfw-awt:
+    name: JavaFX / GLFW / AWT next to Tessera (Linux, Xvfb + Mesa)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 345
+    env:
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      # about 40 frames per second on a hosted runner
+      STRESS_FRAMES: ${{ env.HOURS == '1' && '144000' || env.HOURS == '2' && '288000' || env.HOURS == '3' && '432000' || env.HOURS == '5' && '720000' || '576000' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - name: Install X server, Mesa and GTK (for JavaFX)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgl1 libgl1-mesa-dri libglx-mesa0 libegl1 libegl-mesa0 libgtk-3-0t64 libxtst6
+      - run: python3 scripts/fetch-java-deps.py
+      - run: cmake --preset java -DCMAKE_BUILD_TYPE=Release -DTESSERA_JAVA_STRESS=ON -DTESSERA_JAVA_STRESS_FRAMES=${STRESS_FRAMES} && cmake --build --preset java --parallel
+      - name: Stress runs (JavaFX es2 and software pipelines, thousands of churned contexts)
+        run: xvfb-run -a -s "-screen 0 1280x1024x24" ctest --preset java -L stress --output-on-failure --timeout 20000 | tee stress.log
+      - name: Summary
+        if: always()
+        run: |
+          echo "### JavaFX / GLFW / AWT coexistence (${STRESS_FRAMES} frames per run)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          tail -40 stress.log >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"

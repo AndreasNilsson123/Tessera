@@ -927,6 +927,57 @@ static void testDeviceSelection() {
     CHECK(selectDevice(std::string(5000, 'x'), two, fakeCanonical).index == -1);
 }
 
+// Several threads lose contexts while another keeps replacing the callback: every loss is reported exactly
+// once, to one of the two callbacks, and nothing races (this runs under TSan in CI).
+static std::atomic<int> g_lostToA{0}, g_lostToB{0};
+static void TESSERA_CALL lostA(TesseraContext, int32_t, void*) {
+    ++g_lostToA;
+}
+static void TESSERA_CALL lostB(TesseraContext, int32_t, void*) {
+    ++g_lostToB;
+}
+
+static void testContextLostCallbackThreads() {
+    TesseraContextConfig cfg = tesseraDefaultContextConfig();
+    cfg.api = TESSERA_API_OPENGL;
+    constexpr int kThreads = 4, kPerThread = 150;
+    g_lostToA = g_lostToB = 0;
+    g_resetToReport =
+        TESSERA_RESET_GUILTY; // every poll reports a reset: each context is lost by its first poll
+    tesseraSetContextLostCallback(lostA, nullptr);
+    std::atomic<int> done{0};
+    std::vector<std::thread> workers;
+    for (int t = 0; t < kThreads; ++t) {
+        workers.emplace_back([&] {
+            for (int i = 0; i < kPerThread; ++i) {
+                TesseraContext ctx = 0;
+                if (tesseraCreateContext(&cfg, &ctx) != TESSERA_SUCCESS)
+                    continue;
+                int32_t status = 0;
+                if (tesseraMakeCurrent(ctx) == TESSERA_SUCCESS) {
+                    tesseraGetResetStatus(ctx, &status);
+                    tesseraGetResetStatus(ctx, &status); // already lost: no second event
+                    tesseraMakeCurrent(TESSERA_NULL_HANDLE);
+                }
+                tesseraDestroyContext(ctx);
+            }
+            ++done;
+        });
+    }
+    bool useA = false;
+    while (done.load() < kThreads) {
+        tesseraSetContextLostCallback(useA ? lostA : lostB, nullptr);
+        useA = !useA;
+        std::this_thread::yield();
+    }
+    for (std::thread& w : workers)
+        w.join();
+    g_resetToReport = TESSERA_RESET_NONE;
+    tesseraSetContextLostCallback(nullptr, nullptr);
+    CHECK(g_lostToA.load() + g_lostToB.load() == kThreads * kPerThread);
+    CHECK(g_liveRobust == 0);
+}
+
 // ---- swap control reporting: the pure decision logic, then the core's handling of a backend's answer
 
 static void testSwapControlLogic() {
@@ -1660,6 +1711,7 @@ static void testLifecycleRobustness() {
     tessera::Runtime::instance().registerBackend(std::make_shared<RobustFakeBackend>());
     testResetAndLoss();
     testContextLostCallback();
+    testContextLostCallbackThreads();
     testDeviceSelection();
     testContextPriority();
     testSwapControlLogic();

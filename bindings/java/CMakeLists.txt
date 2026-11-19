@@ -146,15 +146,30 @@ if(BUILD_TESTING AND TESSERA_BUILD_TESTS)
     tessera_java_test(java_shutdown io.github.andreasnilsson123.tessera.ShutdownTest BINDING jni CLASSPATH ${_cp} ${_native_access})
     set(JAVA_TESTS java_jni java_jni_embedded java_shutdown)
     set(JAVA_SHUTDOWN_TESTS java_shutdown)
+    # Context-lost events through the native upcalls; needs the library's test hook (the java preset builds it in), else skips (77).
+    tessera_java_test(java_lost_events io.github.andreasnilsson123.tessera.LostEventsTest BINDING jni NATIVE_LIB CLASSPATH ${_cp} ${_native_access})
+    set(JAVA_LOST_TESTS java_lost_events)
+    # Hostile arguments into every native entry point under -Xcheck:jni: a crash, an exit or any JNI-misuse warning fails the test.
+    tessera_java_test(java_native_fuzz io.github.andreasnilsson123.tessera.NativeFuzz BINDING jni NATIVE_LIB CLASSPATH ${_cp} ${_native_access}
+        JVM_OPTIONS -Xcheck:jni)
+    set(JAVA_FUZZ_TESTS java_native_fuzz)
     if(Java_VERSION_MAJOR GREATER_EQUAL 22)
         tessera_java_test(java_ffm io.github.andreasnilsson123.tessera.SelfTest BINDING ffm NATIVE_LIB NATIVE_ACCESS CLASSPATH ${_cp})
         tessera_java_test(java_ffm_embedded io.github.andreasnilsson123.tessera.SelfTest BINDING ffm NATIVE_ACCESS CLASSPATH ${_cp})
         tessera_java_test(java_shutdown_ffm io.github.andreasnilsson123.tessera.ShutdownTest BINDING ffm NATIVE_ACCESS CLASSPATH ${_cp})
+        tessera_java_test(java_lost_events_ffm io.github.andreasnilsson123.tessera.LostEventsTest BINDING ffm NATIVE_LIB NATIVE_ACCESS CLASSPATH ${_cp})
+        list(APPEND JAVA_LOST_TESTS java_lost_events_ffm)
+        tessera_java_test(java_native_fuzz_ffm io.github.andreasnilsson123.tessera.NativeFuzz BINDING ffm NATIVE_LIB NATIVE_ACCESS CLASSPATH ${_cp}
+            JVM_OPTIONS -Xcheck:jni)
+        list(APPEND JAVA_FUZZ_TESTS java_native_fuzz_ffm)
         list(APPEND JAVA_TESTS java_ffm java_ffm_embedded java_shutdown_ffm)
         list(APPEND JAVA_SHUTDOWN_TESTS java_shutdown_ffm)
     endif()
     # They need a real OpenGL driver, like the other integration tests.
     set_tests_properties(${JAVA_TESTS} PROPERTIES LABELS "gpu;java" TIMEOUT 180)
+    set_tests_properties(${JAVA_LOST_TESTS} PROPERTIES LABELS "gpu;java" TIMEOUT 120 SKIP_RETURN_CODE 77 ENVIRONMENT "TESSERA_TEST_LOSE_ON_SWAP=1")
+    set_tests_properties(${JAVA_FUZZ_TESTS} PROPERTIES LABELS "gpu;java;fuzz" TIMEOUT 300 SKIP_RETURN_CODE 77
+        FAIL_REGULAR_EXPRESSION "WARNING in native method|FATAL ERROR in native method")
     set_tests_properties(${JAVA_SHUTDOWN_TESTS} PROPERTIES TIMEOUT 60) # the JVM must exit promptly with contexts still alive
 
     # The jar as a named module on the module path (module-info, only the API package exported). The tests live in the API package,
@@ -306,7 +321,9 @@ if(TARGET tessera_java_lwjgl AND TESSERA_JAVAFX_JARS)
             tessera_java_test(java_javafx_${_stress_pipeline}_stress io.github.andreasnilsson123.tessera.javafx.FxCoexistence BINDING jni NATIVE_LIB
                 CLASSPATH ${_fx_cp} MODULE_PATH ${TESSERA_JAVAFX_JARS}
                 JVM_OPTIONS -Dprism.order=${_stress_pipeline} -Dprism.verbose=true -Dfxtest.frames=${TESSERA_JAVA_STRESS_FRAMES} ${_stress_extra} ${_native_access})
-            set_tests_properties(java_javafx_${_stress_pipeline}_stress PROPERTIES LABELS "gpu;java;javafx;stress" TIMEOUT 3000
+            # Generous: at least 10 frames per second, plus ten minutes of start-up and teardown.
+            math(EXPR _stress_timeout "${TESSERA_JAVA_STRESS_FRAMES} / 10 + 600")
+            set_tests_properties(java_javafx_${_stress_pipeline}_stress PROPERTIES LABELS "gpu;java;javafx;stress" TIMEOUT ${_stress_timeout}
                 FAIL_REGULAR_EXPRESSION "Fallback to Prism SW pipeline")
         endif()
     endif()

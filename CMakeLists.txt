@@ -25,6 +25,7 @@ option(TESSERA_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 option(TESSERA_CLANG_TIDY "Run clang-tidy on the library sources during the build" OFF)
 option(TESSERA_BUILD_FUZZERS "Build the libFuzzer targets (clang; use the fuzz preset)" OFF)
 option(TESSERA_BUILD_TOOLS "Build the tessera-diag command-line tool" ON)
+option(TESSERA_TEST_HOOKS "Compile test-only hooks into the library (never in a release): TESSERA_TEST_LOSE_ON_SWAP=1 makes swapBuffers report a lost context" OFF)
 option(TESSERA_BUILD_JAVA "Build the Java bindings: JNI glue inside the library plus bindings/java (needs a JDK 11+)" OFF)
 option(TESSERA_SANITIZE "Sanitizer to enable: address, undefined, thread (or empty)" "")
 
@@ -79,6 +80,9 @@ target_include_directories(tessera_core
     PUBLIC  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     PRIVATE src)
 target_compile_definitions(tessera_core PRIVATE TESSERA_BUILDING)
+if(TESSERA_TEST_HOOKS)
+    target_compile_definitions(tessera_core PRIVATE TESSERA_TEST_HOOKS)
+endif()
 if(NOT TESSERA_BUILD_SHARED)
     target_compile_definitions(tessera_core PUBLIC TESSERA_STATIC)
 endif()
