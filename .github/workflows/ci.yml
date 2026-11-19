@@ -172,7 +172,34 @@ jobs:
           cmake --preset ci -DCMAKE_BUILD_TYPE=Debug
           cmake --build --preset ci --parallel
       - name: Run the CGL test against OpenGL.framework
-        run: ctest --test-dir build/ci -L gpu --output-on-failure
+        run: ctest --test-dir build/ci -L gpu -V
+      - name: What the runner's OpenGL offers
+        run: ./build/ci/tools/diag/tessera-diag || true
+
+  # The Java bindings on macOS (JDK 21 = JNI, JDK 25 = FFM) against the hosted VM's OpenGL.framework. The JavaFX/AWT/GLFW
+  # tests need a window server session; the first run shows which of them the runner can host.
+  java-macos:
+    name: java (JDK ${{ matrix.java }}, macOS, informational)
+    runs-on: macos-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        java: ["21", "25"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+      - name: Fetch the pinned LWJGL and JavaFX jars
+        run: python3 scripts/fetch-java-deps.py
+      - name: Configure and build
+        run: |
+          cmake --preset java -DCMAKE_BUILD_TYPE=Debug
+          cmake --build --preset java --parallel
+      - name: Run the Java tests
+        run: ctest --preset java --output-on-failure -V
 
   # The Java bindings and their tests on Linux: JNI on Java 21, FFM on Java 25, under a virtual X server with Mesa's
   # software renderer. The JavaFX OpenGL pipeline test needs GTK and prism.forceGPU (JavaFX does not allow-list Mesa).
