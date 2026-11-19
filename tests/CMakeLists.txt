@@ -22,7 +22,7 @@ if(WIN32 AND TESSERA_BUILD_SHARED)
 endif()
 
 # White-box core tests: compile against the core objects directly (internals are hidden in the DLL).
-add_executable(test_core test_core.cpp $<TARGET_OBJECTS:tessera_core>)
+add_executable(test_core test_core.cpp $<TARGET_OBJECTS:tessera_core> ${TESSERA_PLATFORM_OBJECTS})
 target_include_directories(test_core PRIVATE ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/include)
 target_compile_definitions(test_core PRIVATE TESSERA_STATIC)
 target_link_libraries(test_core PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
@@ -33,7 +33,7 @@ tessera_apply_options(test_core)
 add_test(NAME core COMMAND test_core)
 
 # Seeded fuzzing of config structs, handles, struct sizes, proc names and version strings (see the file header).
-add_executable(test_fuzz test_fuzz.cpp $<TARGET_OBJECTS:tessera_core>)
+add_executable(test_fuzz test_fuzz.cpp $<TARGET_OBJECTS:tessera_core> ${TESSERA_PLATFORM_OBJECTS})
 target_include_directories(test_fuzz PRIVATE ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/include)
 target_compile_definitions(test_fuzz PRIVATE TESSERA_STATIC)
 target_link_libraries(test_fuzz PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
