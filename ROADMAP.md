@@ -374,12 +374,12 @@ Needs: the owner decision; WSLg for X11 and Wayland testing.
 - [ ] Java `createForWindow` exercised with a real window on Linux (GLFW `NO_API` and AWT), not only argument validation.
 - [ ] Design note for macOS `NSView` attach (not implementable without a Mac) and ADR 0013 covering resize, thread and teardown rules for borrowed windows.
 
-### Chunk 4 - Driver features that exist but are unproven or missing
+### Chunk 4 - Driver features that exist but are unproven or missing (ABI 0.11.0, ADR 0013)
 Needs: nothing extra; multi-GPU and AMD/Intel parts of these stay in 10.1.
-- [ ] Context priority (`EGL_IMG_context_priority`, `WGL_*_priority`): implement, read back what was granted, test on Mesa.
-- [ ] EGL device selection by render node, PCI address and UUID (`EGL_EXT_device_persistent_id`) in `TESSERA_EGL_DEVICE`; test the matching logic with a faked device list.
-- [ ] Detect whether the host already called `XInitThreads` (10.3) and document what Tessera does either way.
-- [ ] A verification matrix for robust access, reset notification, `KHR_no_error` and release-flush on NVIDIA/WGL and Mesa, recorded in `docs/compat.md` (what was granted, what was refused, what is untested).
+- [x] Context priority: `TesseraContextConfig::priority` / `TesseraContextInfo::priority`, GLX (`GLX_EXT_context_priority`) and EGL (`EGL_IMG_context_priority`) with read-back; strict compares the read-back, best-effort drops and logs; **WGL has no such extension** (refused in strict mode). Java `ContextConfig.Priority` / `ContextInfo.priority()`. Tested: the plan and strict-satisfaction logic and validation (`test_core`), strict refusal on real WGL, GLX and EGL (Mesa advertises neither extension), Java on both bindings. **Not verified:** a driver that grants a priority (needs e.g. Intel/AMD Mesa or NVIDIA on Linux); the granted path is covered by the plan/satisfaction unit tests only.
+- [x] EGL device selection by render node, PCI address and **UUID** (`EGL_EXT_device_persistent_id`): the matching rules are one pure function tested against faked multi-GPU lists (index range, by-path PCI resolution, any-case/32-digit UUIDs, partial attribute support, ambiguity refusal, missing-extension reasons). `test_egl` also names the real device by its render node and UUID where the driver reports them. **Not verified:** a machine with two GPUs; WSLg's single device reports neither a render node nor a UUID, so the real-device positive cases did not run there.
+- [x] `XInitThreads` detection: libX11's `_Xglobal_lock` says whether the host already initialised Xlib threading; Tessera logs which side acted and skips the call when the host did it. Tested in two fresh processes (host first / not) with libX11's own lock as the witness.
+- [x] Robust access, reset notification, `KHR_no_error`, release-flush matrix on NVIDIA/WGL and Mesa GLX/EGL, recorded in `docs/compat.md` (what was granted, refused, untested).
 
 ### Chunk 5 - Verification and hardening of what already exists
 Needs: WSL for the sanitizer builds. A real GPU reset needs the owner's consent to provoke a TDR.

@@ -20,6 +20,8 @@ static int g_failures = 0;
 static_assert(sizeof(TesseraHandle) == 8, "handles are 64-bit");
 static_assert(sizeof(TesseraResult) == 4, "results are 32-bit");
 static_assert(sizeof(TesseraContextInfo) == 504, "TesseraContextInfo layout");
+static_assert(offsetof(TesseraContextInfo, priority) == 440 && offsetof(TesseraContextConfig, priority) == 84,
+              "priority offsets (the Java FFM binding hard-codes them)");
 static_assert(sizeof(TesseraProbeReport) == 832, "TesseraProbeReport layout");
 static_assert(offsetof(TesseraContextConfig, adapterLuid) == 72 &&
                   offsetof(TesseraContextConfig, gpuPreference) == 80,

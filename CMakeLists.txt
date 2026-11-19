@@ -125,6 +125,9 @@ if(TESSERA_BUILD_SHARED)
 else()
     add_library(tessera STATIC $<TARGET_OBJECTS:tessera_core> ${TESSERA_PLATFORM_OBJECTS})
     target_compile_definitions(tessera PUBLIC TESSERA_STATIC)
+    # The library is C++ behind a C API: a C-only consumer linking the static archive has no C++ runtime unless we say so
+    # (found by the vcpkg CI job: undefined std::__throw_system_error with `project(consumer C)`).
+    target_link_libraries(tessera INTERFACE "$<$<PLATFORM_ID:Linux>:stdc++>" "$<$<PLATFORM_ID:Darwin>:c++>")
 endif()
 add_library(Tessera::tessera ALIAS tessera)
 

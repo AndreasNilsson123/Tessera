@@ -32,6 +32,12 @@
 #elif defined(__linux__)
 #include <dlfcn.h>
 #include <time.h>
+/* dlsym returns an object pointer; ISO C has no direct conversion to a function pointer, so copy the bits. */
+#define BIND_SYMBOL(fn, lib, name)                                                                           \
+    do {                                                                                                     \
+        void* sym_ = dlsym((lib), (name));                                                                   \
+        memcpy(&(fn), &sym_, sizeof(fn));                                                                    \
+    } while (0)
 #endif
 
 #if defined(_WIN32)
@@ -409,13 +415,17 @@ static int benchWindowCreate(BenchWindow* w, int width, int height) {
     w->x11 = dlopen("libX11.so.6", RTLD_NOW);
     if (!w->x11)
         return 0;
-    OpenFn open = (OpenFn)dlsym(w->x11, "XOpenDisplay");
-    RootFn root = (RootFn)dlsym(w->x11, "XDefaultRootWindow");
-    SimpleFn create = (SimpleFn)dlsym(w->x11, "XCreateSimpleWindow");
-    MapFn map = (MapFn)dlsym(w->x11, "XMapWindow");
-    w->xDestroy = (void (*)(void*, unsigned long))dlsym(w->x11, "XDestroyWindow");
-    w->xClose = (int (*)(void*))dlsym(w->x11, "XCloseDisplay");
-    w->xSync = (void (*)(void*, int))dlsym(w->x11, "XSync");
+    OpenFn open = NULL;
+    RootFn root = NULL;
+    SimpleFn create = NULL;
+    MapFn map = NULL;
+    BIND_SYMBOL(open, w->x11, "XOpenDisplay");
+    BIND_SYMBOL(root, w->x11, "XDefaultRootWindow");
+    BIND_SYMBOL(create, w->x11, "XCreateSimpleWindow");
+    BIND_SYMBOL(map, w->x11, "XMapWindow");
+    BIND_SYMBOL(w->xDestroy, w->x11, "XDestroyWindow");
+    BIND_SYMBOL(w->xClose, w->x11, "XCloseDisplay");
+    BIND_SYMBOL(w->xSync, w->x11, "XSync");
     if (!open || !root || !create || !map || !w->xDestroy || !w->xClose || !w->xSync)
         return 0;
     w->display = open(NULL); /* $DISPLAY: the same server Tessera's GLX backend talks to */
@@ -474,8 +484,13 @@ typedef void (*ClearFn)(unsigned);
 static BenchStats benchRun(TesseraContext ctx, BenchWindow* w, double seconds) {
     BenchStats st;
     memset(&st, 0, sizeof st);
-    ClearColorFn clearColor = (ClearColorFn)tesseraGetProcAddress("glClearColor");
-    ClearFn clear = (ClearFn)tesseraGetProcAddress("glClear");
+    ClearColorFn clearColor = NULL;
+    ClearFn clear = NULL;
+    void* clearColorPtr = tesseraGetProcAddress("glClearColor");
+    void* clearPtr = tesseraGetProcAddress("glClear");
+    memcpy(&clearColor, &clearColorPtr,
+           sizeof clearColor); /* object pointer to function pointer: no ISO C cast */
+    memcpy(&clear, &clearPtr, sizeof clear);
     if (!clearColor || !clear)
         return st;
     size_t cap = 1 << 16, n = 0;

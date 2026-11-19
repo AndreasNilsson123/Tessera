@@ -638,6 +638,46 @@ static void testTerminateKeepsSharedDisplayAlive() {
     foreign.destroy();
 }
 
+// Asks libEGL directly (outside Tessera) what the first EGL device is, so the test can name it the way a user
+// would.
+static bool rawFirstDevice(std::string& renderNode, std::string& uuid) {
+    void* lib = dlopen("libEGL.so.1", RTLD_NOW | RTLD_LOCAL);
+    if (!lib)
+        return false;
+    using GetProc = void* (*)(const char*);
+    using QueryDevices = unsigned (*)(int, void**, int*);
+    using QueryString = const char* (*)(void*, int);
+    using QueryBinary = unsigned (*)(void*, int, int, void*, int*);
+    auto getProc = reinterpret_cast<GetProc>(dlsym(lib, "eglGetProcAddress"));
+    if (!getProc)
+        return false;
+    auto queryDevices = reinterpret_cast<QueryDevices>(getProc("eglQueryDevicesEXT"));
+    auto queryString = reinterpret_cast<QueryString>(getProc("eglQueryDeviceStringEXT"));
+    auto queryBinary = reinterpret_cast<QueryBinary>(getProc("eglQueryDeviceBinaryEXT"));
+    void* devices[16] = {};
+    int count = 0;
+    if (!queryDevices || !queryDevices(16, devices, &count) || count < 1)
+        return false;
+    renderNode.clear();
+    uuid.clear();
+    if (queryString) {
+        const char* node = queryString(devices[0], 0x3377); // EGL_DRM_RENDER_NODE_FILE_EXT
+        if (node)
+            renderNode = node;
+    }
+    unsigned char raw[16] = {};
+    int size = 0;
+    if (queryBinary && queryBinary(devices[0], 0x335C, 16, raw, &size) && size == 16) { // EGL_DEVICE_UUID_EXT
+        char text[40];
+        std::snprintf(text, sizeof text,
+                      "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x", raw[0], raw[1],
+                      raw[2], raw[3], raw[4], raw[5], raw[6], raw[7], raw[8], raw[9], raw[10], raw[11],
+                      raw[12], raw[13], raw[14], raw[15]);
+        uuid = text;
+    }
+    return true;
+}
+
 static void testDeviceSelection() {
     // An explicit GPU choice is honoured or refused, never silently replaced by a different GPU.
     EXPECT(tesseraTerminate(), TESSERA_SUCCESS);
@@ -687,6 +727,29 @@ static void testDeviceSelection() {
     tryWith("device", "0", TESSERA_SUCCESS, nullptr);
     // With no platform forced, a choice implies the device platform instead of being ignored by surfaceless.
     tryWith(nullptr, "0", TESSERA_SUCCESS, nullptr);
+
+    // A UUID is accepted in its dashed and bare forms (and never matches by accident).
+    tryWith("device", "00000000-0000-0000-0000-000000000000", TESSERA_ERROR_UNSUPPORTED, "matches none");
+    tryWith("device", "gpu0", TESSERA_ERROR_UNSUPPORTED, "not an index");
+    // The real device, named the way a user would: by its render node and by its UUID (where the driver
+    // reports them).
+    std::string node, uuid;
+    if (rawFirstDevice(node, uuid)) {
+        std::printf("  device 0: render node '%s', UUID '%s'\n", node.c_str(), uuid.c_str());
+        if (!node.empty())
+            tryWith("device", node.c_str(), TESSERA_SUCCESS, nullptr);
+        if (!uuid.empty()) {
+            tryWith("device", uuid.c_str(), TESSERA_SUCCESS, nullptr);
+            tryWith("device", ("uuid:" + uuid).c_str(), TESSERA_SUCCESS, nullptr);
+            std::string bare;
+            for (char ch : uuid)
+                if (ch != '-')
+                    bare.push_back(ch);
+            tryWith("device", bare.c_str(), TESSERA_SUCCESS, nullptr);
+        }
+    } else {
+        std::puts("  (no EGL device to name here)");
+    }
 
     if (oldPlatform)
         setenv("TESSERA_EGL_PLATFORM", savedPlatform.c_str(), 1);
@@ -828,6 +891,38 @@ static void testProbe() {
     foreign.destroy();
 }
 
+// Context priority: either the driver grants what was asked and says so, or a strict request is refused.
+static void testContextPriority() {
+    for (uint32_t level : {TESSERA_PRIORITY_LOW, TESSERA_PRIORITY_MEDIUM, TESSERA_PRIORITY_HIGH}) {
+        TesseraContextConfig cfg = baseConfig();
+        cfg.priority = level;
+        cfg.fallback = TESSERA_FALLBACK_STRICT;
+        TesseraContext strictCtx = 0;
+        const TesseraResult r = tesseraCreateContext(&cfg, &strictCtx);
+        CHECK(r == TESSERA_SUCCESS || r == TESSERA_ERROR_NO_MATCHING_CONFIG);
+        TesseraContextInfo info = tesseraDefaultContextInfo();
+        if (r == TESSERA_SUCCESS) {
+            EXPECT(tesseraGetContextInfo(strictCtx, &info), TESSERA_SUCCESS);
+            CHECK(info.priority == level); // strict means exactly this level, as read back from the driver
+            std::printf("  priority %u: granted\n", level);
+            EXPECT(tesseraDestroyContext(strictCtx), TESSERA_SUCCESS);
+        } else {
+            std::printf("  priority %u: refused (%s)\n", level, tesseraGetLastErrorMessage());
+            CHECK(strictCtx == TESSERA_NULL_HANDLE);
+        }
+        // Best effort always yields a context; what it reports is the driver's, never the request.
+        cfg.fallback = TESSERA_FALLBACK_BEST_EFFORT;
+        TesseraContext soft = 0;
+        EXPECT(tesseraCreateContext(&cfg, &soft), TESSERA_SUCCESS);
+        if (soft) {
+            info = tesseraDefaultContextInfo();
+            EXPECT(tesseraGetContextInfo(soft, &info), TESSERA_SUCCESS);
+            CHECK(r != TESSERA_SUCCESS || info.priority == level);
+            EXPECT(tesseraDestroyContext(soft), TESSERA_SUCCESS);
+        }
+    }
+}
+
 static void testNativeHandles() {
     interop::HandleExpectations e;
     e.kind = TESSERA_NATIVE_EGL;
@@ -915,6 +1010,7 @@ int main() {
         {"probe", testProbe},
         {"GPU requests are refused", testAdapterRequests},
         {"native handles", testNativeHandles},
+        {"context priority", testContextPriority},
         {"terminate leaves the shared display alive", testTerminateKeepsSharedDisplayAlive},
         {"device selection", testDeviceSelection},
         {"host context from GLX", testForeignGlxContext},

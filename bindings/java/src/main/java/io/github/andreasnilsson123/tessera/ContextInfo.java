@@ -17,6 +17,7 @@ public final class ContextInfo {
     private final int alpha;
     private final int depth;
     private final int stencil;
+    private final ContextConfig.Priority priority;
     private final String vendor;
     private final String renderer;
     private final String version;
@@ -35,6 +36,7 @@ public final class ContextInfo {
         alpha = v[10];
         depth = v[11];
         stencil = v[12];
+        priority = ContextConfig.Priority.of(v[13]);
         vendor = s[0];
         renderer = s[1];
         version = s[2];
@@ -95,6 +97,11 @@ public final class ContextInfo {
 
     public int stencilBits() {
         return stencil;
+    }
+
+    /** The priority the driver says it granted ({@link ContextConfig.Priority#DEFAULT} where it cannot say). */
+    public ContextConfig.Priority priority() {
+        return priority;
     }
 
     /** {@code GL_VENDOR}. Non-ASCII characters are replaced by {@code ?}. */

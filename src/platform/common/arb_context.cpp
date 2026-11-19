@@ -2,6 +2,8 @@
 // Copyright 2026 Tessera contributors
 #include "arb_context.hpp"
 
+#include "context_priority.hpp"
+
 #include <string>
 
 #include "core/boundary.hpp"
@@ -33,7 +35,7 @@ bool legacySuffices(const TesseraContextConfig& c) {
                                        TESSERA_FLAG_ROBUST_ACCESS | TESSERA_FLAG_RESET_NOTIFICATION |
                                        TESSERA_FLAG_NO_ERROR | TESSERA_FLAG_RELEASE_FLUSH;
     return c.api == TESSERA_API_OPENGL && c.profile == TESSERA_PROFILE_ANY && c.versionMajor <= 2 &&
-           (c.flags & kContextFlags) == 0;
+           (c.flags & kContextFlags) == 0 && c.priority == TESSERA_PRIORITY_DEFAULT;
 }
 
 std::vector<std::pair<int, int>> versionLadder(const TesseraContextConfig& c) {
@@ -135,6 +137,24 @@ TesseraResult planArbContext(const TesseraContextConfig& c, const char* prefix, 
             return r;
         if (ok)
             plan.extra.insert(plan.extra.end(), {kCtxReleaseBehavior, kCtxReleaseFlush});
+    }
+
+    if (c.priority != TESSERA_PRIORITY_DEFAULT) {
+        if (p == "GLX_") {
+            bool ok = false;
+            if (TesseraResult r = require("GLX_EXT_context_priority", ok); r != TESSERA_SUCCESS)
+                return r;
+            if (ok)
+                plan.extra.insert(plan.extra.end(),
+                                  {kNativeContextPriorityLevel, nativePriority(c.priority)});
+        } else if (strict) {
+            // There is no WGL context-priority extension: say so instead of pretending the request was met.
+            return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, "context priority is not available through " +
+                                                              p.substr(0, 3) + " (no such extension exists)");
+        } else {
+            logf(TESSERA_LOG_INFO, "context priority is not available through %s, request dropped",
+                 p.substr(0, 3).c_str());
+        }
     }
 
     plan.versions = contextVersionLadder(c);

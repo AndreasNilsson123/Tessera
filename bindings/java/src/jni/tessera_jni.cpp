@@ -95,8 +95,8 @@ void TESSERA_CALL lostTrampoline(TesseraContext context, int32_t status, void* /
         vm->DetachCurrentThread();
 }
 
-constexpr jint kConfigInts = 17;
-constexpr jint kInfoInts = 13;
+constexpr jint kConfigInts = 18;
+constexpr jint kInfoInts = 14;
 
 // cfg: api, major, minor, profile, flags, surface, fallback, red, green, blue, alpha, depth, stencil, samples
 TesseraContextConfig configFrom(const jint* v, TesseraContext share) {
@@ -116,6 +116,7 @@ TesseraContextConfig configFrom(const jint* v, TesseraContext share) {
     c.stencilBits = v[12];
     c.samples = v[13];
     c.gpuPreference = static_cast<uint32_t>(v[14]);
+    c.priority = static_cast<uint32_t>(v[17]);
     c.adapterLuid =
         (static_cast<uint64_t>(static_cast<uint32_t>(v[16])) << 32) | static_cast<uint32_t>(v[15]);
     c.shareWith = share;
@@ -136,6 +137,7 @@ void infoToInts(const TesseraContextInfo& info, jint* v) {
     v[10] = info.alphaBits;
     v[11] = info.depthBits;
     v[12] = info.stencilBits;
+    v[13] = static_cast<jint>(info.priority);
 }
 
 } // namespace
@@ -317,7 +319,8 @@ TESSERA_JNI(jint, nContextInfo)(JNIEnv* env, jclass, jlong ctx, jintArray ints, 
                                info.blueBits,
                                info.alphaBits,
                                info.depthBits,
-                               info.stencilBits};
+                               info.stencilBits,
+                               static_cast<jint>(info.priority)};
     env->SetIntArrayRegion(ints, 0, kInfoInts, v);
     const char* texts[3] = {info.vendor, info.renderer, info.version};
     for (jsize i = 0; i < 3; ++i) {

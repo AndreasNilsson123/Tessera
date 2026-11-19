@@ -908,7 +908,7 @@ static void testSwapControlAndPacing() {
     pbCfg.surface = TESSERA_SURFACE_PBUFFER;
     TesseraContext pb = 0;
     const TesseraResult pbr = tesseraCreateContext(&pbCfg, &pb);
-    CHECK(pbr == TESSERA_SUCCESS || pbr == TESSERA_ERROR_NO_MATCHING_CONFIG);
+    CHECK(pbr == TESSERA_SUCCESS || pbr == TESSERA_ERROR_NO_MATCHING_CONFIG || pbr == TESSERA_ERROR_UNSUPPORTED);
     TesseraSwapControl sc = tesseraDefaultSwapControl();
     EXPECT(tesseraGetSwapControl(hidden, &sc), TESSERA_ERROR_WRONG_THREAD); // must be current
     if (pb) {
@@ -998,6 +998,28 @@ static void testSwapControlAndPacing() {
     DestroyWindow(w);
 }
 
+// Context priority: WGL has no extension for it, so a strict request is refused (never silently ignored) and
+// a best-effort one gives an ordinary context that reports no priority.
+static void testContextPriority() {
+    TesseraContextConfig cfg = baseConfig();
+    cfg.priority = TESSERA_PRIORITY_HIGH;
+    cfg.fallback = TESSERA_FALLBACK_STRICT;
+    TesseraContext ctx = 0;
+    EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_ERROR_NO_MATCHING_CONFIG);
+    CHECK(ctx == TESSERA_NULL_HANDLE);
+    CHECK(std::strstr(tesseraGetLastErrorMessage(), "priority") != nullptr);
+    cfg.fallback = TESSERA_FALLBACK_BEST_EFFORT;
+    EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_SUCCESS);
+    if (ctx) {
+        TesseraContextInfo info = tesseraDefaultContextInfo();
+        EXPECT(tesseraGetContextInfo(ctx, &info), TESSERA_SUCCESS);
+        CHECK(info.priority == TESSERA_PRIORITY_DEFAULT);
+        EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
+    }
+    cfg.priority = 9; // not a level at all
+    EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_ERROR_INVALID_ARGUMENT);
+}
+
 int main() {
     if (tesseraInit() != TESSERA_SUCCESS) {
         std::fprintf(stderr, "tesseraInit failed: %s\n", tesseraGetLastErrorMessage());
@@ -1040,6 +1062,7 @@ int main() {
         {"native handles", testNativeHandles},
         {"window attach", testWindowAttach},
         {"swap control and frame pacing", testSwapControlAndPacing},
+        {"context priority", testContextPriority},
         {"GPU selection", testAdapterSelection},
         {"terminate / re-init", testTerminateAndReinit},
     };

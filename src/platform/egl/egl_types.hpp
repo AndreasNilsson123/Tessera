@@ -73,6 +73,9 @@ struct EglFns {
     EGLDisplay (*eglGetPlatformDisplayEXT)(EGLenum, void*, const EGLint*) = nullptr;
     EGLBoolean (*eglQueryDevicesEXT)(EGLint, void**, EGLint*) = nullptr;
     const char* (*eglQueryDeviceStringEXT)(void*, EGLint) = nullptr;
+    EGLBoolean (*eglQueryContext)(EGLDisplay, EGLContext, EGLint, EGLint*) = nullptr; // optional
+    EGLBoolean (*eglQueryDeviceBinaryEXT)(void*, EGLint, EGLint, void*,
+                                          EGLint*) = nullptr; // EGL_EXT_device_persistent_id
 };
 
 } // namespace tessera::egl

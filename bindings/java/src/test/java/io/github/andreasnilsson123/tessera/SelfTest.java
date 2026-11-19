@@ -171,7 +171,7 @@ public final class SelfTest {
             Thread.sleep(50);
             allGone = true;
             for (long h : handles) {
-                if (api.contextInfo(h, new int[13], new String[3]) != Result.INVALID_HANDLE.code()) {
+                if (api.contextInfo(h, new int[14], new String[3]) != Result.INVALID_HANDLE.code()) {
                     allGone = false;
                 }
             }
@@ -248,6 +248,23 @@ public final class SelfTest {
         final Context closed = Context.create(plain());
         closed.close();
         expect(IllegalStateException.class, "isLost on a closed context", closed::isLost);
+    }
+
+    static void priority() {
+        check(ContextConfig.builder().build().priority() == ContextConfig.Priority.DEFAULT, "no priority by default");
+        final ContextConfig strict = ContextConfig.builder().priority(ContextConfig.Priority.HIGH).build();
+        check(strict.priority() == ContextConfig.Priority.HIGH, "the builder keeps the priority");
+        // Strict: either the driver grants exactly HIGH and says so, or the request is refused. Never a silent downgrade.
+        try (Context ctx = Context.create(strict)) {
+            check(ctx.info().priority() == ContextConfig.Priority.HIGH, "strict means the level the driver reports: " + ctx.info().priority());
+        } catch (TesseraException e) {
+            check(e.result() == Result.NO_MATCHING_CONFIG, "refused only as NO_MATCHING_CONFIG: " + e);
+        }
+        // Best effort always yields a context, and what it reports is the driver's answer (DEFAULT where it cannot say).
+        try (Context ctx = Context.create(ContextConfig.builder().priority(ContextConfig.Priority.LOW)
+                .fallback(ContextConfig.Fallback.BEST_EFFORT).build())) {
+            System.out.println("  best-effort LOW -> " + ctx.info().priority());
+        }
     }
 
     static void swapControl() {
@@ -524,10 +541,10 @@ public final class SelfTest {
                 + " on Java " + Runtime.version() + (bindingNote() == null ? "" : " (" + bindingNote() + ")"));
 
         final String[] names = {"config and info", "thread rules", "close from another thread", "garbage-collection safety net", "logging",
-                "reset and recreate", "swap control", "sharing", "probe and pre-warming", "keeping the pool full", "native handles", "window attach (validation)", "GPU selection", "virtual threads",
+                "reset and recreate", "swap control", "context priority", "sharing", "probe and pre-warming", "keeping the pool full", "native handles", "window attach (validation)", "GPU selection", "virtual threads",
                 "classloaders"};
         final Body[] bodies = {SelfTest::configAndInfo, SelfTest::threadRules, SelfTest::closeFromAnotherThread, SelfTest::cleanerSafetyNet,
-                SelfTest::logging, SelfTest::resetAndRecreate, SelfTest::swapControl, SelfTest::sharing, SelfTest::probeAndPool, SelfTest::poolTopUp, SelfTest::nativeHandles,
+                SelfTest::logging, SelfTest::resetAndRecreate, SelfTest::swapControl, SelfTest::priority, SelfTest::sharing, SelfTest::probeAndPool, SelfTest::poolTopUp, SelfTest::nativeHandles,
                 SelfTest::windowAttachValidation, SelfTest::gpuSelection, SelfTest::virtualThreadsAreRefused, SelfTest::classLoaders};
         for (int i = 0; i < bodies.length; i++) {
             if (noLoaders && names[i].equals("classloaders")) {

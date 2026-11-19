@@ -262,6 +262,42 @@ void fuzzHandlesAndOutputs() {
         if (!isReal)
             CHECK(rs != TESSERA_SUCCESS);
 
+        // Swap control into a buffer of exactly the claimed size, and the lost-state query with optional out
+        // pointers.
+        {
+            const std::size_t scSize = pick(4)
+                                           ? sizeof(TesseraSwapControl)
+                                           : 4 + pick(static_cast<uint32_t>(sizeof(TesseraSwapControl)) + 40);
+            Exact sc = exactBuffer(scSize);
+            uint32_t claim = pick(6) == 0 ? pick(4) : static_cast<uint32_t>(scSize);
+            std::memcpy(sc.data.get(), &claim, sizeof claim);
+            const TesseraResult rsc =
+                tesseraGetSwapControl(h, reinterpret_cast<TesseraSwapControl*>(sc.data.get()));
+            if (!isReal)
+                CHECK(rsc != TESSERA_SUCCESS);
+            int32_t lost = 9, lostStatus = 9;
+            const TesseraResult rl =
+                tesseraIsContextLost(h, pick(8) ? &lost : nullptr, pick(2) ? &lostStatus : nullptr);
+            if (!isReal)
+                CHECK(rl != TESSERA_SUCCESS);
+            else if (rl == TESSERA_SUCCESS)
+                CHECK(lost == 0 || lost == 1);
+        }
+        // The pool with a hostile config image and extreme targets: bounded, never a crash.
+        if (pick(8) == 0) {
+            Exact c = exactBuffer(sizeof(TesseraContextConfig));
+            for (std::size_t b = 0; b < sizeof(TesseraContextConfig); ++b)
+                c.data[b] = static_cast<unsigned char>(rnd());
+            uint32_t claim = pick(2) ? static_cast<uint32_t>(sizeof(TesseraContextConfig))
+                                     : pick(static_cast<uint32_t>(
+                                           sizeof(TesseraContextConfig))); // never beyond the allocation
+            std::memcpy(c.data.get(), &claim, sizeof claim);
+            const auto* cfgImage = reinterpret_cast<const TesseraContextConfig*>(c.data.get());
+            int32_t created = 3, count = 3;
+            tesseraPoolTopUp(cfgImage, static_cast<int32_t>(interesting()), pick(2) ? &created : nullptr);
+            tesseraGetPooledCount(cfgImage, pick(8) ? &count : nullptr);
+        }
+
         if (!isReal) {
             CHECK(tesseraMakeCurrent(h) != TESSERA_SUCCESS);
             CHECK(tesseraSwapBuffers(h) != TESSERA_SUCCESS);

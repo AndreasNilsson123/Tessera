@@ -121,7 +121,8 @@ if(TESSERA_BUILD_SHARED AND (WIN32 OR (UNIX AND NOT APPLE)))
             COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:tessera> $<TARGET_FILE_DIR:test_soak>)
     endif()
     add_test(NAME soak COMMAND test_soak)
-    set_tests_properties(soak PROPERTIES LABELS "gpu;soak" TIMEOUT 900 SKIP_RETURN_CODE 77)
+    # The soak sets its own duration (TESSERA_SOAK_SECONDS, up to the 24 h run), so ctest must not cut it short.
+    set_tests_properties(soak PROPERTIES LABELS "gpu;soak" TIMEOUT 100000 SKIP_RETURN_CODE 77)
 endif()
 
 # GLX integration test: public API only, against the real shared library, with a raw GLX context on its own X
@@ -132,6 +133,10 @@ if(UNIX AND NOT APPLE AND TESSERA_BUILD_SHARED)
     target_link_libraries(test_glx PRIVATE Tessera::tessera Threads::Threads ${CMAKE_DL_LIBS})
     tessera_apply_options(test_glx)
     add_test(NAME glx COMMAND test_glx)
+    # Whether the host called XInitThreads first, in two fresh processes (see the comment in test_glx.cpp).
+    add_test(NAME glx_xinitthreads_host COMMAND test_glx --xinitthreads=host)
+    add_test(NAME glx_xinitthreads_none COMMAND test_glx --xinitthreads=none)
+    set_tests_properties(glx_xinitthreads_host glx_xinitthreads_none PROPERTIES LABELS "gpu" TIMEOUT 120 SKIP_RETURN_CODE 77)
     set_tests_properties(glx PROPERTIES LABELS "gpu" TIMEOUT 180 SKIP_RETURN_CODE 77)
 endif()
 

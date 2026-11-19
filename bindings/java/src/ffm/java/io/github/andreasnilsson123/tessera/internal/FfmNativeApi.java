@@ -30,12 +30,12 @@ final class FfmNativeApi implements NativeApi {
     private static final long CONFIG_SIZE = 136;
     private static final long CFG_STRUCT_SIZE = 0, CFG_API = 4, CFG_MAJOR = 8, CFG_MINOR = 12, CFG_PROFILE = 16, CFG_FLAGS = 20,
             CFG_SURFACE = 24, CFG_FALLBACK = 28, CFG_RED = 32, CFG_GREEN = 36, CFG_BLUE = 40, CFG_ALPHA = 44, CFG_DEPTH = 48,
-            CFG_STENCIL = 52, CFG_SAMPLES = 56, CFG_SHARE_WITH = 64, CFG_ADAPTER_LUID = 72, CFG_GPU_PREFERENCE = 80;
+            CFG_STENCIL = 52, CFG_SAMPLES = 56, CFG_SHARE_WITH = 64, CFG_ADAPTER_LUID = 72, CFG_GPU_PREFERENCE = 80, CFG_PRIORITY = 84;
     // TesseraContextInfo (504 bytes)
     private static final long INFO_SIZE = 504;
     private static final long INFO_STRUCT_SIZE = 0, INFO_API = 4, INFO_MAJOR = 8, INFO_MINOR = 12, INFO_PROFILE = 16, INFO_FLAGS = 20,
             INFO_SURFACE = 24, INFO_SAMPLES = 28, INFO_RED = 32, INFO_GREEN = 36, INFO_BLUE = 40, INFO_ALPHA = 44, INFO_DEPTH = 48,
-            INFO_STENCIL = 52, INFO_VENDOR = 56, INFO_RENDERER = 184, INFO_VERSION = 312;
+            INFO_STENCIL = 52, INFO_VENDOR = 56, INFO_RENDERER = 184, INFO_VERSION = 312, INFO_PRIORITY = 440;
 
     // TesseraNativeHandles (88 bytes): structSize, kind, handles[6] at 8, reserved[4]
     private static final long NH_SIZE = 88, NH_KIND = 4, NH_HANDLES = 8;
@@ -207,6 +207,7 @@ final class FfmNativeApi implements NativeApi {
         c.set(INT, CFG_SAMPLES, cfg[13]);
         c.set(LONG, CFG_SHARE_WITH, shareWith);
         c.set(INT, CFG_GPU_PREFERENCE, cfg[14]);
+        c.set(INT, CFG_PRIORITY, cfg[17]);
         c.set(LONG, CFG_ADAPTER_LUID, (cfg[15] & 0xFFFFFFFFL) | ((long) cfg[16] << 32));
         return c;
     }
@@ -225,6 +226,7 @@ final class FfmNativeApi implements NativeApi {
         ints[10] = info.get(INT, base + INFO_ALPHA);
         ints[11] = info.get(INT, base + INFO_DEPTH);
         ints[12] = info.get(INT, base + INFO_STENCIL);
+        ints[13] = info.get(INT, base + INFO_PRIORITY);
         strings[0] = ascii(info.getString(base + INFO_VENDOR));
         strings[1] = ascii(info.getString(base + INFO_RENDERER));
         strings[2] = ascii(info.getString(base + INFO_VERSION));

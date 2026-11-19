@@ -14,6 +14,7 @@
 #include "core/log.hpp"
 #include "glx_api.hpp"
 #include "platform/common/arb_context.hpp"
+#include "platform/common/context_priority.hpp"
 #include "platform/common/cross_api.hpp"
 #include "platform/common/gl_debug.hpp"
 #include "platform/common/gl_query.hpp"
@@ -28,6 +29,7 @@ using PfnSwapIntervalMesa = int (*)(unsigned);
 using PfnSwapIntervalSgi = int (*)(int);
 using PfnGetSwapIntervalMesa = int (*)(void);
 using PfnQueryDrawable = void (*)(Display*, GLXDrawable, int, unsigned int*);
+using PfnQueryContext = int (*)(Display*, GLXContext, int, int*);
 constexpr int kGlxSwapIntervalExt = 0x20F1;
 constexpr int kGlxMaxSwapIntervalExt = 0x20F2;
 constexpr int kGlxLateSwapsTearExt = 0x20F3;
@@ -51,6 +53,7 @@ class GlxShared {
     PfnSwapIntervalSgi swapIntervalSgi = nullptr;
     PfnGetSwapIntervalMesa getSwapIntervalMesa = nullptr;
     PfnQueryDrawable queryDrawable = nullptr;
+    PfnQueryContext queryContext = nullptr;
 
     /*
      * A connection that opened successfully is never closed (it lives in the process-wide `keptConnections()`
@@ -77,11 +80,29 @@ class GlxShared {
         // whichever threads the application chooses. Every toolkit that creates GL contexts (GLFW, SDL, GTK,
         // AWT) makes this same call, and it is idempotent. TESSERA_NO_XINITTHREADS=1 opts out for hosts that
         // guarantee it themselves.
+        //
+        // Whether the host got there first is visible in libX11's own state (_Xglobal_lock is set by
+        // XInitThreads), so Tessera reports it instead of guessing: a host that has NOT initialised Xlib
+        // threading and already has displays open is the one case where a late call is a hazard, and the log
+        // line says who did what.
         static std::once_flag once;
         std::call_once(once, [this] {
-            if (!std::getenv("TESSERA_NO_XINITTHREADS")) {
+            const int before = xlibThreadsInitialized(api->x11);
+            if (std::getenv("TESSERA_NO_XINITTHREADS")) {
+                logf(TESSERA_LOG_INFO,
+                     "XInitThreads: not called (TESSERA_NO_XINITTHREADS is set); Xlib threading was %s",
+                     before > 0    ? "already initialised by the host"
+                     : before == 0 ? "NOT initialised"
+                                   : "of unknown state");
+            } else if (before > 0) {
+                logf(TESSERA_LOG_INFO,
+                     "XInitThreads: the host had already initialised Xlib threading; nothing to do");
+            } else {
                 const int ok = api->xlib.XInitThreads();
-                logf(TESSERA_LOG_DEBUG, "XInitThreads() -> %d", ok);
+                logf(TESSERA_LOG_INFO, "XInitThreads: %s, so Tessera called it (-> %d)",
+                     before == 0 ? "the host had not initialised Xlib threading"
+                                 : "the state could not be read",
+                     ok);
             }
         });
 
@@ -126,6 +147,7 @@ class GlxShared {
         swapIntervalSgi = reinterpret_cast<PfnSwapIntervalSgi>(proc("glXSwapIntervalSGI"));
         getSwapIntervalMesa = reinterpret_cast<PfnGetSwapIntervalMesa>(proc("glXGetSwapIntervalMESA"));
         queryDrawable = reinterpret_cast<PfnQueryDrawable>(proc("glXQueryDrawable"));
+        queryContext = reinterpret_cast<PfnQueryContext>(proc("glXQueryContext"));
         logf(TESSERA_LOG_DEBUG, "GLX %d.%d, %zu extensions, ARB_create_context=%d", major, minor,
              exts_.size(), createContextAttribs != nullptr);
         keepOpen = true;
@@ -634,6 +656,16 @@ class GlxBackend final : public Backend {
         // Never negotiable, whatever the fallback policy: API, minimum version, profile.
         if (const char* why = hardRequirementViolation(c, ctx->info))
             return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, why);
+
+        // What priority did the driver grant? (Only asked where the extension exists; the answer is the
+        // driver's.)
+        if (sh.queryContext && sh.has("GLX_EXT_context_priority")) {
+            XErrorScope scope(*sh.api, sh.dpy);
+            int level = 0;
+            if (sh.queryContext(sh.dpy, ctx->ctx, kNativeContextPriorityLevel, &level) == 0 &&
+                scope.sync() == 0)
+                ctx->info.priority = priorityFromNative(level);
+        }
 
         // Strict mode promises exactly what was asked for: verify the parts the driver may have loosened.
         if (c.fallback == TESSERA_FALLBACK_STRICT && !contextSatisfies(c, ctx->info))

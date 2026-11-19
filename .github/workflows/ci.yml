@@ -111,6 +111,8 @@ jobs:
         shell: bash
         env:
           TESSERA_LOCAL_SOURCE: ${{ github.workspace }}
+          # vcpkg builds in a sanitised environment; this lets the overlay port see the checkout.
+          VCPKG_KEEP_ENV_VARS: TESSERA_LOCAL_SOURCE
         run: |
           "$VCPKG_INSTALLATION_ROOT/vcpkg" install tessera --overlay-ports=packaging/vcpkg/ports --x-install-root="$RUNNER_TEMP/vcpkg_installed"
       - name: Build and run a consumer

@@ -36,7 +36,7 @@ public interface NativeApi {
 
     int destroyContext(long handle);
 
-    /** ints: api, major, minor, profile, flags, surface, samples, r, g, b, a, depth, stencil; strings: vendor, renderer, version. */
+    /** ints: api, major, minor, profile, flags, surface, samples, r, g, b, a, depth, stencil, priority; strings: vendor, renderer, version. */
     int contextInfo(long handle, int[] ints, String[] strings);
 
     int makeCurrent(long handle);

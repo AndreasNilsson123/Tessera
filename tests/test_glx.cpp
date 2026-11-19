@@ -811,6 +811,38 @@ static void testSwapControl() {
     }
 }
 
+// Context priority: either the driver grants what was asked and says so, or a strict request is refused.
+static void testContextPriority() {
+    for (uint32_t level : {TESSERA_PRIORITY_LOW, TESSERA_PRIORITY_MEDIUM, TESSERA_PRIORITY_HIGH}) {
+        TesseraContextConfig cfg = baseConfig();
+        cfg.priority = level;
+        cfg.fallback = TESSERA_FALLBACK_STRICT;
+        TesseraContext strictCtx = 0;
+        const TesseraResult r = tesseraCreateContext(&cfg, &strictCtx);
+        CHECK(r == TESSERA_SUCCESS || r == TESSERA_ERROR_NO_MATCHING_CONFIG);
+        TesseraContextInfo info = tesseraDefaultContextInfo();
+        if (r == TESSERA_SUCCESS) {
+            EXPECT(tesseraGetContextInfo(strictCtx, &info), TESSERA_SUCCESS);
+            CHECK(info.priority == level); // strict means exactly this level, as read back from the driver
+            std::printf("  priority %u: granted\n", level);
+            EXPECT(tesseraDestroyContext(strictCtx), TESSERA_SUCCESS);
+        } else {
+            std::printf("  priority %u: refused (%s)\n", level, tesseraGetLastErrorMessage());
+            CHECK(strictCtx == TESSERA_NULL_HANDLE);
+        }
+        // Best effort always yields a context; what it reports is the driver's, never the request.
+        cfg.fallback = TESSERA_FALLBACK_BEST_EFFORT;
+        TesseraContext soft = 0;
+        EXPECT(tesseraCreateContext(&cfg, &soft), TESSERA_SUCCESS);
+        if (soft) {
+            info = tesseraDefaultContextInfo();
+            EXPECT(tesseraGetContextInfo(soft, &info), TESSERA_SUCCESS);
+            CHECK(r != TESSERA_SUCCESS || info.priority == level);
+            EXPECT(tesseraDestroyContext(soft), TESSERA_SUCCESS);
+        }
+    }
+}
+
 static void testWindowAttach() {
     ForeignContext
         owner; // supplies a real, mapped-or-not X window with a GLX-capable visual that is NOT ours
@@ -891,7 +923,73 @@ static void testWindowAttach() {
     owner.destroy();
 }
 
-int main() {
+// Who called XInitThreads: run as two separate processes (a fresh libX11 each), with the host doing it first
+// or not. libX11's own `_Xglobal_lock` is the independent witness of what happened; Tessera's log line must
+// agree with it.
+static std::vector<std::string> g_xinitLog;
+static void TESSERA_CALL captureXinitLog(int32_t, const char* message, void*) {
+    g_xinitLog.emplace_back(message);
+}
+
+static int xinitThreadsScenario(bool hostInitialises) {
+    void* x11 = dlopen("libX11.so.6", RTLD_NOW);
+    void* const* lock = x11 ? static_cast<void* const*>(dlsym(x11, "_Xglobal_lock")) : nullptr;
+    if (!lock) {
+        std::fprintf(stderr, "test_glx: libX11 does not export _Xglobal_lock, skipping\n");
+        return 77;
+    }
+    if (!loadRaw()) {
+        std::fprintf(stderr, "test_glx: libX11/libGL not available, skipping\n");
+        return 77;
+    }
+    if (*lock != nullptr) {
+        std::fprintf(
+            stderr,
+            "test_glx: Xlib threading was already initialised by something else before the test, skipping\n");
+        return 77;
+    }
+    setenv("TESSERA_BACKEND", "glx", 1);
+    if (hostInitialises) {
+        g_x.XInitThreads();
+        CHECK(*lock != nullptr);
+    }
+    tesseraSetLogCallback(captureXinitLog, nullptr);
+    if (tesseraInit() != TESSERA_SUCCESS)
+        return 1;
+    TesseraContextConfig cfg = baseConfig();
+    TesseraContext ctx = 0;
+    const TesseraResult r = tesseraCreateContext(&cfg, &ctx);
+    if (r == TESSERA_ERROR_UNSUPPORTED) {
+        std::fprintf(stderr, "test_glx: no usable X display / GLX here, skipping\n");
+        return 77;
+    }
+    EXPECT(r, TESSERA_SUCCESS);
+    if (ctx)
+        tesseraDestroyContext(ctx);
+    tesseraSetLogCallback(nullptr, nullptr);
+
+    CHECK(*lock != nullptr); // in both cases Xlib threading is on once Tessera has opened its connection
+    bool saidHostDidIt = false, saidTesseraDidIt = false;
+    for (const std::string& line : g_xinitLog) {
+        if (line.find("XInitThreads: the host had already initialised") != std::string::npos)
+            saidHostDidIt = true;
+        if (line.find("XInitThreads: the host had not initialised Xlib threading, so Tessera called it") !=
+            std::string::npos)
+            saidTesseraDidIt = true;
+    }
+    CHECK(saidHostDidIt == hostInitialises);
+    CHECK(saidTesseraDidIt == !hostInitialises);
+    std::printf("xinitthreads (%s): host-first=%d tessera-called=%d\n", hostInitialises ? "host" : "none",
+                saidHostDidIt, saidTesseraDidIt);
+    tesseraTerminate();
+    return g_failures ? 1 : 0;
+}
+
+int main(int argc, char** argv) {
+    if (argc > 1 && std::strcmp(argv[1], "--xinitthreads=host") == 0)
+        return xinitThreadsScenario(true);
+    if (argc > 1 && std::strcmp(argv[1], "--xinitthreads=none") == 0)
+        return xinitThreadsScenario(false);
     if (!loadRaw()) {
         std::fprintf(stderr, "test_glx: libX11/libGL not available, skipping\n");
         return 77;
@@ -946,6 +1044,7 @@ int main() {
         {"native handles", testNativeHandles},
         {"window attach", testWindowAttach},
         {"swap control", testSwapControl},
+        {"context priority", testContextPriority},
         {"terminate / re-init", testTerminateAndReinit},
         {"terminate with a busy thread", testTerminateWithBusyThread},
         {"surface none", testSurfaceNone},

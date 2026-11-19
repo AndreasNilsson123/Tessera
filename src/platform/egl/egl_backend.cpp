@@ -17,7 +17,9 @@
 #include "core/log.hpp"
 #include "egl_api.hpp"
 #include "platform/common/arb_context.hpp"
+#include "platform/common/context_priority.hpp"
 #include "platform/common/cross_api.hpp"
+#include "platform/common/device_select.hpp"
 #include "platform/common/gl_debug.hpp"
 #include "platform/common/gl_query.hpp"
 
@@ -117,10 +119,12 @@ bool contains(const std::vector<std::string>& v, const char* word) {
  *   <n>                       index in eglQueryDevicesEXT order (unstable across drivers/boots)
  *   /dev/dri/renderD128       a DRM render node (matched by EGL_EXT_device_drm_render_node)
  *   0000:01:00.0              a PCI address, resolved through /dev/dri/by-path/pci-<address>-render
- * An explicit choice is never silently replaced by another GPU: if nothing matches, opening the display
- * fails.
+ *   <uuid> or uuid:<uuid>     the device UUID (EGL_EXT_device_persistent_id): stable across boots and
+ * re-plugging An explicit choice is never silently replaced by another GPU: if nothing matches, opening the
+ * display fails.
  */
 constexpr EGLint kDrmRenderNodeFile = 0x3377; // EGL_DRM_RENDER_NODE_FILE_EXT
+constexpr EGLint kDeviceUuid = 0x335C;        // EGL_DEVICE_UUID_EXT (EGL_EXT_device_persistent_id)
 
 std::string canonicalPath(const std::string& p) {
 #if defined(__unix__) || defined(__APPLE__)
@@ -131,35 +135,25 @@ std::string canonicalPath(const std::string& p) {
     return p;
 }
 
-bool looksLikePciAddress(const std::string& s) {
-    // domain:bus:device.function, e.g. 0000:01:00.0
-    return s.size() >= 12 && s[4] == ':' && s[7] == ':' && s[10] == '.';
-}
-
-/* The device in `devices` that `selector` names, or -1. */
-int findDevice(const EglFns& f, void* const* devices, EGLint count, const std::string& selector) {
-    if (!selector.empty() && selector.find_first_not_of("0123456789") == std::string::npos) {
-        if (selector.size() > 4)
-            return -1; // far beyond any device count; also keeps atoi away from signed overflow
-        const int i = std::atoi(selector.c_str());
-        return i < count ? i : -1;
-    }
-    std::string node = selector;
-    if (looksLikePciAddress(selector)) {
-        std::string lower = selector;
-        for (char& ch : lower)
-            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-        node = "/dev/dri/by-path/pci-" + lower + "-render";
-    }
-    if (!f.eglQueryDeviceStringEXT)
-        return -1;
-    const std::string wanted = canonicalPath(node);
+/* The device in `devices` that `selector` names, or a reason it names none. The matching rules are
+ * device_select.hpp's. */
+DeviceChoice findDevice(const EglFns& f, void* const* devices, EGLint count, const std::string& selector) {
+    std::vector<EglDeviceDesc> descs(static_cast<std::size_t>(count));
     for (EGLint i = 0; i < count; ++i) {
-        const char* file = f.eglQueryDeviceStringEXT(devices[i], kDrmRenderNodeFile);
-        if (file && canonicalPath(file) == wanted)
-            return i;
+        EglDeviceDesc& d = descs[static_cast<std::size_t>(i)];
+        if (f.eglQueryDeviceStringEXT) {
+            const char* file = f.eglQueryDeviceStringEXT(devices[i], kDrmRenderNodeFile);
+            if (file)
+                d.renderNode = file;
+        }
+        EGLint size = 0;
+        if (f.eglQueryDeviceBinaryEXT &&
+            f.eglQueryDeviceBinaryEXT(devices[i], kDeviceUuid, static_cast<EGLint>(d.uuid.size()),
+                                      d.uuid.data(), &size) &&
+            size == static_cast<EGLint>(d.uuid.size()))
+            d.hasUuid = true;
     }
-    return -1;
+    return selectDevice(selector, descs, canonicalPath);
 }
 
 class EglShared {
@@ -241,15 +235,14 @@ class EglShared {
             EGLint count = 0;
             if (f.eglQueryDevicesEXT(16, devices, &count) && count > 0) {
                 if (!selector.empty()) {
-                    const int i = findDevice(f, devices, count, selector);
-                    if (i < 0) {
+                    const DeviceChoice choice = findDevice(f, devices, count, selector);
+                    if (choice.index < 0) {
                         error = "TESSERA_EGL_DEVICE=" + selector + " matches none of the " +
-                                std::to_string(count) +
-                                " EGL device(s) (render node / PCI matching needs "
-                                "EGL_EXT_device_drm_render_node)";
+                                std::to_string(count) + " EGL device(s): " + choice.reason;
                         return false;
                     }
-                    if (attempt("device", f.eglGetPlatformDisplayEXT(kPlatformDevice, devices[i], nullptr)))
+                    if (attempt("device",
+                                f.eglGetPlatformDisplayEXT(kPlatformDevice, devices[choice.index], nullptr)))
                         return finish();
                     error = "the EGL device selected by TESSERA_EGL_DEVICE=" + selector +
                             " could not be opened (tried:" + tried + ")";
@@ -483,6 +476,16 @@ TesseraResult planEgl(const EglShared& sh, const TesseraContextConfig& c, EglPla
     if (c.api == TESSERA_API_OPENGL && c.profile != TESSERA_PROFILE_ANY)
         plan.profile = c.profile == TESSERA_PROFILE_CORE ? kProfileCore : kProfileCompat;
 
+    if (c.priority != TESSERA_PRIORITY_DEFAULT) {
+        if (sh.has("EGL_IMG_context_priority"))
+            plan.flagAttribs.insert(plan.flagAttribs.end(),
+                                    {kNativeContextPriorityLevel, nativePriority(c.priority)});
+        else if (strict)
+            return fail(TESSERA_ERROR_NO_MATCHING_CONFIG,
+                        "required extension missing: EGL_IMG_context_priority");
+        else
+            logf(TESSERA_LOG_INFO, "EGL_IMG_context_priority missing, request dropped");
+    }
     if (c.flags & TESSERA_FLAG_DEBUG)
         plan.flagAttribs.insert(plan.flagAttribs.end(), {kContextDebug, 1});
     if ((c.flags & TESSERA_FLAG_FORWARD_COMPATIBLE) && c.api == TESSERA_API_OPENGL)
@@ -701,6 +704,12 @@ class EglBackend final : public Backend {
         // Never negotiable, whatever the fallback policy: API, minimum version, profile.
         if (const char* why = hardRequirementViolation(c, ctx->info))
             return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, why);
+
+        if (f.eglQueryContext && sh->has("EGL_IMG_context_priority")) {
+            EGLint level = 0;
+            if (f.eglQueryContext(sh->dpy, ctx->ctx, kNativeContextPriorityLevel, &level))
+                ctx->info.priority = priorityFromNative(level);
+        }
 
         // Strict mode promises exactly what was asked for: verify the parts the driver may have loosened.
         if (c.fallback == TESSERA_FALLBACK_STRICT && !contextSatisfies(c, ctx->info))

@@ -167,7 +167,7 @@ public final class Context implements AutoCloseable {
     /** What the driver actually gave us. */
     public ContextInfo info() {
         final NativeApi api = Tessera.api();
-        final int[] ints = new int[13];
+        final int[] ints = new int[14];
         final String[] strings = new String[3];
         Tessera.check(api, api.contextInfo(handle(), ints, strings));
         return new ContextInfo(ints, strings);

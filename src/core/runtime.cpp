@@ -294,7 +294,7 @@ bool sameRequest(const TesseraContextConfig& a, const TesseraContextConfig& b) {
            a.fallback == b.fallback && a.redBits == b.redBits && a.greenBits == b.greenBits &&
            a.blueBits == b.blueBits && a.alphaBits == b.alphaBits && a.depthBits == b.depthBits &&
            a.stencilBits == b.stencilBits && a.samples == b.samples && a.adapterLuid == b.adapterLuid &&
-           a.gpuPreference == b.gpuPreference;
+           a.gpuPreference == b.gpuPreference && a.priority == b.priority;
 }
 constexpr std::size_t kMaxPooled = 64;
 } // namespace

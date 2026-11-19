@@ -107,6 +107,13 @@ std::mutex& scopeMutex() {
 
 } // namespace
 
+int xlibThreadsInitialized(const DynamicLibrary& x11) noexcept {
+    // XInitThreads() sets the global lock and returns early when it is already set, so a non-null lock means
+    // threading is on.
+    void* const* lock = static_cast<void* const*>(x11.symbol("_Xglobal_lock"));
+    return lock ? (*lock != nullptr ? 1 : 0) : -1;
+}
+
 const LinuxApi* linuxApi() noexcept {
     static const LinuxApi* api = loadApi(); // thread-safe one-time init
     return api;

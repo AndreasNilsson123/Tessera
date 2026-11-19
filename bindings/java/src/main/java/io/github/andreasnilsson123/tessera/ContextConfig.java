@@ -77,6 +77,30 @@ public final class ContextConfig {
         }
     }
 
+    /**
+     * A hint for how the GPU schedules this context's work against other contexts. Available through GLX
+     * ({@code GLX_EXT_context_priority}) and EGL ({@code EGL_IMG_context_priority}); WGL has no such extension. With
+     * {@link Fallback#STRICT} a request that cannot be honoured, including a driver that grants a lower level than asked, fails
+     * with {@link Result#NO_MATCHING_CONFIG}; best-effort logs and continues. See {@link ContextInfo#priority()}.
+     */
+    public enum Priority {
+        DEFAULT(0), LOW(1), MEDIUM(2), HIGH(3);
+        final int nativeValue;
+
+        Priority(int v) {
+            nativeValue = v;
+        }
+
+        static Priority of(int v) {
+            for (Priority p : values()) {
+                if (p.nativeValue == v) {
+                    return p;
+                }
+            }
+            return DEFAULT;
+        }
+    }
+
     public enum Fallback {
         STRICT(0), BEST_EFFORT(1);
         final int nativeValue;
@@ -120,6 +144,7 @@ public final class ContextConfig {
     private final Context shareWith;
     private final GpuPreference gpuPreference;
     private final long adapterLuid;
+    private final Priority priority;
 
     private ContextConfig(Builder b) {
         api = b.api;
@@ -139,6 +164,7 @@ public final class ContextConfig {
         shareWith = b.shareWith;
         gpuPreference = b.gpuPreference;
         adapterLuid = b.adapterLuid;
+        priority = b.priority;
     }
 
     public static Builder builder() {
@@ -185,6 +211,10 @@ public final class ContextConfig {
         return gpuPreference;
     }
 
+    public Priority priority() {
+        return priority;
+    }
+
     /** The requested DXGI adapter LUID, or 0. */
     public long adapterLuid() {
         return adapterLuid;
@@ -192,12 +222,12 @@ public final class ContextConfig {
 
     /**
      * Layout shared with the native side: api, major, minor, profile, flags, surface, fallback, r, g, b, a, depth, stencil,
-     * samples, gpuPreference, adapterLuid (low 32 bits, high 32 bits).
+     * samples, gpuPreference, adapterLuid (low 32 bits, high 32 bits), priority.
      */
     int[] toNative() {
         return new int[] {api.nativeValue, versionMajor, versionMinor, profile.nativeValue, flags, surface.nativeValue,
                 fallback.nativeValue, red, green, blue, alpha, depth, stencil, samples, gpuPreference.nativeValue,
-                (int) adapterLuid, (int) (adapterLuid >>> 32)};
+                (int) adapterLuid, (int) (adapterLuid >>> 32), priority.nativeValue};
     }
 
     @Override
@@ -217,6 +247,7 @@ public final class ContextConfig {
         private Fallback fallback = Fallback.STRICT;
         private GpuPreference gpuPreference = GpuPreference.DEFAULT;
         private long adapterLuid;
+        private Priority priority = Priority.DEFAULT;
         private int red;
         private int green;
         private int blue;
@@ -269,6 +300,12 @@ public final class ContextConfig {
         /** A DXGI adapter LUID ({@code (HighPart << 32) | LowPart}); Windows only, see {@link GpuPreference}. 0 = none. */
         public Builder adapterLuid(long luid) {
             this.adapterLuid = luid;
+            return this;
+        }
+
+        /** See {@link Priority}. */
+        public Builder priority(Priority priority) {
+            this.priority = Objects.requireNonNull(priority, "priority");
             return this;
         }
 

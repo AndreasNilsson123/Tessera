@@ -17,6 +17,10 @@
 #include <thread>
 #include <vector>
 
+#include "platform/common/arb_context.hpp"
+#include "platform/common/context_priority.hpp"
+#include "platform/common/device_select.hpp"
+#include "platform/common/gl_query.hpp"
 #include "platform/common/swap_control.hpp"
 
 #include "core/backend.hpp"
@@ -732,6 +736,195 @@ static void testResetAndLoss() {
         EXPECT(tesseraDestroyContext(c), TESSERA_SUCCESS);
     }
     CHECK(g_liveRobust == 0);
+}
+
+// ---- context priority: native encoding, the ARB plan (GLX/WGL), strict satisfaction, validation
+
+static void testContextPriority() {
+    using namespace tessera;
+    // Encoding round trip; unknown driver answers are DEFAULT, never guessed.
+    for (uint32_t p : {TESSERA_PRIORITY_LOW, TESSERA_PRIORITY_MEDIUM, TESSERA_PRIORITY_HIGH})
+        CHECK(priorityFromNative(nativePriority(p)) == p);
+    CHECK(nativePriority(TESSERA_PRIORITY_DEFAULT) == 0 && nativePriority(77) == 0);
+    CHECK(priorityFromNative(0) == TESSERA_PRIORITY_DEFAULT &&
+          priorityFromNative(0x3104) == TESSERA_PRIORITY_DEFAULT);
+    CHECK(nativePriority(TESSERA_PRIORITY_HIGH) == 0x3101 && nativePriority(TESSERA_PRIORITY_LOW) == 0x3103);
+
+    auto has = [](bool priorityExt) {
+        return [priorityExt](const char* e) {
+            const std::string s = e;
+            return s == "GLX_ARB_create_context" || s == "WGL_ARB_create_context" ||
+                   (priorityExt && s == "GLX_EXT_context_priority");
+        };
+    };
+    TesseraContextConfig cfg = tesseraDefaultContextConfig();
+    cfg.api = TESSERA_API_OPENGL;
+    ArbContextPlan plan;
+
+    // Without a request nothing changes: the legacy path still suffices.
+    CHECK(planArbContext(cfg, "GLX_", true, has(true), plan) == TESSERA_SUCCESS && plan.legacy);
+
+    // With one the legacy path no longer suffices (it cannot carry attributes), and the attribute is sent.
+    cfg.priority = TESSERA_PRIORITY_HIGH;
+    CHECK(planArbContext(cfg, "GLX_", true, has(true), plan) == TESSERA_SUCCESS && !plan.legacy);
+    bool sent = false;
+    for (std::size_t i = 0; i + 1 < plan.extra.size(); i += 2)
+        sent = sent || (plan.extra[i] == 0x3100 && plan.extra[i + 1] == 0x3101);
+    CHECK(sent);
+
+    // The extension is missing: strict refuses, best-effort drops the request (and the plan has no priority
+    // attribute).
+    CHECK(planArbContext(cfg, "GLX_", true, has(false), plan) == TESSERA_ERROR_NO_MATCHING_CONFIG);
+    cfg.fallback = TESSERA_FALLBACK_BEST_EFFORT;
+    CHECK(planArbContext(cfg, "GLX_", true, has(false), plan) == TESSERA_SUCCESS);
+    sent = false;
+    for (std::size_t i = 0; i + 1 < plan.extra.size(); i += 2)
+        sent = sent || plan.extra[i] == 0x3100;
+    CHECK(!sent);
+
+    // WGL has no such extension at all, whatever the driver advertises.
+    cfg.fallback = TESSERA_FALLBACK_STRICT;
+    CHECK(planArbContext(cfg, "WGL_", true, has(true), plan) == TESSERA_ERROR_NO_MATCHING_CONFIG);
+    cfg.fallback = TESSERA_FALLBACK_BEST_EFFORT;
+    CHECK(planArbContext(cfg, "WGL_", true, has(true), plan) == TESSERA_SUCCESS);
+
+    // Strict satisfaction compares with what the driver reports it granted.
+    TesseraContextConfig want = tesseraDefaultContextConfig();
+    want.api = TESSERA_API_OPENGL;
+    want.priority = TESSERA_PRIORITY_HIGH;
+    TesseraContextInfo got = tesseraDefaultContextInfo();
+    got.api = TESSERA_API_OPENGL;
+    got.priority = TESSERA_PRIORITY_HIGH;
+    CHECK(contextSatisfies(want, got));
+    got.priority =
+        TESSERA_PRIORITY_MEDIUM; // drivers grant a lower level when the process lacks the privilege
+    CHECK(!contextSatisfies(want, got));
+    got.priority = TESSERA_PRIORITY_DEFAULT;
+    CHECK(!contextSatisfies(want, got));
+    want.priority = TESSERA_PRIORITY_DEFAULT; // no request: whatever the driver says is fine
+    CHECK(contextSatisfies(want, got));
+    got.priority = TESSERA_PRIORITY_LOW;
+    CHECK(contextSatisfies(want, got));
+
+    // Validation at the API boundary, and the pool keys on it.
+    TesseraContextConfig bad = tesseraDefaultContextConfig();
+    bad.api = TESSERA_API_OPENGL;
+    bad.priority = 4;
+    TesseraContext none = 0;
+    EXPECT(tesseraCreateContext(&bad, &none), TESSERA_ERROR_INVALID_ARGUMENT);
+    CHECK(none == TESSERA_NULL_HANDLE);
+    TesseraContextConfig a = tesseraDefaultContextConfig(), b = a;
+    a.api = b.api = TESSERA_API_OPENGL;
+    a.priority = TESSERA_PRIORITY_HIGH;
+    int32_t countA = -1, countB = -1;
+    EXPECT(tesseraGetPooledCount(&a, &countA), TESSERA_SUCCESS);
+    EXPECT(tesseraGetPooledCount(&b, &countB), TESSERA_SUCCESS);
+    CHECK(countA == 0 && countB == 0);
+}
+
+// ---- choosing an EGL device: the matching rules, against faked device lists
+
+static std::string fakeCanonical(const std::string& p) {
+    // Stands in for realpath: the by-path links resolve to the render nodes they point at.
+    if (p == "/dev/dri/by-path/pci-0000:01:00.0-render")
+        return "/dev/dri/renderD128";
+    if (p == "/dev/dri/by-path/pci-0000:2f:00.0-render")
+        return "/dev/dri/renderD129";
+    return p;
+}
+
+static tessera::EglDeviceDesc fakeDevice(const char* node, const char* uuid) {
+    tessera::EglDeviceDesc d;
+    if (node)
+        d.renderNode = node;
+    if (uuid)
+        d.hasUuid = tessera::parseDeviceUuid(uuid, d.uuid);
+    return d;
+}
+
+static void testDeviceSelection() {
+    using namespace tessera;
+    const std::string u0 = "11111111-2222-3333-4444-555555555555";
+    const std::string u1 = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+    const std::vector<EglDeviceDesc> two = {fakeDevice("/dev/dri/renderD128", u0.c_str()),
+                                            fakeDevice("/dev/dri/renderD129", u1.c_str())};
+
+    // Classification.
+    CHECK(classifyDeviceSelector("") == DeviceSelectorKind::Empty);
+    CHECK(classifyDeviceSelector("0") == DeviceSelectorKind::Index);
+    CHECK(classifyDeviceSelector("/dev/dri/renderD128") == DeviceSelectorKind::RenderNode);
+    CHECK(classifyDeviceSelector("0000:01:00.0") == DeviceSelectorKind::Pci);
+    CHECK(classifyDeviceSelector("0000:2F:00.0") == DeviceSelectorKind::Pci);
+    CHECK(classifyDeviceSelector(u0) == DeviceSelectorKind::Uuid);
+    CHECK(classifyDeviceSelector("uuid:" + u0) == DeviceSelectorKind::Uuid);
+    CHECK(classifyDeviceSelector("11111111222233334444555555555555") == DeviceSelectorKind::Uuid);
+    CHECK(classifyDeviceSelector("gpu0") == DeviceSelectorKind::Invalid);
+    CHECK(classifyDeviceSelector("0000:zz:00.0") == DeviceSelectorKind::Invalid);
+    CHECK(classifyDeviceSelector("11111111-2222-3333-4444-55555555555") ==
+          DeviceSelectorKind::Invalid); // short
+
+    // UUID parsing: both spellings, any case, and malformed text.
+    std::array<std::uint8_t, 16> a{}, b{}, c{};
+    CHECK(parseDeviceUuid(u0, a) && a[0] == 0x11 && a[15] == 0x55);
+    CHECK(parseDeviceUuid("11111111222233334444555555555555", b) && a == b);
+    CHECK(parseDeviceUuid("UUID:AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE", c) ==
+          false); // the prefix is lowercase
+    CHECK(parseDeviceUuid("uuid:AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE", c) && c[0] == 0xaa);
+    CHECK(!parseDeviceUuid("11111111-2222-3333-4444-55555555555g", c));
+    CHECK(!parseDeviceUuid("11111111_2222_3333_4444_555555555555", c));
+    CHECK(!parseDeviceUuid("", c));
+
+    // Index.
+    CHECK(selectDevice("0", two, fakeCanonical).index == 0);
+    CHECK(selectDevice("1", two, fakeCanonical).index == 1);
+    CHECK(selectDevice("2", two, fakeCanonical).index == -1);
+    CHECK(selectDevice("99999", two, fakeCanonical).index == -1); // beyond any count; must not overflow atoi
+    CHECK(selectDevice("0", {}, fakeCanonical).index == -1);
+
+    // Render node, directly and through the PCI by-path link.
+    CHECK(selectDevice("/dev/dri/renderD129", two, fakeCanonical).index == 1);
+    CHECK(selectDevice("/dev/dri/renderD130", two, fakeCanonical).index == -1);
+    CHECK(selectDevice("0000:01:00.0", two, fakeCanonical).index == 0);
+    CHECK(selectDevice("0000:2f:00.0", two, fakeCanonical).index == 1);
+    CHECK(selectDevice("0000:2F:00.0", two, fakeCanonical).index == 1); // the by-path name is lowercase
+    CHECK(selectDevice("0000:ff:1f.7", two, fakeCanonical).index == -1);
+
+    // UUID: stable across boots, so this is the form to persist.
+    CHECK(selectDevice(u1, two, fakeCanonical).index == 1);
+    CHECK(selectDevice("uuid:" + u0, two, fakeCanonical).index == 0);
+    CHECK(selectDevice("AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE", two, fakeCanonical).index == 1);
+    const DeviceChoice nope = selectDevice("00000000-0000-0000-0000-000000000000", two, fakeCanonical);
+    CHECK(nope.index == -1 && nope.reason.find("no EGL device has UUID") != std::string::npos);
+
+    // A driver without the extension for the form asked for: refused with the reason, never another GPU.
+    const std::vector<EglDeviceDesc> noUuid = {fakeDevice("/dev/dri/renderD128", nullptr),
+                                               fakeDevice("/dev/dri/renderD129", nullptr)};
+    DeviceChoice r = selectDevice(u0, noUuid, fakeCanonical);
+    CHECK(r.index == -1 && r.reason.find("EGL_EXT_device_persistent_id") != std::string::npos);
+    const std::vector<EglDeviceDesc> noNode = {fakeDevice(nullptr, u0.c_str()),
+                                               fakeDevice(nullptr, u1.c_str())};
+    r = selectDevice("/dev/dri/renderD128", noNode, fakeCanonical);
+    CHECK(r.index == -1 && r.reason.find("EGL_EXT_device_drm_render_node") != std::string::npos);
+    CHECK(selectDevice(u1, noNode, fakeCanonical).index == 1); // the UUID still works there
+
+    // Devices where only some report the attribute (a software device next to a GPU).
+    const std::vector<EglDeviceDesc> mixed = {fakeDevice(nullptr, nullptr),
+                                              fakeDevice("/dev/dri/renderD128", u0.c_str())};
+    CHECK(selectDevice("/dev/dri/renderD128", mixed, fakeCanonical).index == 1);
+    CHECK(selectDevice(u0, mixed, fakeCanonical).index == 1);
+    CHECK(selectDevice("0", mixed, fakeCanonical).index == 0);
+
+    // Ambiguity is a driver bug and is refused rather than guessed.
+    const std::vector<EglDeviceDesc> dup = {fakeDevice("/dev/dri/renderD128", u0.c_str()),
+                                            fakeDevice("/dev/dri/renderD128", u0.c_str())};
+    CHECK(selectDevice("/dev/dri/renderD128", dup, fakeCanonical).index == -1);
+    CHECK(selectDevice(u0, dup, fakeCanonical).index == -1);
+
+    // Garbage never selects anything and says what was expected.
+    r = selectDevice("gpu0", two, fakeCanonical);
+    CHECK(r.index == -1 && r.reason.find("not an index") != std::string::npos);
+    CHECK(selectDevice("", two, fakeCanonical).index == -1);
+    CHECK(selectDevice(std::string(5000, 'x'), two, fakeCanonical).index == -1);
 }
 
 // ---- swap control reporting: the pure decision logic, then the core's handling of a backend's answer
@@ -1467,6 +1660,8 @@ static void testLifecycleRobustness() {
     tessera::Runtime::instance().registerBackend(std::make_shared<RobustFakeBackend>());
     testResetAndLoss();
     testContextLostCallback();
+    testDeviceSelection();
+    testContextPriority();
     testSwapControlLogic();
     testSwapControlApi();
     testRecreateAndShareGroups();

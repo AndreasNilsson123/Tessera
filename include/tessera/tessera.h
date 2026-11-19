@@ -31,7 +31,7 @@ extern "C" {
 /* ---------------------------------------------------------------- version */
 
 #define TESSERA_VERSION_MAJOR 0
-#define TESSERA_VERSION_MINOR 10
+#define TESSERA_VERSION_MINOR 11
 #define TESSERA_VERSION_PATCH 0
 
 /** Incremented on every incompatible change to the C ABI, independent of the semantic version. */
@@ -159,6 +159,19 @@ typedef uint32_t TesseraEnum;
 #define TESSERA_GPU_LOW_POWER                                                                                \
     0x0002u /**< the adapter DXGI considers the most frugal (usually the integrated GPU) */
 
+/**
+ * TesseraContextConfig::priority: a hint for how the GPU schedules this context's work against other
+ * contexts. GLX: GLX_EXT_context_priority; EGL: EGL_IMG_context_priority. WGL has no such extension. A
+ * request is never silently ignored: STRICT fails with NO_MATCHING_CONFIG when it cannot be honoured (no
+ * extension, or the driver granted a different level, which drivers do when the process lacks the privilege
+ * for HIGH); BEST_EFFORT logs and goes on. TesseraContextInfo::priority reports what the driver says it
+ * granted.
+ */
+#define TESSERA_PRIORITY_DEFAULT 0u /**< no request / the driver's default */
+#define TESSERA_PRIORITY_LOW 1u
+#define TESSERA_PRIORITY_MEDIUM 2u
+#define TESSERA_PRIORITY_HIGH 3u
+
 /** TesseraContextConfig::fallback */
 #define TESSERA_FALLBACK_STRICT 0x0000u      /**< fail unless every requested attribute is met */
 #define TESSERA_FALLBACK_BEST_EFFORT 0x0001u /**< relax soft attributes (samples, bits); report result */
@@ -179,7 +192,7 @@ typedef struct TesseraContextConfig {
     /* Added in 0.7.0, taken out of the reserved space (the size did not change): zero = no request. */
     uint64_t adapterLuid; /**< Windows: DXGI adapter LUID as (HighPart << 32) | LowPart; see TESSERA_GPU_* */
     uint32_t gpuPreference; /**< TESSERA_GPU_*; not combinable with adapterLuid */
-    uint32_t reserved32;    /**< must be zero */
+    uint32_t priority;      /**< TESSERA_PRIORITY_* (added in 0.11.0, taken from the reserved space) */
     uint64_t reserved[6];   /**< must be zero; reserved for future use */
 } TesseraContextConfig;
 
@@ -208,7 +221,10 @@ typedef struct TesseraContextInfo {
     char vendor[128];   /**< GL_VENDOR, UTF-8, NUL-terminated, truncated if necessary */
     char renderer[128]; /**< GL_RENDERER */
     char version[128];  /**< GL_VERSION */
-    uint64_t reserved[8];
+    uint32_t
+        priority; /**< TESSERA_PRIORITY_*: what the driver reports it granted; DEFAULT where it cannot say */
+    uint32_t reserved32;
+    uint64_t reserved[7];
 } TesseraContextInfo;
 
 static inline TesseraContextInfo tesseraDefaultContextInfo(void) {

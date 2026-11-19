@@ -101,7 +101,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     setup();
     if (size == 0)
         return 0;
-    const uint8_t selector = data[0] % 9;
+    const uint8_t selector = data[0] % 13;
     ++data;
     --size;
     // Real handles are needed to reach the code behind the handle check: keep a few contexts alive.
@@ -174,12 +174,58 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         TesseraContext again = 0;
         if (tesseraRecreateContext(h, &again, nullptr) == TESSERA_SUCCESS)
             tesseraDestroyContext(again);
+        TesseraSwapControl sc = tesseraDefaultSwapControl();
+        tesseraGetSwapControl(h, &sc);
+        int32_t lost = 0;
+        tesseraIsContextLost(h, &lost, &status);
         tesseraMakeCurrent(TESSERA_NULL_HANDLE);
         break;
     }
     case 7: { // proc address names
         const std::string name(reinterpret_cast<const char*>(data), size);
         tesseraGetProcAddress(name.c_str());
+        break;
+    }
+    case 8: { // swap control into a buffer of exactly the claimed size, for a live and a hostile handle
+        const uint64_t handleBits = take64(data, size);
+        const Exact e(data, size);
+        if (size < sizeof(uint32_t))
+            return 0;
+        tesseraMakeCurrent(live[0]);
+        tesseraGetSwapControl(handleBits & 1 ? live[0] : handleBits,
+                              reinterpret_cast<TesseraSwapControl*>(e.data.get()));
+        tesseraMakeCurrent(TESSERA_NULL_HANDLE);
+        break;
+    }
+    case 9: { // the pool, with an arbitrary config image and arbitrary targets
+        const int32_t target = static_cast<int32_t>(take64(data, size));
+        const Exact e(data, size);
+        if (size < sizeof(uint32_t))
+            return 0;
+        const auto* cfg = reinterpret_cast<const TesseraContextConfig*>(e.data.get());
+        int32_t created = 0, count = 0;
+        tesseraPoolTopUp(cfg, target & 0xF, &created);
+        tesseraGetPooledCount(cfg, &count);
+        tesseraPoolTopUp(cfg, target & 0xF, nullptr);
+        if (target & 0x10)
+            tesseraPoolClear();
+        break;
+    }
+    case 10: { // is-lost queries: hostile handles, optional and missing out pointers
+        const uint64_t h = take64(data, size);
+        int32_t lost = 0, status = 0;
+        tesseraIsContextLost(h, &lost, (h & 1) ? &status : nullptr);
+        tesseraIsContextLost(live[1], (h & 2) ? &lost : nullptr, &status);
+        break;
+    }
+    case 11: { // the lost callback: installed, replaced and removed around operations that may lose a context
+        static int calls = 0;
+        tesseraSetContextLostCallback([](TesseraContext, int32_t, void* user) { ++*static_cast<int*>(user); },
+                                      &calls);
+        const uint64_t h = take64(data, size);
+        int32_t status = 0;
+        tesseraGetResetStatus(h, &status);
+        tesseraSetContextLostCallback(nullptr, nullptr);
         break;
     }
     default: { // result strings and the last error text

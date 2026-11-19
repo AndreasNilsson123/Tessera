@@ -203,7 +203,9 @@ bool contextSatisfies(const TesseraContextConfig& c, const TesseraContextInfo& i
     const bool sizesOk = i.redBits >= c.redBits && i.greenBits >= c.greenBits && i.blueBits >= c.blueBits &&
                          i.alphaBits >= c.alphaBits && i.depthBits >= c.depthBits &&
                          i.stencilBits >= c.stencilBits;
-    return versionOk && apiOk && profileOk && samplesOk && sizesOk && missing == 0;
+    // A requested priority is only met if the driver reports exactly that level (it may grant a lower one).
+    const bool priorityOk = c.priority == TESSERA_PRIORITY_DEFAULT || i.priority == c.priority;
+    return versionOk && apiOk && profileOk && samplesOk && sizesOk && missing == 0 && priorityOk;
 }
 
 } // namespace tessera

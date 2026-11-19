@@ -165,7 +165,7 @@ public final class Tessera {
             throw new IllegalArgumentException("a probe cannot share objects with a context");
         }
         final NativeApi api = apiInitialized();
-        final int[] ints = new int[13];
+        final int[] ints = new int[14];
         final String[] strings = new String[5];
         final int code = api.probe(config.toNative(), ints, strings);
         if (strings[3] == null) {

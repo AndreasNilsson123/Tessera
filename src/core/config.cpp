@@ -81,8 +81,8 @@ TesseraResult normalizeConfig(const TesseraContextConfig* in, TesseraContextConf
         return bad("unknown gpuPreference");
     if (out.adapterLuid != 0 && out.gpuPreference != TESSERA_GPU_DEFAULT)
         return bad("adapterLuid and gpuPreference cannot be combined");
-    if (out.reserved32 != 0)
-        return bad("reserved fields must be zero");
+    if (out.priority > TESSERA_PRIORITY_HIGH)
+        return bad("unknown priority");
 
     for (uint64_t r : out.reserved)
         if (r != 0)
