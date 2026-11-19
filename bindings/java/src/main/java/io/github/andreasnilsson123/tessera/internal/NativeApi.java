@@ -14,6 +14,11 @@ public interface NativeApi {
         void log(int level, String message);
     }
 
+    /** Receives context-lost events: the native handle and a reset status (1 guilty, 2 innocent, 3 unknown). */
+    interface LostSink {
+        void lost(long handle, int status);
+    }
+
     /** "jni" or "ffm". */
     String name();
 
@@ -47,6 +52,12 @@ public interface NativeApi {
     int resetStatus(long handle, int[] out1);
 
     int recreate(long handle, long[] outHandle, int[] outFlags);
+
+    /** {@code out2[0]} = 1 if the context is known to be lost, {@code out2[1]} = the reset status. */
+    int isContextLost(long handle, int[] out2);
+
+    /** {@code null} stops forwarding. May be called on any thread, once per lost context. */
+    void setLostSink(LostSink sink);
 
     /** kind (1 WGL, 2 GLX, 3 EGL, 4 CGL), then up to six handles (see tessera.h for the meaning per kind). */
     int nativeHandles(long handle, int[] kindOut1, long[] handlesOut6);

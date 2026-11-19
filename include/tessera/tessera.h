@@ -31,7 +31,7 @@ extern "C" {
 /* ---------------------------------------------------------------- version */
 
 #define TESSERA_VERSION_MAJOR 0
-#define TESSERA_VERSION_MINOR 8
+#define TESSERA_VERSION_MINOR 9
 #define TESSERA_VERSION_PATCH 0
 
 /** Incremented on every incompatible change to the C ABI, independent of the semantic version. */
@@ -381,6 +381,36 @@ TESSERA_API TesseraResult TESSERA_CALL tesseraProbe(const TesseraContextConfig* 
 #define TESSERA_RESET_GUILTY 1   /**< this context caused the reset */
 #define TESSERA_RESET_INNOCENT 2 /**< another context caused it, but this one was affected */
 #define TESSERA_RESET_UNKNOWN 3
+
+/**
+ * Context-loss events. Polling stays the application's job (Tessera starts no threads), but the moment ANY
+ * call learns that a context is lost (tesseraGetResetStatus, or a native "context lost" report from
+ * tesseraMakeCurrent / tesseraSwapBuffers) the callback below runs once for that context, so code that owns
+ * many contexts does not need its own polling loop around every call site.
+ *
+ * `resetStatus` is a TESSERA_RESET_* value other than NONE (UNKNOWN when the loss was reported natively). The
+ * callback runs synchronously on the thread that detected the loss, after the context is marked lost and with
+ * no Tessera lock held, so it may call tesseraRecreateContext, tesseraDestroyContext and tesseraIsContextLost
+ * (but not tesseraTerminate, and it must not make the lost context current). Once per context, even if
+ * several threads notice the loss at the same moment. `context` is valid when the call starts (another thread
+ * may destroy it meanwhile).
+ */
+typedef void(TESSERA_CALL* TesseraContextLostCallback)(TesseraContext context, int32_t resetStatus,
+                                                       void* userData);
+
+/** Process-wide; NULL disables (the default). The caller keeps `userData` valid until the callback is
+ * replaced and any in-flight call returned. */
+TESSERA_API void TESSERA_CALL tesseraSetContextLostCallback(TesseraContextLostCallback callback,
+                                                            void* userData);
+
+/**
+ * Has Tessera already seen this context get lost? Never queries the driver and works from any thread (the
+ * context need not be current): it only reports what an earlier call found out. `outLost` receives 0 or 1,
+ * `outStatus` (optional) the TESSERA_RESET_* value, NONE while the context is healthy. INVALID_HANDLE for a
+ * dead handle.
+ */
+TESSERA_API TesseraResult TESSERA_CALL tesseraIsContextLost(TesseraContext context, int32_t* outLost,
+                                                            int32_t* outStatus);
 
 /**
  * Polls the reset status; `context` must be current on the calling thread. Returns UNSUPPORTED if the context

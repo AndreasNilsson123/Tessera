@@ -25,6 +25,7 @@ public final class Tessera {
     private static boolean implicitRef;
     private static boolean shutDown;
     private static Logger logger;
+    private static ContextLostListener lostListener;
 
     private Tessera() {
     }
@@ -69,6 +70,30 @@ public final class Tessera {
             }
             if (l != null) {
                 l.log(Logger.Level.of(level), message);
+            }
+        });
+    }
+
+    /**
+     * Registers a listener that is told when any context is found lost, so code that owns many contexts does not need a polling
+     * loop around every call site. Polling stays yours to do (Tessera starts no threads): the listener runs, once per context, at
+     * the moment some call ({@link Context#resetStatus()}, or a make-current / swap-buffers the driver reports as lost) learns of
+     * the loss. {@code null} removes it. See {@link ContextLostListener} for the rules. Only a context that is still reachable
+     * from your code is reported (the binding holds contexts weakly).
+     */
+    public static void setContextLostListener(ContextLostListener listener) {
+        final NativeApi api = apiInitialized();
+        synchronized (LOCK) {
+            lostListener = listener;
+        }
+        api.setLostSink(listener == null ? null : (handle, status) -> {
+            final ContextLostListener l;
+            synchronized (LOCK) {
+                l = lostListener;
+            }
+            final Context context = Context.lookup(handle);
+            if (l != null && context != null) {
+                l.contextLost(context, ResetStatus.of(status));
             }
         });
     }
@@ -201,6 +226,7 @@ public final class Tessera {
         }
         // First stop native callbacks into this JVM, then let the library tear its contexts down.
         api.setLogSink(null);
+        api.setLostSink(null);
         synchronized (LOCK) {
             if (implicitRef) {
                 implicitRef = false;

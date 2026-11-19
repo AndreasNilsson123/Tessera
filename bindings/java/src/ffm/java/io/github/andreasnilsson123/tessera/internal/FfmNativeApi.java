@@ -43,10 +43,11 @@ final class FfmNativeApi implements NativeApi {
     private static final long PROBE_SIZE = 832, PROBE_RESULT = 4, PROBE_INFO = 8, PROBE_BACKEND = 512, PROBE_MESSAGE = 544;
 
     private static volatile LogSink sink;
+    private static volatile LostSink lostSink;
 
     private final MethodHandle hInit, hTerminate, hAbi, hVersion, hCreate, hDestroy, hInfo, hMakeCurrent, hCurrent, hProc, hSwap,
-            hSwapInterval, hReset, hRecreate, hLastError, hResultString, hSetLog, hNativeHandles, hPrewarm, hPooled, hCreateForWindow, hProbe, hPoolTopUp, hPooledCountFor, hPoolClear;
-    private final MemorySegment logStub;
+            hSwapInterval, hReset, hRecreate, hLastError, hResultString, hSetLog, hNativeHandles, hPrewarm, hPooled, hCreateForWindow, hProbe, hPoolTopUp, hPooledCountFor, hPoolClear, hIsLost, hSetLost;
+    private final MemorySegment logStub, lostStub;
 
     public FfmNativeApi(Path library) {
         final Linker linker = Linker.nativeLinker();
@@ -77,6 +78,15 @@ final class FfmNativeApi implements NativeApi {
         hLastError = down(linker, lookup, "tesseraGetLastErrorMessage", FunctionDescriptor.of(ValueLayout.ADDRESS));
         hResultString = down(linker, lookup, "tesseraResultString", FunctionDescriptor.of(ValueLayout.ADDRESS, INT));
         hSetLog = down(linker, lookup, "tesseraSetLogCallback", FunctionDescriptor.ofVoid(ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+        hIsLost = down(linker, lookup, "tesseraIsContextLost", FunctionDescriptor.of(INT, LONG, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+        hSetLost = down(linker, lookup, "tesseraSetContextLostCallback", FunctionDescriptor.ofVoid(ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+        try {
+            lostStub = linker.upcallStub(MethodHandles.lookup().findStatic(FfmNativeApi.class, "onContextLost",
+                    MethodType.methodType(void.class, long.class, int.class, MemorySegment.class)),
+                    FunctionDescriptor.ofVoid(LONG, INT, ValueLayout.ADDRESS), Arena.global());
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("cannot create the context-lost upcall", e);
+        }
         try {
             final MethodHandle target = MethodHandles.lookup().findStatic(FfmNativeApi.class, "onLog",
                     MethodType.methodType(void.class, int.class, MemorySegment.class, MemorySegment.class));
@@ -97,6 +107,19 @@ final class FfmNativeApi implements NativeApi {
             final LogSink s = sink;
             if (s != null && message.address() != 0L) {
                 s.log(level, ascii(message.reinterpret(1024).getString(0)));
+            }
+        } catch (Throwable ignored) {
+            // see above
+        }
+    }
+
+    /** Called by native code on whatever thread detected the loss; nothing may escape an upcall. */
+    @SuppressWarnings("unused")
+    private static void onContextLost(long handle, int status, MemorySegment user) {
+        try {
+            final LostSink s = lostSink;
+            if (s != null) {
+                s.lost(handle, status);
             }
         } catch (Throwable ignored) {
             // see above
@@ -414,6 +437,31 @@ final class FfmNativeApi implements NativeApi {
             final int r = (int) hReset.invokeExact(handle, out);
             out1[0] = out.get(INT, 0);
             return r;
+        } catch (Throwable t) {
+            throw failed(t);
+        }
+    }
+
+    @Override
+    public int isContextLost(long handle, int[] out2) {
+        try (Arena arena = Arena.ofConfined()) {
+            final MemorySegment lost = arena.allocate(4, 4);
+            final MemorySegment status = arena.allocate(4, 4);
+            final int r = (int) hIsLost.invokeExact(handle, lost, status);
+            out2[0] = lost.get(INT, 0);
+            out2[1] = status.get(INT, 0);
+            return r;
+        } catch (Throwable t) {
+            throw failed(t);
+        }
+    }
+
+    @Override
+    public void setLostSink(LostSink newSink) {
+        lostSink = newSink;
+        try {
+            final MemorySegment callback = newSink == null ? MemorySegment.NULL : lostStub; // invokeExact needs exact static types
+            hSetLost.invokeExact(callback, MemorySegment.NULL);
         } catch (Throwable t) {
             throw failed(t);
         }

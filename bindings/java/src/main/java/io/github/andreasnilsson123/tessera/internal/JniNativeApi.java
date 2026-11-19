@@ -8,6 +8,7 @@ import java.nio.file.Path;
 public final class JniNativeApi implements NativeApi {
 
     private static volatile LogSink sink;
+    private static volatile LostSink lostSink;
 
     /** Loads the library for this classloader; throws {@link UnsatisfiedLinkError} if that is impossible. */
     public JniNativeApi(Path library) {
@@ -82,6 +83,30 @@ public final class JniNativeApi implements NativeApi {
     @Override
     public int resetStatus(long handle, int[] out1) {
         return nResetStatus(handle, out1);
+    }
+
+    @Override
+    public int isContextLost(long handle, int[] out2) {
+        return nIsContextLost(handle, out2);
+    }
+
+    @Override
+    public void setLostSink(LostSink newSink) {
+        lostSink = newSink;
+        nSetLostSink(newSink != null);
+    }
+
+    /** Called from native code on whatever thread detected the loss. */
+    @SuppressWarnings("unused")
+    private static void onContextLost(long handle, int status) {
+        final LostSink s = lostSink;
+        if (s != null) {
+            try {
+                s.lost(handle, status);
+            } catch (Throwable ignored) {
+                // a listener that throws must not unwind into native code
+            }
+        }
     }
 
     @Override
@@ -207,4 +232,8 @@ public final class JniNativeApi implements NativeApi {
     private static native String nResultString(int code);
 
     private static native void nSetLogSink(boolean enable);
+
+    private static native int nIsContextLost(long handle, int[] out2);
+
+    private static native void nSetLostSink(boolean enable);
 }

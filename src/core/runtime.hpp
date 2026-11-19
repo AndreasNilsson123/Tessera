@@ -42,6 +42,8 @@ class Runtime {
     TesseraResult setSwapInterval(TesseraContext handle, int32_t interval);
     void* getProcAddress(const char* name);
     TesseraResult getResetStatus(TesseraContext handle, int32_t& outStatus);
+    TesseraResult isContextLost(TesseraContext handle, int32_t& outLost, int32_t& outStatus);
+    void setContextLostCallback(TesseraContextLostCallback callback, void* userData);
     TesseraResult recreateContext(TesseraContext handle, TesseraContext& out, uint32_t& outFlags);
     TesseraResult getNativeHandles(TesseraContext handle, TesseraNativeHandles& out);
     TesseraResult createContextForWindow(const TesseraContextConfig& config, uint64_t nativeWindow,
@@ -92,7 +94,7 @@ class Runtime {
 
     void joinGroup(uint64_t group, TesseraHandle handle);
     void leaveGroup(uint64_t group, TesseraHandle handle);
-    void markLost(ContextObject& object, int32_t status);
+    void markLost(TesseraContext handle, ContextObject& object, int32_t status);
 
     static constexpr uint8_t kContextTag = 0x43; // 'C'
     static constexpr uint32_t kMaxContexts = 1u << 20;
@@ -110,6 +112,9 @@ class Runtime {
         TesseraContextConfig request;
         std::shared_ptr<ContextObject> context;
     };
+    std::mutex lostCallbackMutex_; // guards the two fields below; never held while the callback runs
+    TesseraContextLostCallback lostCallback_ = nullptr;
+    void* lostCallbackUserData_ = nullptr;
     mutable std::mutex poolMutex_;
     std::vector<PoolEntry> pool_; // contexts that have never been used, ready to hand out
 

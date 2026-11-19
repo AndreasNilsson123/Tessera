@@ -119,7 +119,7 @@ The native library's own environment variables (`TESSERA_BACKEND`, `TESSERA_EGL_
 |---|---|
 | `IllegalStateException` | Wrong thread, closed context, library shut down, virtual thread. A programming error. |
 | `TesseraException` (`result()`) | The system could not do it: `NO_MATCHING_CONFIG`, `UNSUPPORTED`, `INVALID_ARGUMENT`, `PLATFORM`, ... |
-| `ContextLostException` | The GPU context was lost; use `ctx.recreate()`. |
+| `ContextLostException` | The GPU context was lost; use `ctx.recreate()`. To be told instead of checking every call: `Tessera.setContextLostListener((ctx, status) -> ...)` (once per context, on the thread that found out; it may call `ctx.recreate()`), or ask `ctx.isLost()` / `ctx.lostStatus()` from any thread (see ADR 0011). |
 
 ## Building
 

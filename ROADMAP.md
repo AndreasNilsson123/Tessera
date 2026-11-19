@@ -62,6 +62,7 @@ Phases 0-9 are **built and tested on the one machine this was developed on** (Wi
 | 8 Interop & advanced | Native handles (GL<->D3D11 shared texture proven), window attach (WGL, GLX), context pre-warming, GPU selection by index/render node/PCI | ADR 0010, `docs/interop.md` |
 | 9 Hardening | Seeded fuzzing under sanitizers (found and fixed an over-read), leak-tracked soak (10,200 cycles flat on Windows), security self-review, threading/coexistence/troubleshooting/compat docs, verified CMake package | `docs/security-review.md`, `docs/compat.md` |
 | post-9 Diagnostics | `tesseraProbe` (ABI 0.6.0) and the `tessera-diag` tool | `docs/diag.md` |
+| post-9 Context-loss events | `tesseraSetContextLostCallback` / `tesseraIsContextLost` (ABI 0.9.0), Java `setContextLostListener` / `isLost` | ADR 0011 |
 
 Verified here: WGL (NVIDIA), GLX and EGL (Mesa), Java JNI+FFM on Windows (JavaFX D3D and software pipelines), Java JNI on Linux (JavaFX software **and OpenGL/es2** pipelines, LWJGL; Mesa D3D12 via WSLg and llvmpipe), ASan/UBSan/TSan on everything that needs no GPU.
 
@@ -138,13 +139,13 @@ Everything here was implemented-but-untested, deliberately skipped, or needs som
 
 ## Phase 11 — Feature candidates (post-1.0 unless noted)
 
-New capabilities worth considering, with a recommendation. Items 1 and 2 are done; the rest are not started. Ordered by value per effort.
+New capabilities worth considering, with a recommendation. Items 1, 2, 5 and 7 are done; the rest are not started. Ordered by value per effort.
 
 1. ~~**`tessera-diag` command-line tool**~~ **Done** (`docs/diag.md`): text and JSON report, per-backend strict-request matrix, runs on Windows (WGL) and Linux (GLX, EGL under WSLg); macOS/CGL untested like the rest of CGL.
 2. ~~**Capability probe API**~~ **Done**: `tesseraProbe` (ABI 0.6.0), tested on WGL/GLX/EGL with a foreign context current, on the fake backend, fuzzed, and under ASan/UBSan/TSan. Java: `Tessera.probe` (JNI and FFM).
 3. **Software/headless fallback backend** (OSMesa or a bundled llvmpipe/WARP path): guarantees `createContext` works on machines with no GPU or broken drivers (CI runners, remote desktops, containers). Related to the "do we ship Mesa" decision.
 4. **Windows multi-GPU selection** (10.3) exposed as a config field (`adapterPreference`: default / high-performance / low-power / by LUID), with the same "never silently another GPU" rule used for EGL.
-5. **Context-loss recovery helper**: a callback or event when a context is lost, plus an opt-in "recreate and re-share" helper, so applications do not each write the same polling loop.
+5. ~~**Context-loss recovery helper**~~ **Done** (ABI 0.9.0, ADR 0011): a once-per-context lost callback and `tesseraIsContextLost` (Java `setContextLostListener`, `isLost`); the "recreate and re-share" helper is the existing `tesseraRecreateContext` called from the callback (an automatic in-library recreate would change handles under the application). Tested on the fake backend (mutation-checked); the Java upcalls' event delivery and a real GPU reset are not verified.
 6. **Frame pacing helpers** for window-attached contexts: swap-interval negotiation reported back (what was applied), adaptive-sync availability, and a vsync-off benchmark mode. Only for attached windows; Tessera's own hidden drawables do not present.
 7. ~~**Pool improvements**~~ **Done** (ABI 0.8.0): `tesseraPoolTopUp` / `tesseraGetPooledCount` / `tesseraPoolClear` (per-request counts; refilling is a call your own thread makes, Tessera starts no threads), Java `topUpPool` / `pooledContextCount(config)` / `clearPool`, tested on the fake backend and on WGL/GLX/EGL. Only never-used contexts, as before.
 8. **Metal/ANGLE path on macOS** and **ANGLE on Windows/Linux** as an alternative GLES provider (10.3), once a loader policy is decided.

@@ -126,6 +126,29 @@ public final class Context implements AutoCloseable {
         return new NativeHandles(kind[0], handles);
     }
 
+    /** The live Context for a native handle, or null if it was closed or collected. */
+    static Context lookup(long handle) {
+        final WeakReference<Context> ref = LIVE.get(handle);
+        return ref == null ? null : ref.get();
+    }
+
+    /**
+     * Has this context already been found lost? Only reports what an earlier call (a {@link #resetStatus()} poll, or a
+     * make-current / swap the driver refused as lost) discovered: it never asks the driver, needs no current context and works
+     * from any thread. See also {@link Tessera#setContextLostListener}.
+     */
+    public boolean isLost() {
+        return lostStatus() != ResetStatus.NONE;
+    }
+
+    /** The reset status recorded when the context was lost, {@link ResetStatus#NONE} while it is healthy. See {@link #isLost()}. */
+    public ResetStatus lostStatus() {
+        final NativeApi api = Tessera.api();
+        final int[] out = new int[2];
+        Tessera.check(api, api.isContextLost(handle(), out));
+        return out[0] == 0 ? ResetStatus.NONE : ResetStatus.of(out[1]);
+    }
+
     long handle() {
         if (state.closed.get()) {
             throw new IllegalStateException("the context is closed");

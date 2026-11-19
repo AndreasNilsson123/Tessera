@@ -722,6 +722,106 @@ static void testResetAndLoss() {
     CHECK(g_liveRobust == 0);
 }
 
+// ---- context-lost callback and tesseraIsContextLost
+
+struct LostEvent {
+    TesseraContext context;
+    int32_t status;
+    std::thread::id thread;
+};
+static std::mutex g_lostMutex;
+static std::vector<LostEvent> g_lostEvents;
+static TesseraContext g_recreated = TESSERA_NULL_HANDLE; // set by the "auto-recreate" callback below
+static bool g_recreateInCallback = false;
+
+static void TESSERA_CALL onLost(TesseraContext context, int32_t status, void* userData) {
+    CHECK(userData == &g_lostEvents);
+    {
+        std::lock_guard<std::mutex> lock(g_lostMutex);
+        g_lostEvents.push_back({context, status, std::this_thread::get_id()});
+    }
+    if (g_recreateInCallback) { // the callback may use the API: this is the "opt-in recreate" pattern
+        uint32_t flags = 0;
+        CHECK(tesseraRecreateContext(context, &g_recreated, &flags) == TESSERA_SUCCESS);
+        int32_t lost = 0;
+        CHECK(tesseraIsContextLost(context, &lost, nullptr) == TESSERA_SUCCESS && lost == 1);
+    }
+}
+
+static void testContextLostCallback() {
+    TesseraContextConfig cfg = tesseraDefaultContextConfig();
+    cfg.api = TESSERA_API_OPENGL;
+    int32_t lost = 99, status = 99;
+
+    // Queries on a healthy / dead / bad-argument handle.
+    TesseraContext healthy = makeRobust(cfg);
+    EXPECT(tesseraIsContextLost(healthy, &lost, &status), TESSERA_SUCCESS);
+    CHECK(lost == 0 && status == TESSERA_RESET_NONE);
+    EXPECT(tesseraIsContextLost(healthy, &lost, nullptr), TESSERA_SUCCESS); // outStatus is optional
+    EXPECT(tesseraIsContextLost(healthy, nullptr, &status), TESSERA_ERROR_INVALID_ARGUMENT);
+    EXPECT(tesseraIsContextLost(0xBAD, &lost, &status), TESSERA_ERROR_INVALID_HANDLE);
+    CHECK(lost == 0);
+
+    // No callback registered: losing a context is silent, and the query still reports it.
+    TesseraContext quiet = makeRobust(cfg);
+    loseContext(quiet, TESSERA_RESET_GUILTY);
+    EXPECT(tesseraIsContextLost(quiet, &lost, &status), TESSERA_SUCCESS);
+    CHECK(lost == 1 && status == TESSERA_RESET_GUILTY);
+    EXPECT(tesseraDestroyContext(quiet), TESSERA_SUCCESS);
+
+    tesseraSetContextLostCallback(onLost, &g_lostEvents);
+    g_lostEvents.clear();
+
+    // Detected by polling: once, with the status, on the polling thread, and the context is already marked.
+    TesseraContext polled = makeRobust(cfg);
+    loseContext(polled, TESSERA_RESET_INNOCENT);
+    EXPECT(tesseraGetResetStatus(polled, &status), TESSERA_ERROR_WRONG_THREAD); // not current: no new event
+    CHECK(g_lostEvents.size() == 1);
+    CHECK(g_lostEvents[0].context == polled && g_lostEvents[0].status == TESSERA_RESET_INNOCENT);
+    CHECK(g_lostEvents[0].thread == std::this_thread::get_id());
+    EXPECT(tesseraMakeCurrent(polled), TESSERA_ERROR_CONTEXT_LOST); // later calls do not fire it again
+    EXPECT(tesseraSwapBuffers(polled), TESSERA_ERROR_CONTEXT_LOST);
+    CHECK(g_lostEvents.size() == 1);
+
+    // Detected natively at make-current: reported as UNKNOWN.
+    TesseraContext native = makeRobust(cfg);
+    g_bindReportsLost = true;
+    EXPECT(tesseraMakeCurrent(native), TESSERA_ERROR_CONTEXT_LOST);
+    g_bindReportsLost = false;
+    CHECK(g_lostEvents.size() == 2);
+    CHECK(g_lostEvents[1].context == native && g_lostEvents[1].status == TESSERA_RESET_UNKNOWN);
+
+    // A context that is never lost never fires, and a healthy poll does not either.
+    EXPECT(tesseraMakeCurrent(healthy), TESSERA_SUCCESS);
+    g_resetToReport = TESSERA_RESET_NONE;
+    EXPECT(tesseraGetResetStatus(healthy, &status), TESSERA_SUCCESS);
+    EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS);
+    CHECK(g_lostEvents.size() == 2);
+
+    // The callback may recreate: the whole "re-create on loss" helper fits in a few lines.
+    g_recreateInCallback = true;
+    TesseraContext victim = makeRobust(cfg);
+    loseContext(victim, TESSERA_RESET_GUILTY);
+    g_recreateInCallback = false;
+    CHECK(g_lostEvents.size() == 3 && g_lostEvents[2].context == victim);
+    CHECK(g_recreated != TESSERA_NULL_HANDLE);
+    EXPECT(tesseraMakeCurrent(g_recreated), TESSERA_SUCCESS);
+    EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS);
+    EXPECT(tesseraDestroyContext(g_recreated), TESSERA_SUCCESS);
+    g_recreated = TESSERA_NULL_HANDLE;
+
+    // Disabled again: silent.
+    tesseraSetContextLostCallback(nullptr, nullptr);
+    g_lostEvents.clear();
+    TesseraContext after = makeRobust(cfg);
+    loseContext(after, TESSERA_RESET_GUILTY);
+    CHECK(g_lostEvents.empty());
+
+    for (TesseraContext c : {healthy, polled, native, victim, after})
+        EXPECT(tesseraDestroyContext(c), TESSERA_SUCCESS);
+    CHECK(g_liveRobust == 0);
+}
+
 static void testRecreateAndShareGroups() {
     TesseraContextConfig cfg = tesseraDefaultContextConfig();
     cfg.api = TESSERA_API_OPENGL;
@@ -1227,6 +1327,7 @@ static void testLifecycleRobustness() {
     CHECK(tesseraInit() == TESSERA_SUCCESS);
     tessera::Runtime::instance().registerBackend(std::make_shared<RobustFakeBackend>());
     testResetAndLoss();
+    testContextLostCallback();
     testRecreateAndShareGroups();
     testDeferredDestruction();
     testResourceWarnings();

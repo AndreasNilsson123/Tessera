@@ -26,6 +26,7 @@ namespace {
 std::atomic<JavaVM*> g_vm{nullptr};
 std::atomic<jclass> g_class{nullptr}; // global reference, deliberately never released (see setLogSink)
 std::atomic<jmethodID> g_onLog{nullptr};
+std::atomic<jmethodID> g_onLost{nullptr};
 
 /* Replaces anything outside printable ASCII so the result is valid in every encoding JNI might assume. */
 std::string asciiOnly(const char* text) {
@@ -67,6 +68,29 @@ void TESSERA_CALL logTrampoline(int32_t level, const char* message, void* /*user
     }
     if (env->ExceptionCheck())
         env->ExceptionClear(); // a throwing logger must not unwind into native code
+    if (attached)
+        vm->DetachCurrentThread();
+}
+
+void TESSERA_CALL lostTrampoline(TesseraContext context, int32_t status, void* /*userData*/) {
+    JavaVM* vm = g_vm.load();
+    jclass cls = g_class.load();
+    jmethodID method = g_onLost.load();
+    if (!vm || !cls || !method)
+        return;
+    JNIEnv* env = nullptr;
+    bool attached = false;
+    const jint attach = vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_8);
+    if (attach == JNI_EDETACHED) {
+        if (vm->AttachCurrentThreadAsDaemon(reinterpret_cast<void**>(&env), nullptr) != JNI_OK)
+            return;
+        attached = true;
+    } else if (attach != JNI_OK) {
+        return;
+    }
+    env->CallStaticVoidMethod(cls, method, static_cast<jlong>(context), static_cast<jint>(status));
+    if (env->ExceptionCheck())
+        env->ExceptionClear(); // a throwing listener must not unwind into native code
     if (attached)
         vm->DetachCurrentThread();
 }
@@ -354,6 +378,16 @@ TESSERA_JNI(jint, nRecreate)(JNIEnv* env, jclass, jlong ctx, jlongArray outHandl
     return r;
 }
 
+TESSERA_JNI(jint, nIsContextLost)(JNIEnv* env, jclass, jlong ctx, jintArray out) {
+    if (!out || env->GetArrayLength(out) < 2)
+        return TESSERA_ERROR_INVALID_ARGUMENT;
+    int32_t lost = 0, status = TESSERA_RESET_NONE;
+    const TesseraResult r = tesseraIsContextLost(static_cast<TesseraContext>(ctx), &lost, &status);
+    const jint values[2] = {lost, status};
+    env->SetIntArrayRegion(out, 0, 2, values);
+    return r;
+}
+
 TESSERA_JNI(jstring, nLastError)(JNIEnv* env, jclass) {
     return toJString(env, tesseraGetLastErrorMessage());
 }
@@ -384,6 +418,31 @@ TESSERA_JNI(void, nSetLogSink)(JNIEnv* env, jclass cls, jboolean enable) {
             g_vm.store(vm);
     }
     tesseraSetLogCallback(&logTrampoline, nullptr);
+}
+
+// Enables or disables forwarding of context-lost events to JniNativeApi.onContextLost(long, int). Same
+// class-reference policy as nSetLogSink (a global reference that is never released).
+TESSERA_JNI(void, nSetLostSink)(JNIEnv* env, jclass cls, jboolean enable) {
+    if (!enable) {
+        tesseraSetContextLostCallback(nullptr, nullptr);
+        return;
+    }
+    if (!g_onLost.load()) {
+        jmethodID method = env->GetStaticMethodID(cls, "onContextLost", "(JI)V");
+        if (!method)
+            return; // NoSuchMethodError pending
+        if (!g_class.load()) {
+            jclass global = static_cast<jclass>(env->NewGlobalRef(cls));
+            if (!global)
+                return;
+            g_class.store(global);
+        }
+        JavaVM* vm = nullptr;
+        if (env->GetJavaVM(&vm) == JNI_OK)
+            g_vm.store(vm);
+        g_onLost.store(method);
+    }
+    tesseraSetContextLostCallback(&lostTrampoline, nullptr);
 }
 
 } // extern "C"

@@ -86,6 +86,30 @@ TESSERA_API TesseraResult TESSERA_CALL tesseraSetSwapInterval(TesseraContext con
     return guarded([&] { return Runtime::instance().setSwapInterval(context, interval); });
 }
 
+TESSERA_API void TESSERA_CALL tesseraSetContextLostCallback(TesseraContextLostCallback callback,
+                                                            void* userData) {
+    guarded([&] {
+        Runtime::instance().setContextLostCallback(callback, userData);
+        return TESSERA_SUCCESS;
+    });
+}
+
+TESSERA_API TesseraResult TESSERA_CALL tesseraIsContextLost(TesseraContext context, int32_t* outLost,
+                                                            int32_t* outStatus) {
+    return guarded([&]() -> TesseraResult {
+        if (!outLost)
+            return fail(TESSERA_ERROR_INVALID_ARGUMENT, "outLost is NULL");
+        *outLost = 0;
+        if (outStatus)
+            *outStatus = TESSERA_RESET_NONE;
+        int32_t status = TESSERA_RESET_NONE;
+        const TesseraResult r = Runtime::instance().isContextLost(context, *outLost, status);
+        if (outStatus)
+            *outStatus = status;
+        return r;
+    });
+}
+
 TESSERA_API TesseraResult TESSERA_CALL tesseraGetResetStatus(TesseraContext context, int32_t* outStatus) {
     return guarded([&]() -> TesseraResult {
         if (!outStatus)

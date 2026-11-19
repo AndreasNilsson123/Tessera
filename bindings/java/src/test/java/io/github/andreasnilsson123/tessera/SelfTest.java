@@ -219,12 +219,20 @@ public final class SelfTest {
             }
             Context.releaseCurrent();
         }
+        // The lost-context listener can be installed and removed; a healthy context is never reported (a real loss needs a
+        // driver reset, which the native tests inject on a fake backend).
+        final java.util.concurrent.atomic.AtomicInteger lostEvents = new java.util.concurrent.atomic.AtomicInteger();
+        Tessera.setContextLostListener((lost, status) -> lostEvents.incrementAndGet());
+        try (Context healthy = Context.create(plain())) {
+            check(!healthy.isLost() && healthy.lostStatus() == ResetStatus.NONE, "a fresh context is not lost");
+        }
         try (Context robust = Context.create(ContextConfig.builder()
                 .flags(ContextConfig.Flags.ROBUST_ACCESS | ContextConfig.Flags.RESET_NOTIFICATION).build())) {
             robust.makeCurrent();
             for (int i = 0; i < 20; i++) {
                 check(robust.resetStatus() == ResetStatus.NONE, "no reset is happening");
             }
+            check(!robust.isLost() && lostEvents.get() == 0, "polling a healthy context reports nothing");
             Context.releaseCurrent();
             final Context.Recreation r = robust.recreate();
             check(!r.sharePreserved(), "nothing was shared");
@@ -236,6 +244,10 @@ public final class SelfTest {
             check(e.result() == Result.NO_MATCHING_CONFIG, "robustness refused only as NO_MATCHING_CONFIG: " + e);
             System.out.println("  (robust context not granted here)");
         }
+        Tessera.setContextLostListener(null);
+        final Context closed = Context.create(plain());
+        closed.close();
+        expect(IllegalStateException.class, "isLost on a closed context", closed::isLost);
     }
 
     static void probeAndPool() {

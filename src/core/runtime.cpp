@@ -90,13 +90,42 @@ void Runtime::leaveGroup(uint64_t group, TesseraHandle handle) {
         groups_.erase(it);
 }
 
-void Runtime::markLost(ContextObject& object, int32_t status) {
+void Runtime::setContextLostCallback(TesseraContextLostCallback callback, void* userData) {
+    std::lock_guard<std::mutex> lock(lostCallbackMutex_);
+    lostCallback_ = callback;
+    lostCallbackUserData_ = userData;
+}
+
+void Runtime::markLost(TesseraContext handle, ContextObject& object, int32_t status) {
     bool expected = false;
-    if (object.lost.compare_exchange_strong(expected, true)) {
-        object.lostStatus.store(status);
-        logf(TESSERA_LOG_WARN,
-             "a context was lost (reset status %d); recreate it with tesseraRecreateContext", status);
+    if (!object.lost.compare_exchange_strong(expected, true))
+        return; // somebody already reported this loss: the callback runs once per context
+    object.lostStatus.store(status);
+    logf(TESSERA_LOG_WARN, "a context was lost (reset status %d); recreate it with tesseraRecreateContext",
+         status);
+    TesseraContextLostCallback callback;
+    void* userData;
+    {
+        std::lock_guard<std::mutex> lock(lostCallbackMutex_);
+        callback = lostCallback_;
+        userData = lostCallbackUserData_;
     }
+    if (callback)
+        callback(handle, status, userData); // no lock held, so it may recreate or destroy contexts
+}
+
+TesseraResult Runtime::isContextLost(TesseraContext handle, int32_t& outLost, int32_t& outStatus) {
+    outLost = 0;
+    outStatus = TESSERA_RESET_NONE;
+    auto object = contexts_.get(handle);
+    if (!object)
+        return fail(TESSERA_ERROR_INVALID_HANDLE, "not a live context handle");
+    if (object->lost.load()) {
+        const int32_t status = object->lostStatus.load();
+        outLost = 1;
+        outStatus = status != TESSERA_RESET_NONE ? status : TESSERA_RESET_UNKNOWN;
+    }
+    return TESSERA_SUCCESS;
 }
 
 // ---- lifecycle --------------------------------------------------------------------------------------
@@ -544,7 +573,7 @@ TesseraResult Runtime::makeCurrent(TesseraContext handle) {
         if (wasNew)
             object->affinity.release(me);
         if (r == TESSERA_ERROR_CONTEXT_LOST)
-            markLost(*object, TESSERA_RESET_UNKNOWN);
+            markLost(handle, *object, TESSERA_RESET_UNKNOWN);
         return r;
     }
 
@@ -592,7 +621,7 @@ TesseraResult Runtime::swapBuffers(TesseraContext handle) {
         return fail(TESSERA_ERROR_WRONG_THREAD, "context is not current on the calling thread");
     const TesseraResult r = object->swapBuffers();
     if (r == TESSERA_ERROR_CONTEXT_LOST)
-        markLost(*object, TESSERA_RESET_UNKNOWN);
+        markLost(handle, *object, TESSERA_RESET_UNKNOWN);
     return r;
 }
 
@@ -639,7 +668,7 @@ TesseraResult Runtime::getResetStatus(TesseraContext handle, int32_t& outStatus)
     if (TesseraResult r = object->queryResetStatus(status); r != TESSERA_SUCCESS)
         return r;
     if (status != TESSERA_RESET_NONE)
-        markLost(*object, status);
+        markLost(handle, *object, status);
     outStatus = status;
     return TESSERA_SUCCESS;
 }
