@@ -745,6 +745,72 @@ static void testNativeHandles() {
     interop::nativeHandles(glxHooks(), e);
 }
 
+// Swap control: whatever the server offers, what a context reports must agree with what it does. (Mesa's
+// D3D12 and llvmpipe drivers advertise no swap-control extension, so on those the "nothing available" branch
+// runs; the extension-selection logic itself is unit-tested in test_core.)
+static void testSwapControl() {
+    TesseraContextConfig cfg = baseConfig();
+    cfg.fallback = TESSERA_FALLBACK_BEST_EFFORT;
+    TesseraContext ctx = 0;
+    EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_SUCCESS);
+    if (!ctx)
+        return;
+    TesseraSwapControl sc = tesseraDefaultSwapControl();
+    EXPECT(tesseraGetSwapControl(ctx, &sc), TESSERA_ERROR_WRONG_THREAD); // must be current
+    EXPECT(tesseraMakeCurrent(ctx), TESSERA_SUCCESS);
+    EXPECT(tesseraGetSwapControl(ctx, &sc), TESSERA_SUCCESS);
+    std::printf("  window: caps=0x%x requested=%d applied=%d max=%d\n", sc.caps, sc.requested, sc.applied,
+                sc.maxInterval);
+    CHECK(sc.requested == TESSERA_SWAP_UNKNOWN);
+    if (!(sc.caps & TESSERA_SWAP_CAP_CONTROL)) {
+        EXPECT(tesseraSetSwapInterval(ctx, 1), TESSERA_ERROR_UNSUPPORTED);
+        CHECK(sc.caps == 0 && sc.applied == TESSERA_SWAP_UNKNOWN);
+    } else {
+        for (int interval : {0, 1, 2}) {
+            EXPECT(tesseraSetSwapInterval(ctx, interval), TESSERA_SUCCESS);
+            TesseraSwapControl now = tesseraDefaultSwapControl();
+            EXPECT(tesseraGetSwapControl(ctx, &now), TESSERA_SUCCESS);
+            CHECK(now.requested == interval);
+            std::printf("  requested %d -> driver reports %d (max %d)\n", interval, now.applied,
+                        now.maxInterval);
+            if (now.caps & TESSERA_SWAP_CAP_READBACK) {
+                const int expected =
+                    (now.maxInterval > 0 && interval > now.maxInterval) ? now.maxInterval : interval;
+                CHECK(now.applied == expected); // a clamping driver is allowed, a lying one is not
+            } else {
+                CHECK(now.applied == TESSERA_SWAP_UNKNOWN);
+            }
+        }
+        const TesseraResult adaptive = tesseraSetSwapInterval(ctx, -1);
+        CHECK((sc.caps & TESSERA_SWAP_CAP_ADAPTIVE) ? adaptive == TESSERA_SUCCESS
+                                                    : adaptive == TESSERA_ERROR_INVALID_ARGUMENT);
+    }
+    EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS);
+    EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
+
+    // Pbuffer and drawable-less contexts have no swap interval, and say so instead of failing.
+    for (TesseraEnum surface : {TESSERA_SURFACE_PBUFFER, TESSERA_SURFACE_NONE}) {
+        TesseraContextConfig c = cfg;
+        c.surface = surface;
+        TesseraContext other = 0;
+        const TesseraResult r = tesseraCreateContext(&c, &other);
+        CHECK(r == TESSERA_SUCCESS || r == TESSERA_ERROR_NO_MATCHING_CONFIG);
+        if (!other)
+            continue;
+        EXPECT(tesseraMakeCurrent(other), TESSERA_SUCCESS);
+        TesseraSwapControl none = tesseraDefaultSwapControl();
+        EXPECT(tesseraGetSwapControl(other, &none), TESSERA_SUCCESS);
+        TesseraContextInfo info = tesseraDefaultContextInfo();
+        tesseraGetContextInfo(other, &info);
+        // SURFACE_NONE may fall back to a hidden window on a driver that refuses a drawable-less
+        // make-current.
+        if (info.surface != TESSERA_SURFACE_HIDDEN_WINDOW)
+            CHECK(none.caps == 0 && none.applied == TESSERA_SWAP_UNKNOWN);
+        EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS);
+        EXPECT(tesseraDestroyContext(other), TESSERA_SUCCESS);
+    }
+}
+
 static void testWindowAttach() {
     ForeignContext
         owner; // supplies a real, mapped-or-not X window with a GLX-capable visual that is NOT ours
@@ -879,6 +945,7 @@ int main() {
         {"GPU requests are refused", testAdapterRequests},
         {"native handles", testNativeHandles},
         {"window attach", testWindowAttach},
+        {"swap control", testSwapControl},
         {"terminate / re-init", testTerminateAndReinit},
         {"terminate with a busy thread", testTerminateWithBusyThread},
         {"surface none", testSurfaceNone},

@@ -63,6 +63,7 @@ Phases 0-9 are **built and tested on the one machine this was developed on** (Wi
 | 9 Hardening | Seeded fuzzing under sanitizers (found and fixed an over-read), leak-tracked soak (10,200 cycles flat on Windows), security self-review, threading/coexistence/troubleshooting/compat docs, verified CMake package | `docs/security-review.md`, `docs/compat.md` |
 | post-9 Diagnostics | `tesseraProbe` (ABI 0.6.0) and the `tessera-diag` tool | `docs/diag.md` |
 | post-9 Context-loss events | `tesseraSetContextLostCallback` / `tesseraIsContextLost` (ABI 0.9.0), Java `setContextLostListener` / `isLost` | ADR 0011 |
+| post-9 Swap control and pacing | `tesseraGetSwapControl` (ABI 0.10.0), `tessera-diag --bench-swap`, Java `swapControl()` | ADR 0012 |
 | 12 Selection depth | **Planned, not started:** format ranking and enumeration, relaxation and acceleration reporting, quirk table, adapter inventory, attempt trace | see Phase 12 |
 
 Verified here: WGL (NVIDIA), GLX and EGL (Mesa), Java JNI+FFM on Windows (JavaFX D3D and software pipelines), Java JNI on Linux (JavaFX software **and OpenGL/es2** pipelines, LWJGL; Mesa D3D12 via WSLg and llvmpipe), ASan/UBSan/TSan on everything that needs no GPU.
@@ -147,7 +148,7 @@ New capabilities worth considering, with a recommendation. Items 1, 2, 5 and 7 a
 3. **Software/headless fallback backend** (OSMesa or a bundled llvmpipe/WARP path): guarantees `createContext` works on machines with no GPU or broken drivers (CI runners, remote desktops, containers). Related to the "do we ship Mesa" decision.
 4. **Windows multi-GPU selection** (10.3) exposed as a config field (`adapterPreference`: default / high-performance / low-power / by LUID), with the same "never silently another GPU" rule used for EGL.
 5. ~~**Context-loss recovery helper**~~ **Done** (ABI 0.9.0, ADR 0011): a once-per-context lost callback and `tesseraIsContextLost` (Java `setContextLostListener`, `isLost`); the "recreate and re-share" helper is the existing `tesseraRecreateContext` called from the callback (an automatic in-library recreate would change handles under the application). Tested on the fake backend (mutation-checked); the Java upcalls' event delivery and a real GPU reset are not verified.
-6. **Frame pacing helpers** for window-attached contexts: swap-interval negotiation reported back (what was applied), adaptive-sync availability, and a vsync-off benchmark mode. Only for attached windows; Tessera's own hidden drawables do not present.
+6. ~~**Frame pacing helpers**~~ **Done** (ABI 0.10.0, ADR 0012) for window-attached contexts: swap-interval negotiation reported back (what was applied), adaptive-sync availability, and a vsync-off benchmark mode. Only for attached windows; Tessera's own hidden drawables do not present.
 7. ~~**Pool improvements**~~ **Done** (ABI 0.8.0): `tesseraPoolTopUp` / `tesseraGetPooledCount` / `tesseraPoolClear` (per-request counts; refilling is a call your own thread makes, Tessera starts no threads), Java `topUpPool` / `pooledContextCount(config)` / `clearPool`, tested on the fake backend and on WGL/GLX/EGL. Only never-used contexts, as before.
 8. **Metal/ANGLE path on macOS** and **ANGLE on Windows/Linux** as an alternative GLES provider (10.3), once a loader policy is decided.
 9. **More language bindings** over the C ABI, cheap because it is stable and struct-size-prefixed: C#/.NET (P/Invoke), Rust (`-sys` crate), Python (`ctypes`/`cffi`). Only worth it if there is a consumer; the Java layer is the template.
@@ -358,13 +359,13 @@ Needs: nothing. The first real macOS run (19 Nov) failed to link (`makeCglBacken
 - [ ] Run vcpkg for real (a CI job) against `packaging/vcpkg`, fix the port, and put the result in `docs/releasing.md`.
 - [ ] Doc the review/`@claude` workflows (model pin, cost, who can trigger) in `docs/ci.md`.
 
-### Chunk 2 - Swap control and frame pacing (ABI 0.10.0)
+### Chunk 2 - Swap control and frame pacing (ABI 0.10.0) - DONE (ADR 0012)
 Needs: nothing (real vsync behaviour needs a display; window attach tests already exist on WGL/GLX).
-- [ ] Report what was actually applied by `tesseraSetSwapInterval` (read back where the API allows; otherwise "requested / unverifiable") and whether adaptive sync is available (`WGL_EXT_swap_control_tear`, `GLX_EXT_swap_control_tear`).
-- [ ] Cover `GLX_EXT/MESA/SGI_swap_control` and the EGL `eglSwapInterval` clamp; test on a fake backend with the extension matrix, and on real WGL; record that WSLg/llvmpipe advertise none.
-- [ ] A vsync-off benchmark mode in `tessera-diag` for a window-attached context (frame-time min/avg/p99, dropped-frame count).
-- [ ] DWM swap-interval quirk test on Windows (attached window, composited vs. fullscreen).
-- [ ] Java binding, `docs/java.md`, ADR 0012.
+- [x] `tesseraGetSwapControl` reports what is in effect: capabilities (control / adaptive / read-back), the last requested interval, what the driver reports (`applied`, hidden unless the backend really read it) and the clamp (`maxInterval`, GLX EXT). WGL reads back through `wglGetSwapIntervalEXT` (NVIDIA: 0, 1, 2, -1 all read back as requested), GLX through `glXQueryDrawable` / `glXGetSwapIntervalMESA`.
+- [x] `GLX_EXT/MESA/SGI_swap_control` selection and the adaptive/read-back rules are one pure function set (`platform/common/swap_control.hpp`) covered by a case matrix in `test_core` (advertised-but-unresolved, preference order, EXT-only adaptive); the core's handling (requested tracking, hiding unread values, struct sizes, lost-context) is tested on a fake backend. **Not verified:** a real server that advertises the GLX extensions (WSLg and llvmpipe advertise none, so the GLX test runs the "nothing available" branch there).
+- [x] `tessera-diag --bench-swap [S]`: vsync on / off / adaptive in a window of its own (Win32 and X11), frames, mean/min/p99/max, fps and dropped frames, text and JSON; the normal report gained a swap-control line. Its first run found that a single-buffered window never paces (documented in `tessera.h`).
+- [x] DWM test on a real composited window (`test_wgl`, "swap control and frame pacing"): on a 120 Hz display vsync on = 8.32 ms/frame (120.2 fps), off = 0.3-0.5 ms; asserts the relation on whatever display is present and the UNSUPPORTED path on the GDI renderer. **Not verified:** exclusive fullscreen, variable refresh, Optimus.
+- [x] Java `Context.swapControl()` / `SwapControl` (JNI and FFM, both tested), `docs/java.md`, `docs/diag.md`, ADR 0012.
 
 ### Chunk 3 - Window attach beyond WGL/GLX (needs the 10.5 decision "on-screen in 1.0?")
 Needs: the owner decision; WSLg for X11 and Wayland testing.

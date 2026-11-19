@@ -40,6 +40,7 @@ class Runtime {
     TesseraContext currentContext();
     TesseraResult swapBuffers(TesseraContext handle);
     TesseraResult setSwapInterval(TesseraContext handle, int32_t interval);
+    TesseraResult getSwapControl(TesseraContext handle, TesseraSwapControl& out);
     void* getProcAddress(const char* name);
     TesseraResult getResetStatus(TesseraContext handle, int32_t& outStatus);
     TesseraResult isContextLost(TesseraContext handle, int32_t& outLost, int32_t& outStatus);

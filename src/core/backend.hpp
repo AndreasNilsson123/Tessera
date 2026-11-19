@@ -34,6 +34,13 @@ class ContextObject {
         return TESSERA_ERROR_UNSUPPORTED;
     }
 
+    /* Fills caps / applied / maxInterval of `out` (pre-set to "nothing known" by the core, which also fills
+     * `requested`). Called with the context current on the calling thread. The default reports no swap
+     * control. */
+    virtual TesseraResult getSwapControl(TesseraSwapControl& /*out*/) noexcept {
+        return TESSERA_SUCCESS;
+    }
+
     /* Polls the driver for a GPU reset (glGetGraphicsResetStatus). Called with the context current on the
      * calling thread. `out` is a TESSERA_RESET_* value. UNSUPPORTED if the context has no reset notification.
      */
@@ -53,6 +60,7 @@ class ContextObject {
     // -------
     TesseraContextConfig request = {}; // what this context was created from, for tesseraRecreateContext
     uint64_t shareGroup = 0;           // contexts sharing objects have the same group id
+    std::atomic<int32_t> requestedInterval{TESSERA_SWAP_UNKNOWN}; // last successful tesseraSetSwapInterval
     std::atomic<bool> lost{false};
     std::atomic<int32_t> lostStatus{TESSERA_RESET_NONE};
 };

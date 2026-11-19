@@ -226,10 +226,15 @@ if(_have_lwjgl_api AND _have_lwjgl_gl)
         # GLFW (through LWJGL) in the same process as Tessera: its own window and context, Tessera around it and in its windows.
         # Exits 77 (skipped) where GLFW cannot open a window at all (no display).
         if(_have_lwjgl_glfw)
-            tessera_java_test(java_glfw io.github.andreasnilsson123.tessera.lwjgl.GlfwCoexistence BINDING jni NATIVE_LIB CLASSPATH ${_lwjgl_cp} ${_native_access})
+            # GLFW on macOS insists on being started on the process's first thread.
+            set(_glfw_jvm "")
+            if(APPLE)
+                set(_glfw_jvm JVM_OPTIONS -XstartOnFirstThread)
+            endif()
+            tessera_java_test(java_glfw io.github.andreasnilsson123.tessera.lwjgl.GlfwCoexistence BINDING jni NATIVE_LIB CLASSPATH ${_lwjgl_cp} ${_native_access} ${_glfw_jvm})
             set(_glfw_tests java_glfw)
             if(Java_VERSION_MAJOR GREATER_EQUAL 22)
-                tessera_java_test(java_glfw_ffm io.github.andreasnilsson123.tessera.lwjgl.GlfwCoexistence BINDING ffm NATIVE_LIB NATIVE_ACCESS CLASSPATH ${_lwjgl_cp})
+                tessera_java_test(java_glfw_ffm io.github.andreasnilsson123.tessera.lwjgl.GlfwCoexistence BINDING ffm NATIVE_LIB NATIVE_ACCESS CLASSPATH ${_lwjgl_cp} ${_glfw_jvm})
                 list(APPEND _glfw_tests java_glfw_ffm)
             endif()
             set_tests_properties(${_glfw_tests} PROPERTIES LABELS "gpu;java;lwjgl;glfw" TIMEOUT 180 SKIP_RETURN_CODE 77)

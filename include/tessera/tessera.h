@@ -31,7 +31,7 @@ extern "C" {
 /* ---------------------------------------------------------------- version */
 
 #define TESSERA_VERSION_MAJOR 0
-#define TESSERA_VERSION_MINOR 9
+#define TESSERA_VERSION_MINOR 10
 #define TESSERA_VERSION_PATCH 0
 
 /** Incremented on every incompatible change to the C ABI, independent of the semantic version. */
@@ -471,8 +471,61 @@ TESSERA_API void* TESSERA_CALL tesseraGetProcAddress(const char* name);
  * current on the calling thread: that is the one rule every platform (WGL, GLX, EGL) agrees on. */
 TESSERA_API TesseraResult TESSERA_CALL tesseraSwapBuffers(TesseraContext context);
 
-/** 0 = no vsync, 1 = vsync, -1 = adaptive (if supported). `context` must be current on the calling thread. */
+/** 0 = no vsync, 1 = vsync, -1 = adaptive (if supported). `context` must be current on the calling thread.
+ * Success means the driver accepted the call, not that this is the interval you now get (drivers clamp, and a
+ * compositor can override): ask tesseraGetSwapControl what is in effect. */
 TESSERA_API TesseraResult TESSERA_CALL tesseraSetSwapInterval(TesseraContext context, int32_t interval);
+
+/**
+ * @name Swap control and frame pacing
+ * What a context's swap control can do and what is actually in effect. Only contexts that render to a window
+ * (tesseraCreateContextForWindow, or the hidden window of a WGL/GLX context) have a swap interval; pbuffer,
+ * surfaceless and CGL contexts report no capabilities. The window must be double-buffered: swapping a
+ * single-buffered window returns at once, so no interval can pace it.
+ * @{
+ */
+/** tesseraSetSwapInterval can work on this context (a swap-control extension exists and the drawable is a
+ * window). */
+#define TESSERA_SWAP_CAP_CONTROL 0x1u
+/** An interval of -1 (adaptive vsync, WGL/GLX_EXT_swap_control_tear) is accepted. */
+#define TESSERA_SWAP_CAP_ADAPTIVE 0x2u
+/** `applied` is read back from the driver; without this flag it is TESSERA_SWAP_UNKNOWN. */
+#define TESSERA_SWAP_CAP_READBACK 0x4u
+/** Value of a TesseraSwapControl field that is not known (INT32_MIN). */
+#define TESSERA_SWAP_UNKNOWN ((int32_t)(-2147483647 - 1))
+
+typedef struct TesseraSwapControl {
+    uint32_t structSize; /**< in: sizeof(TesseraSwapControl) */
+    uint32_t caps;       /**< out: TESSERA_SWAP_CAP_* */
+    /** The last interval a tesseraSetSwapInterval call on this context succeeded with, or
+     * TESSERA_SWAP_UNKNOWN. */
+    int32_t requested;
+    /** The interval the driver reports it is using (negative = adaptive), or TESSERA_SWAP_UNKNOWN (no
+     * READBACK). */
+    int32_t applied;
+    /** The largest interval the drawable accepts (drivers clamp larger requests); 0 if not known. */
+    int32_t maxInterval;
+    uint32_t reserved32; /**< zero */
+    uint64_t reserved[4];
+} TesseraSwapControl;
+
+static inline TesseraSwapControl tesseraDefaultSwapControl(void) {
+    TesseraSwapControl s;
+    memset(&s, 0, sizeof s);
+    s.structSize = (uint32_t)sizeof s;
+    s.requested = TESSERA_SWAP_UNKNOWN;
+    s.applied = TESSERA_SWAP_UNKNOWN;
+    return s;
+}
+
+/**
+ * Fills `outInfo`. `context` must be current on the calling thread (the drivers read the interval of the
+ * current drawable). Succeeds with caps 0 for a context that has no swap interval; check `caps`, not the
+ * result code. The library writes at most the caller's structSize bytes.
+ */
+TESSERA_API TesseraResult TESSERA_CALL tesseraGetSwapControl(TesseraContext context,
+                                                             TesseraSwapControl* outInfo);
+/** @} */
 
 #ifdef __cplusplus
 } /**< extern "C" */

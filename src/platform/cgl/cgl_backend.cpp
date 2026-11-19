@@ -308,6 +308,7 @@ class CglBackend final : public Backend {
         int32_t chosenProfile = kProfileLegacy;
         CGLError lastError = kNoError;
         const bool strict = c.fallback == TESSERA_FALLBACK_STRICT;
+        bool relaxedLogged = false;
         for (int32_t profile : plan.profiles) {
             for (const FormatAttempt& attempt : formatAttempts(plan.samples, false, strict)) {
                 for (int offline = 0; offline < 2 && !pf; ++offline) {
@@ -319,10 +320,12 @@ class CglBackend final : public Backend {
                     if (e == kNoError && candidate && count > 0) {
                         pf = candidate;
                         chosenProfile = profile;
-                        if (attempt.samples != plan.samples || attempt.relaxDepth)
+                        if (attempt.samples != plan.samples || attempt.relaxDepth) {
+                            relaxedLogged = true;
                             logf(TESSERA_LOG_INFO,
                                  "CGL: pixel format relaxed (samples %d->%d, depth relaxed %d)", c.samples,
                                  attempt.samples, attempt.relaxDepth);
+                        }
                     } else if (e != kNoError) {
                         lastError = e;
                     }
@@ -376,6 +379,13 @@ class CglBackend final : public Backend {
         if (strict && !contextSatisfies(c, ctx->info))
             return fail(TESSERA_ERROR_NO_MATCHING_CONFIG,
                         "the created context does not satisfy the strict request");
+
+        // CGLChoosePixelFormat treats the sample count as a wish and hands back the closest format instead of
+        // failing, so the ladder above never sees a relaxation; what was granted is only known from the
+        // read-back.
+        if (!strict && !relaxedLogged && ctx->info.samples < c.samples)
+            logf(TESSERA_LOG_INFO, "CGL: pixel format relaxed (samples %d->%d)", c.samples,
+                 ctx->info.samples);
 
         out = std::move(ctx);
         return TESSERA_SUCCESS;

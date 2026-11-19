@@ -365,6 +365,16 @@ TESSERA_JNI(jint, nResetStatus)(JNIEnv* env, jclass, jlong ctx, jintArray out) {
     return r;
 }
 
+TESSERA_JNI(jint, nSwapControl)(JNIEnv* env, jclass, jlong ctx, jintArray out) {
+    if (!out || env->GetArrayLength(out) < 4)
+        return TESSERA_ERROR_INVALID_ARGUMENT;
+    TesseraSwapControl sc = tesseraDefaultSwapControl();
+    const TesseraResult r = tesseraGetSwapControl(static_cast<TesseraContext>(ctx), &sc);
+    const jint values[4] = {static_cast<jint>(sc.caps), sc.requested, sc.applied, sc.maxInterval};
+    env->SetIntArrayRegion(out, 0, 4, values);
+    return r;
+}
+
 TESSERA_JNI(jint, nRecreate)(JNIEnv* env, jclass, jlong ctx, jlongArray outHandle, jintArray outFlags) {
     if (!outHandle || !outFlags || env->GetArrayLength(outHandle) < 1 || env->GetArrayLength(outFlags) < 1)
         return TESSERA_ERROR_INVALID_ARGUMENT;

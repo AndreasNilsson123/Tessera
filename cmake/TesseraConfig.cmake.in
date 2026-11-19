@@ -1,4 +1,8 @@
 @PACKAGE_INIT@
 
+include(CMakeFindDependencyMacro)
+# A static libtessera links Threads::Threads (exported as a link-only dependency of the imported target).
+find_dependency(Threads)
+
 include("${CMAKE_CURRENT_LIST_DIR}/TesseraTargets.cmake")
 check_required_components(Tessera)

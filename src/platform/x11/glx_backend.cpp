@@ -17,6 +17,7 @@
 #include "platform/common/cross_api.hpp"
 #include "platform/common/gl_debug.hpp"
 #include "platform/common/gl_query.hpp"
+#include "platform/common/swap_control.hpp"
 
 namespace tessera::x11 {
 namespace {
@@ -25,6 +26,11 @@ using PfnCreateContextAttribs = GLXContext (*)(Display*, GLXFBConfig, GLXContext
 using PfnSwapIntervalExt = void (*)(Display*, GLXDrawable, int);
 using PfnSwapIntervalMesa = int (*)(unsigned);
 using PfnSwapIntervalSgi = int (*)(int);
+using PfnGetSwapIntervalMesa = int (*)(void);
+using PfnQueryDrawable = void (*)(Display*, GLXDrawable, int, unsigned int*);
+constexpr int kGlxSwapIntervalExt = 0x20F1;
+constexpr int kGlxMaxSwapIntervalExt = 0x20F2;
+constexpr int kGlxLateSwapsTearExt = 0x20F3;
 
 // ---- state shared by the backend and all of its contexts ------------------------------------------
 
@@ -43,6 +49,8 @@ class GlxShared {
     PfnSwapIntervalExt swapIntervalExt = nullptr;
     PfnSwapIntervalMesa swapIntervalMesa = nullptr;
     PfnSwapIntervalSgi swapIntervalSgi = nullptr;
+    PfnGetSwapIntervalMesa getSwapIntervalMesa = nullptr;
+    PfnQueryDrawable queryDrawable = nullptr;
 
     /*
      * A connection that opened successfully is never closed (it lives in the process-wide `keptConnections()`
@@ -116,6 +124,8 @@ class GlxShared {
         swapIntervalExt = reinterpret_cast<PfnSwapIntervalExt>(proc("glXSwapIntervalEXT"));
         swapIntervalMesa = reinterpret_cast<PfnSwapIntervalMesa>(proc("glXSwapIntervalMESA"));
         swapIntervalSgi = reinterpret_cast<PfnSwapIntervalSgi>(proc("glXSwapIntervalSGI"));
+        getSwapIntervalMesa = reinterpret_cast<PfnGetSwapIntervalMesa>(proc("glXGetSwapIntervalMESA"));
+        queryDrawable = reinterpret_cast<PfnQueryDrawable>(proc("glXQueryDrawable"));
         logf(TESSERA_LOG_DEBUG, "GLX %d.%d, %zu extensions, ARB_create_context=%d", major, minor,
              exts_.size(), createContextAttribs != nullptr);
         keepOpen = true;
@@ -217,6 +227,48 @@ class GlxContext final : public ContextObject {
                        ? TESSERA_SUCCESS
                        : fail(TESSERA_ERROR_PLATFORM, "glXSwapIntervalSGI failed");
         return fail(TESSERA_ERROR_UNSUPPORTED, "no GLX swap-control extension is available");
+    }
+
+    GlxSwapInputs swapInputs() const {
+        GlxSwapInputs in;
+        in.hasExt = shared_->has("GLX_EXT_swap_control");
+        in.hasMesa = shared_->has("GLX_MESA_swap_control");
+        in.hasSgi = shared_->has("GLX_SGI_swap_control");
+        in.extFn = shared_->swapIntervalExt != nullptr;
+        in.mesaFn = shared_->swapIntervalMesa != nullptr;
+        in.sgiFn = shared_->swapIntervalSgi != nullptr;
+        in.hasTear = shared_->has("GLX_EXT_swap_control_tear");
+        in.queryDrawableFn = shared_->queryDrawable != nullptr;
+        in.getMesaFn = shared_->getSwapIntervalMesa != nullptr;
+        return in;
+    }
+
+    TesseraResult getSwapControl(TesseraSwapControl& out) noexcept override {
+        const GlxSwapInputs in = swapInputs();
+        out.caps = glxSwapCaps(in, !pbuffer && drawable != 0);
+        if (!(out.caps & TESSERA_SWAP_CAP_CONTROL))
+            return TESSERA_SUCCESS;
+        if (chooseGlxSwapApi(in) == GlxSwapApi::Mesa) {
+            if (out.caps & TESSERA_SWAP_CAP_READBACK)
+                out.applied = shared_->getSwapIntervalMesa();
+            return TESSERA_SUCCESS;
+        }
+        if (chooseGlxSwapApi(in) == GlxSwapApi::Ext && (out.caps & TESSERA_SWAP_CAP_READBACK)) {
+            const LinuxApi& api = *shared_->api;
+            XErrorScope scope(api, shared_->dpy);
+            unsigned int interval = 0, maxInterval = 0, tear = 0;
+            shared_->queryDrawable(shared_->dpy, drawable, kGlxSwapIntervalExt, &interval);
+            shared_->queryDrawable(shared_->dpy, drawable, kGlxMaxSwapIntervalExt, &maxInterval);
+            if (in.hasTear)
+                shared_->queryDrawable(shared_->dpy, drawable, kGlxLateSwapsTearExt, &tear);
+            if (scope.sync() != 0) {
+                out.caps &= ~static_cast<uint32_t>(TESSERA_SWAP_CAP_READBACK); // the server refused the query
+                return TESSERA_SUCCESS;
+            }
+            out.applied = glxAppliedInterval(static_cast<int32_t>(interval), tear != 0);
+            out.maxInterval = static_cast<int32_t>(maxInterval);
+        }
+        return TESSERA_SUCCESS;
     }
 
     TesseraResult queryResetStatus(int32_t& out) noexcept override {

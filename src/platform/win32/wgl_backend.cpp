@@ -17,6 +17,7 @@
 #include "platform/common/arb_context.hpp"
 #include "platform/common/gl_debug.hpp"
 #include "platform/common/gl_query.hpp"
+#include "platform/common/swap_control.hpp"
 #include "wgl_api.hpp"
 #include "window_host.hpp"
 
@@ -47,6 +48,7 @@ using PfnChoosePixelFormat = BOOL(WINAPI*)(HDC, const int*, const FLOAT*, UINT, 
 using PfnGetPixelFormatAttribiv = BOOL(WINAPI*)(HDC, int, int, UINT, const int*, int*);
 using PfnGetExtensionsString = const char*(WINAPI*)(HDC);
 using PfnSwapInterval = BOOL(WINAPI*)(int);
+using PfnGetSwapInterval = int(WINAPI*)(void);
 using PfnCreatePbuffer = HANDLE(WINAPI*)(HDC, int, int, int, const int*);
 using PfnGetPbufferDC = HDC(WINAPI*)(HANDLE);
 using PfnReleasePbufferDC = int(WINAPI*)(HANDLE, HDC);
@@ -58,6 +60,7 @@ struct ExtFns {
     PfnGetPixelFormatAttribiv getPixelFormatAttribiv = nullptr;
     PfnGetExtensionsString getExtensionsString = nullptr;
     PfnSwapInterval swapInterval = nullptr;
+    PfnGetSwapInterval getSwapInterval = nullptr;
     PfnCreatePbuffer createPbuffer = nullptr;
     PfnGetPbufferDC getPbufferDC = nullptr;
     PfnReleasePbufferDC releasePbufferDC = nullptr;
@@ -158,6 +161,7 @@ class WglShared {
         if (!fn.getExtensionsString)
             get("wglGetExtensionsStringEXT", fn.getExtensionsString);
         get("wglSwapIntervalEXT", fn.swapInterval);
+        get("wglGetSwapIntervalEXT", fn.getSwapInterval);
         get("wglCreatePbufferARB", fn.createPbuffer);
         get("wglGetPbufferDCARB", fn.getPbufferDC);
         get("wglReleasePbufferDCARB", fn.releasePbufferDC);
@@ -228,6 +232,20 @@ class WglContext final : public ContextObject {
         if (!shared_->fn.swapInterval(interval))
             return fail(TESSERA_ERROR_PLATFORM,
                         describeWin32Error("wglSwapIntervalEXT failed", GetLastError()));
+        return TESSERA_SUCCESS;
+    }
+
+    TesseraResult getSwapControl(TesseraSwapControl& out) noexcept override {
+        WglSwapInputs in;
+        in.hasExt = shared_->has("WGL_EXT_swap_control");
+        in.hasTear = shared_->has("WGL_EXT_swap_control_tear");
+        in.setFn = shared_->fn.swapInterval != nullptr;
+        in.getFn = shared_->fn.getSwapInterval != nullptr;
+        out.caps = wglSwapCaps(in, !pbuffer);
+        if (out.caps & TESSERA_SWAP_CAP_READBACK)
+            out.applied =
+                shared_->fn
+                    .getSwapInterval(); // the current context's drawable; the core guarantees "current"
         return TESSERA_SUCCESS;
     }
 

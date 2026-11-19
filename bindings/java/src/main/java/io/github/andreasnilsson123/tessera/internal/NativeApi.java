@@ -51,6 +51,9 @@ public interface NativeApi {
 
     int resetStatus(long handle, int[] out1);
 
+    /** caps, requested, applied, maxInterval (INT32_MIN = unknown). The context must be current on the calling thread. */
+    int swapControl(long handle, int[] out4);
+
     int recreate(long handle, long[] outHandle, int[] outFlags);
 
     /** {@code out2[0]} = 1 if the context is known to be lost, {@code out2[1]} = the reset status. */

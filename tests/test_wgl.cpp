@@ -13,6 +13,7 @@
 
 #include <tessera/tessera.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cstring>
@@ -849,6 +850,154 @@ static void testWindowAttach() {
     DestroyWindow(crossThread);
 }
 
+// ---- swap control reporting and frame pacing on a real, visible window (DWM composited)
+// ----------------------
+
+struct FrameStats {
+    double meanMs = 0, p99Ms = 0, minMs = 0;
+    int frames = 0;
+};
+
+static FrameStats measureFrames(TesseraContext ctx, int frames) {
+    using GlClearColor = void(WINAPI*)(float, float, float, float);
+    using GlClear = void(WINAPI*)(unsigned);
+    auto clearColor = reinterpret_cast<GlClearColor>(tesseraGetProcAddress("glClearColor"));
+    auto clear = reinterpret_cast<GlClear>(tesseraGetProcAddress("glClear"));
+    LARGE_INTEGER freq, prev, now;
+    QueryPerformanceFrequency(&freq);
+    std::vector<double> ms;
+    QueryPerformanceCounter(&prev);
+    for (int i = 0; i < frames; ++i) {
+        MSG msg;
+        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+        clearColor(float(i % 2), 0.f, 0.f, 1.f);
+        clear(0x4000);
+        if (tesseraSwapBuffers(ctx) != TESSERA_SUCCESS)
+            break;
+        QueryPerformanceCounter(&now);
+        ms.push_back(1000.0 * double(now.QuadPart - prev.QuadPart) / double(freq.QuadPart));
+        prev = now;
+    }
+    FrameStats st;
+    if (ms.size() > 10) {
+        ms.erase(ms.begin(), ms.begin() + 5); // warm-up
+        std::vector<double> sorted = ms;
+        std::sort(sorted.begin(), sorted.end());
+        double sum = 0;
+        for (double v : ms)
+            sum += v;
+        st.frames = int(ms.size());
+        st.meanMs = sum / double(ms.size());
+        st.minMs = sorted.front();
+        st.p99Ms = sorted[std::size_t(double(sorted.size() - 1) * 0.99)];
+    }
+    return st;
+}
+
+static void testSwapControlAndPacing() {
+    TesseraContextConfig cfg = baseConfig();
+    cfg.fallback = TESSERA_FALLBACK_BEST_EFFORT;
+
+    // A hidden-window context and a pbuffer context report what their drawable can do.
+    TesseraContext hidden = 0;
+    EXPECT(tesseraCreateContext(&cfg, &hidden), TESSERA_SUCCESS);
+    TesseraContextConfig pbCfg = cfg;
+    pbCfg.surface = TESSERA_SURFACE_PBUFFER;
+    TesseraContext pb = 0;
+    const TesseraResult pbr = tesseraCreateContext(&pbCfg, &pb);
+    CHECK(pbr == TESSERA_SUCCESS || pbr == TESSERA_ERROR_NO_MATCHING_CONFIG);
+    TesseraSwapControl sc = tesseraDefaultSwapControl();
+    EXPECT(tesseraGetSwapControl(hidden, &sc), TESSERA_ERROR_WRONG_THREAD); // must be current
+    if (pb) {
+        EXPECT(tesseraMakeCurrent(pb), TESSERA_SUCCESS);
+        EXPECT(tesseraGetSwapControl(pb, &sc), TESSERA_SUCCESS);
+        CHECK(sc.caps == 0 && sc.applied == TESSERA_SWAP_UNKNOWN); // a pbuffer has no swap interval
+        EXPECT(tesseraSetSwapInterval(pb, 1), TESSERA_ERROR_UNSUPPORTED);
+        EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS);
+        tesseraDestroyContext(pb);
+    }
+    EXPECT(tesseraMakeCurrent(hidden), TESSERA_SUCCESS);
+    sc = tesseraDefaultSwapControl();
+    EXPECT(tesseraGetSwapControl(hidden, &sc), TESSERA_SUCCESS);
+    std::printf("  hidden window: caps=0x%x requested=%d applied=%d\n", sc.caps, sc.requested, sc.applied);
+    CHECK(sc.requested == TESSERA_SWAP_UNKNOWN);
+    EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS);
+    tesseraDestroyContext(hidden);
+
+    // A visible window of our own: the real DWM path.
+    HWND w = CreateWindowExW(0, L"STATIC", L"tessera pacing", WS_OVERLAPPEDWINDOW | WS_VISIBLE, 40, 40, 480,
+                             320, nullptr, nullptr, nullptr, nullptr);
+    CHECK(w != nullptr);
+    if (!w)
+        return;
+    TesseraContext ctx = 0;
+    EXPECT(tesseraCreateContextForWindow(&cfg, id(w), TESSERA_ATTACH_ALLOW_PIXEL_FORMAT, &ctx),
+           TESSERA_SUCCESS);
+    if (!ctx) {
+        DestroyWindow(w);
+        return;
+    }
+    EXPECT(tesseraMakeCurrent(ctx), TESSERA_SUCCESS);
+    sc = tesseraDefaultSwapControl();
+    EXPECT(tesseraGetSwapControl(ctx, &sc), TESSERA_SUCCESS);
+    std::printf("  window: caps=0x%x (control=%d adaptive=%d readback=%d)\n", sc.caps,
+                !!(sc.caps & TESSERA_SWAP_CAP_CONTROL), !!(sc.caps & TESSERA_SWAP_CAP_ADAPTIVE),
+                !!(sc.caps & TESSERA_SWAP_CAP_READBACK));
+
+    if (!(sc.caps & TESSERA_SWAP_CAP_CONTROL)) {
+        // The GDI software renderer: no swap control at all, and asking says so.
+        EXPECT(tesseraSetSwapInterval(ctx, 1), TESSERA_ERROR_UNSUPPORTED);
+        CHECK(sc.applied == TESSERA_SWAP_UNKNOWN);
+        std::puts("  (no WGL_EXT_swap_control here: pacing not measured)");
+    } else {
+        // What the driver reports must agree with what was asked, for every interval the driver accepts.
+        const int wanted[] = {0, 1, 2, -1};
+        for (int interval : wanted) {
+            const TesseraResult r = tesseraSetSwapInterval(ctx, interval);
+            if (interval < 0 && !(sc.caps & TESSERA_SWAP_CAP_ADAPTIVE)) {
+                CHECK(r == TESSERA_ERROR_INVALID_ARGUMENT); // never silently accepted
+                continue;
+            }
+            EXPECT(r, TESSERA_SUCCESS);
+            TesseraSwapControl now = tesseraDefaultSwapControl();
+            EXPECT(tesseraGetSwapControl(ctx, &now), TESSERA_SUCCESS);
+            std::printf("  requested %2d -> driver reports %d\n", interval, now.applied);
+            CHECK(now.requested == interval);
+            if (now.caps & TESSERA_SWAP_CAP_READBACK)
+                CHECK(now.applied == interval || (interval == -1 && now.applied != TESSERA_SWAP_UNKNOWN));
+        }
+
+        // Frame pacing: vsync on is tied to the display refresh, vsync off is not.
+        DEVMODEW dm = {};
+        dm.dmSize = sizeof dm;
+        EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &dm);
+        const double refreshHz = dm.dmDisplayFrequency > 1 ? double(dm.dmDisplayFrequency) : 0.0;
+        EXPECT(tesseraSetSwapInterval(ctx, 1), TESSERA_SUCCESS);
+        const FrameStats on = measureFrames(ctx, 90);
+        EXPECT(tesseraSetSwapInterval(ctx, 0), TESSERA_SUCCESS);
+        const FrameStats off = measureFrames(ctx, 240);
+        std::printf(
+            "  display %.0f Hz; vsync on: mean %.2f ms (min %.2f, p99 %.2f, %d frames); off: mean %.3f ms "
+            "(min %.3f, p99 %.3f, %d frames)\n",
+            refreshHz, on.meanMs, on.minMs, on.p99Ms, on.frames, off.meanMs, off.minMs, off.p99Ms,
+            off.frames);
+        CHECK(on.frames > 50 && off.frames > 100);
+        if (on.frames > 50 && off.frames > 100) {
+            CHECK(off.meanMs < on.meanMs); // turning vsync off must make frames faster, whatever the display
+            if (refreshHz > 0) {
+                const double period = 1000.0 / refreshHz;
+                CHECK(on.meanMs > 0.7 * period && on.meanMs < 1.6 * period); // paced to the display
+            }
+        }
+    }
+    EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS);
+    tesseraDestroyContext(ctx);
+    DestroyWindow(w);
+}
+
 int main() {
     if (tesseraInit() != TESSERA_SUCCESS) {
         std::fprintf(stderr, "tesseraInit failed: %s\n", tesseraGetLastErrorMessage());
@@ -890,6 +1039,7 @@ int main() {
         {"probe", testProbe},
         {"native handles", testNativeHandles},
         {"window attach", testWindowAttach},
+        {"swap control and frame pacing", testSwapControlAndPacing},
         {"GPU selection", testAdapterSelection},
         {"terminate / re-init", testTerminateAndReinit},
     };

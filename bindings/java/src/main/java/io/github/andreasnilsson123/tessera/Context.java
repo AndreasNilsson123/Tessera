@@ -250,6 +250,19 @@ public final class Context implements AutoCloseable {
         return ResetStatus.of(out[0]);
     }
 
+    /**
+     * What this context's swap control can do and what is in effect: whether {@link #setSwapInterval(int)} works, whether
+     * adaptive vsync exists, the interval the driver reports, and what was last requested. The context must be current on this
+     * thread. A context without a window (pbuffer, surfaceless) reports {@link SwapControl#supported()} false rather than
+     * failing.
+     */
+    public SwapControl swapControl() {
+        final NativeApi api = Tessera.api();
+        final int[] out = new int[4];
+        Tessera.check(api, api.swapControl(handle(), out));
+        return new SwapControl(out[0], out[1], out[2], out[3]);
+    }
+
     /** The result of {@link #recreate()}. */
     public static final class Recreation {
         private final Context context;

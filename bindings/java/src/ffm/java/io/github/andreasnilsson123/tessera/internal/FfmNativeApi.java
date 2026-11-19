@@ -39,6 +39,8 @@ final class FfmNativeApi implements NativeApi {
 
     // TesseraNativeHandles (88 bytes): structSize, kind, handles[6] at 8, reserved[4]
     private static final long NH_SIZE = 88, NH_KIND = 4, NH_HANDLES = 8;
+    // TesseraSwapControl (56 bytes): structSize, caps at 4, requested at 8, applied at 12, maxInterval at 16
+    private static final long SC_SIZE = 56, SC_CAPS = 4, SC_REQUESTED = 8, SC_APPLIED = 12, SC_MAX = 16;
     // TesseraProbeReport (832 bytes): structSize, result, info (a TesseraContextInfo) at 8, backend[32] at 512, message[256] at 544
     private static final long PROBE_SIZE = 832, PROBE_RESULT = 4, PROBE_INFO = 8, PROBE_BACKEND = 512, PROBE_MESSAGE = 544;
 
@@ -46,7 +48,7 @@ final class FfmNativeApi implements NativeApi {
     private static volatile LostSink lostSink;
 
     private final MethodHandle hInit, hTerminate, hAbi, hVersion, hCreate, hDestroy, hInfo, hMakeCurrent, hCurrent, hProc, hSwap,
-            hSwapInterval, hReset, hRecreate, hLastError, hResultString, hSetLog, hNativeHandles, hPrewarm, hPooled, hCreateForWindow, hProbe, hPoolTopUp, hPooledCountFor, hPoolClear, hIsLost, hSetLost;
+            hSwapInterval, hReset, hRecreate, hLastError, hResultString, hSetLog, hNativeHandles, hPrewarm, hPooled, hCreateForWindow, hProbe, hPoolTopUp, hPooledCountFor, hPoolClear, hIsLost, hSetLost, hSwapControl;
     private final MemorySegment logStub, lostStub;
 
     public FfmNativeApi(Path library) {
@@ -78,6 +80,7 @@ final class FfmNativeApi implements NativeApi {
         hLastError = down(linker, lookup, "tesseraGetLastErrorMessage", FunctionDescriptor.of(ValueLayout.ADDRESS));
         hResultString = down(linker, lookup, "tesseraResultString", FunctionDescriptor.of(ValueLayout.ADDRESS, INT));
         hSetLog = down(linker, lookup, "tesseraSetLogCallback", FunctionDescriptor.ofVoid(ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+        hSwapControl = down(linker, lookup, "tesseraGetSwapControl", FunctionDescriptor.of(INT, LONG, ValueLayout.ADDRESS));
         hIsLost = down(linker, lookup, "tesseraIsContextLost", FunctionDescriptor.of(INT, LONG, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
         hSetLost = down(linker, lookup, "tesseraSetContextLostCallback", FunctionDescriptor.ofVoid(ValueLayout.ADDRESS, ValueLayout.ADDRESS));
         try {
@@ -436,6 +439,24 @@ final class FfmNativeApi implements NativeApi {
             final MemorySegment out = arena.allocate(4, 4);
             final int r = (int) hReset.invokeExact(handle, out);
             out1[0] = out.get(INT, 0);
+            return r;
+        } catch (Throwable t) {
+            throw failed(t);
+        }
+    }
+
+    @Override
+    public int swapControl(long handle, int[] out4) {
+        try (Arena arena = Arena.ofConfined()) {
+            final MemorySegment sc = arena.allocate(SC_SIZE, 8);
+            sc.set(INT, 0, (int) SC_SIZE);
+            sc.set(INT, SC_REQUESTED, Integer.MIN_VALUE);
+            sc.set(INT, SC_APPLIED, Integer.MIN_VALUE);
+            final int r = (int) hSwapControl.invokeExact(handle, sc);
+            out4[0] = sc.get(INT, SC_CAPS);
+            out4[1] = sc.get(INT, SC_REQUESTED);
+            out4[2] = sc.get(INT, SC_APPLIED);
+            out4[3] = sc.get(INT, SC_MAX);
             return r;
         } catch (Throwable t) {
             throw failed(t);

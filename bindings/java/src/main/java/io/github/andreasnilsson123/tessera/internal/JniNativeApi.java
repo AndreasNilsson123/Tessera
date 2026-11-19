@@ -86,6 +86,11 @@ public final class JniNativeApi implements NativeApi {
     }
 
     @Override
+    public int swapControl(long handle, int[] out4) {
+        return nSwapControl(handle, out4);
+    }
+
+    @Override
     public int isContextLost(long handle, int[] out2) {
         return nIsContextLost(handle, out2);
     }
@@ -224,6 +229,8 @@ public final class JniNativeApi implements NativeApi {
     private static native int nSetSwapInterval(long handle, int interval);
 
     private static native int nResetStatus(long handle, int[] out1);
+
+    private static native int nSwapControl(long handle, int[] out4);
 
     private static native int nRecreate(long handle, long[] outHandle, int[] outFlags);
 

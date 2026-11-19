@@ -633,7 +633,30 @@ TesseraResult Runtime::setSwapInterval(TesseraContext handle, int32_t interval) 
         return fail(TESSERA_ERROR_CONTEXT_LOST, "the context was lost; recreate it");
     if (!object->affinity.ownedBy(currentThreadToken()))
         return fail(TESSERA_ERROR_WRONG_THREAD, "context is not current on the calling thread");
-    return object->setSwapInterval(interval);
+    const TesseraResult r = object->setSwapInterval(interval);
+    if (r == TESSERA_SUCCESS)
+        object->requestedInterval.store(interval);
+    return r;
+}
+
+TesseraResult Runtime::getSwapControl(TesseraContext handle, TesseraSwapControl& out) {
+    auto object = contexts_.get(handle);
+    if (!object)
+        return fail(TESSERA_ERROR_INVALID_HANDLE, "not a live context handle");
+    if (object->lost.load())
+        return fail(TESSERA_ERROR_CONTEXT_LOST, "the context was lost; recreate it");
+    if (!object->affinity.ownedBy(currentThreadToken()))
+        return fail(TESSERA_ERROR_WRONG_THREAD, "context is not current on the calling thread");
+    out = tesseraDefaultSwapControl();
+    const TesseraResult r = object->getSwapControl(out);
+    if (r == TESSERA_ERROR_CONTEXT_LOST)
+        markLost(handle, *object, TESSERA_RESET_UNKNOWN);
+    if (r != TESSERA_SUCCESS)
+        return r;
+    out.requested = object->requestedInterval.load();
+    if (!(out.caps & TESSERA_SWAP_CAP_READBACK))
+        out.applied = TESSERA_SWAP_UNKNOWN; // a backend must not claim a value it did not read
+    return TESSERA_SUCCESS;
 }
 
 void* Runtime::getProcAddress(const char* name) {

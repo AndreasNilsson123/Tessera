@@ -17,6 +17,8 @@
 #include <thread>
 #include <vector>
 
+#include "platform/common/swap_control.hpp"
+
 #include "core/backend.hpp"
 #include "core/boundary.hpp"
 #include "core/config.hpp"
@@ -596,6 +598,10 @@ static void testGlVersionParsing() {
 // ----------------------------------
 
 static std::atomic<int> g_liveRobust{0};
+static std::atomic<uint32_t> g_swapCaps{0};
+static std::atomic<int32_t> g_swapApplied{TESSERA_SWAP_UNKNOWN};
+static std::atomic<int32_t> g_swapMax{0};
+static std::atomic<TesseraResult> g_swapResult{TESSERA_SUCCESS};
 static std::atomic<int> g_resetToReport{0};
 static std::atomic<bool> g_bindReportsLost{false};
 static std::mutex g_destroyMutex;
@@ -638,6 +644,12 @@ class RobustFakeContext : public ContextObject {
     TesseraResult queryResetStatus(int32_t& out) noexcept override {
         out = g_resetToReport;
         return TESSERA_SUCCESS;
+    }
+    TesseraResult getSwapControl(TesseraSwapControl& out) noexcept override {
+        out.caps = g_swapCaps;
+        out.applied = g_swapApplied; // the core must hide this unless the backend also claims READBACK
+        out.maxInterval = g_swapMax;
+        return g_swapResult;
     }
     TesseraContextConfig cfg;
     bool bound = false;
@@ -719,6 +731,133 @@ static void testResetAndLoss() {
         loseContext(c, s);
         EXPECT(tesseraDestroyContext(c), TESSERA_SUCCESS);
     }
+    CHECK(g_liveRobust == 0);
+}
+
+// ---- swap control reporting: the pure decision logic, then the core's handling of a backend's answer
+
+static void testSwapControlLogic() {
+    using namespace tessera;
+    GlxSwapInputs in;
+    CHECK(chooseGlxSwapApi(in) == GlxSwapApi::None);
+    CHECK(glxSwapCaps(in, true) == 0);
+
+    // An advertised extension whose entry point did not resolve is not usable.
+    in.hasExt = true;
+    CHECK(chooseGlxSwapApi(in) == GlxSwapApi::None);
+    in.extFn = true;
+    CHECK(chooseGlxSwapApi(in) == GlxSwapApi::Ext);
+    CHECK(glxSwapCaps(in, true) == TESSERA_SWAP_CAP_CONTROL); // no read-back entry point, no tear
+    CHECK(glxSwapCaps(in, false) == 0);                       // pbuffer / no drawable: nothing to swap
+    in.queryDrawableFn = true;
+    CHECK(glxSwapCaps(in, true) == (TESSERA_SWAP_CAP_CONTROL | TESSERA_SWAP_CAP_READBACK));
+    in.hasTear = true;
+    CHECK(glxSwapCaps(in, true) ==
+          (TESSERA_SWAP_CAP_CONTROL | TESSERA_SWAP_CAP_READBACK | TESSERA_SWAP_CAP_ADAPTIVE));
+
+    // Preference order EXT > MESA > SGI; adaptive and drawable read-back only belong to EXT.
+    GlxSwapInputs mesa;
+    mesa.hasMesa = mesa.mesaFn = mesa.hasSgi = mesa.sgiFn = true;
+    mesa.hasTear = true; // advertised, but it extends EXT only
+    CHECK(chooseGlxSwapApi(mesa) == GlxSwapApi::Mesa);
+    CHECK(glxSwapCaps(mesa, true) == TESSERA_SWAP_CAP_CONTROL);
+    mesa.getMesaFn = true;
+    CHECK(glxSwapCaps(mesa, true) == (TESSERA_SWAP_CAP_CONTROL | TESSERA_SWAP_CAP_READBACK));
+    GlxSwapInputs sgi;
+    sgi.hasSgi = sgi.sgiFn = true;
+    sgi.queryDrawableFn = sgi.getMesaFn = true; // irrelevant to SGI
+    CHECK(chooseGlxSwapApi(sgi) == GlxSwapApi::Sgi);
+    CHECK(glxSwapCaps(sgi, true) == TESSERA_SWAP_CAP_CONTROL);
+    GlxSwapInputs all = in;
+    all.hasMesa = all.mesaFn = all.hasSgi = all.sgiFn = true;
+    CHECK(chooseGlxSwapApi(all) == GlxSwapApi::Ext);
+
+    // EXT reports a magnitude and flags the tearing mode separately.
+    CHECK(glxAppliedInterval(1, false) == 1);
+    CHECK(glxAppliedInterval(1, true) == -1);
+    CHECK(glxAppliedInterval(0, true) == 0); // vsync off is never "adaptive"
+
+    WglSwapInputs w;
+    CHECK(wglSwapCaps(w, true) == 0);
+    w.hasExt = true;
+    CHECK(wglSwapCaps(w, true) == 0); // extension without the entry point
+    w.setFn = true;
+    CHECK(wglSwapCaps(w, true) == TESSERA_SWAP_CAP_CONTROL);
+    CHECK(wglSwapCaps(w, false) == 0);
+    w.getFn = true;
+    w.hasTear = true;
+    CHECK(wglSwapCaps(w, true) ==
+          (TESSERA_SWAP_CAP_CONTROL | TESSERA_SWAP_CAP_READBACK | TESSERA_SWAP_CAP_ADAPTIVE));
+}
+
+static void testSwapControlApi() {
+    TesseraContextConfig cfg = tesseraDefaultContextConfig();
+    cfg.api = TESSERA_API_OPENGL;
+    TesseraContext ctx = makeRobust(cfg);
+    TesseraSwapControl sc = tesseraDefaultSwapControl();
+
+    // Argument and thread rules mirror tesseraSetSwapInterval.
+    EXPECT(tesseraGetSwapControl(ctx, nullptr), TESSERA_ERROR_INVALID_ARGUMENT);
+    TesseraSwapControl unsized = {};
+    EXPECT(tesseraGetSwapControl(ctx, &unsized), TESSERA_ERROR_INVALID_ARGUMENT);
+    EXPECT(tesseraGetSwapControl(ctx, &sc), TESSERA_ERROR_WRONG_THREAD); // not current anywhere
+    EXPECT(tesseraGetSwapControl(0xBAD, &sc), TESSERA_ERROR_INVALID_HANDLE);
+    EXPECT(tesseraMakeCurrent(ctx), TESSERA_SUCCESS);
+
+    // A backend with no swap control (the default) reports nothing, successfully.
+    g_swapCaps = 0;
+    g_swapApplied = 7; // a backend that forgets to clear it must not leak a value without READBACK
+    sc = tesseraDefaultSwapControl();
+    EXPECT(tesseraGetSwapControl(ctx, &sc), TESSERA_SUCCESS);
+    CHECK(sc.caps == 0 && sc.requested == TESSERA_SWAP_UNKNOWN && sc.applied == TESSERA_SWAP_UNKNOWN);
+    CHECK(sc.maxInterval == 0);
+
+    // `requested` follows successful calls only.
+    EXPECT(tesseraSetSwapInterval(ctx, 1), TESSERA_SUCCESS);
+    g_swapCaps = TESSERA_SWAP_CAP_CONTROL | TESSERA_SWAP_CAP_READBACK | TESSERA_SWAP_CAP_ADAPTIVE;
+    g_swapApplied = 1;
+    g_swapMax = 4;
+    EXPECT(tesseraGetSwapControl(ctx, &sc), TESSERA_SUCCESS);
+    CHECK(sc.caps == g_swapCaps.load());
+    CHECK(sc.requested == 1 && sc.applied == 1 && sc.maxInterval == 4);
+    EXPECT(tesseraSetSwapInterval(ctx, -1), TESSERA_SUCCESS);
+    g_swapApplied = -1;
+    EXPECT(tesseraGetSwapControl(ctx, &sc), TESSERA_SUCCESS);
+    CHECK(sc.requested == -1 && sc.applied == -1);
+
+    // A driver that clamps: the request and what is in effect differ, and both are visible.
+    EXPECT(tesseraSetSwapInterval(ctx, 8), TESSERA_SUCCESS);
+    g_swapApplied = 4;
+    EXPECT(tesseraGetSwapControl(ctx, &sc), TESSERA_SUCCESS);
+    CHECK(sc.requested == 8 && sc.applied == 4);
+
+    // An older (smaller) caller struct gets only what fits, and its own structSize back.
+    TesseraSwapControl small = tesseraDefaultSwapControl();
+    small.structSize = 3 * sizeof(uint32_t);
+    small.applied = 12345; // beyond the caller's size: must stay untouched
+    EXPECT(tesseraGetSwapControl(ctx, &small), TESSERA_SUCCESS);
+    CHECK(small.structSize == 3 * sizeof(uint32_t) && small.caps == g_swapCaps.load());
+    CHECK(small.applied == 12345);
+
+    // Without READBACK the applied value is hidden by the core even if the backend wrote one.
+    g_swapCaps = TESSERA_SWAP_CAP_CONTROL;
+    g_swapApplied = 2;
+    EXPECT(tesseraGetSwapControl(ctx, &sc), TESSERA_SUCCESS);
+    CHECK(sc.applied == TESSERA_SWAP_UNKNOWN);
+
+    // A native "context lost" from the backend marks the context lost, like any other call.
+    g_swapResult = TESSERA_ERROR_CONTEXT_LOST;
+    EXPECT(tesseraGetSwapControl(ctx, &sc), TESSERA_ERROR_CONTEXT_LOST);
+    g_swapResult = TESSERA_SUCCESS;
+    EXPECT(tesseraGetSwapControl(ctx, &sc), TESSERA_ERROR_CONTEXT_LOST); // stays lost
+    int32_t lost = 0;
+    EXPECT(tesseraIsContextLost(ctx, &lost, nullptr), TESSERA_SUCCESS);
+    CHECK(lost == 1);
+    EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS);
+    EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
+    g_swapCaps = 0;
+    g_swapApplied = TESSERA_SWAP_UNKNOWN;
+    g_swapMax = 0;
     CHECK(g_liveRobust == 0);
 }
 
@@ -1328,6 +1467,8 @@ static void testLifecycleRobustness() {
     tessera::Runtime::instance().registerBackend(std::make_shared<RobustFakeBackend>());
     testResetAndLoss();
     testContextLostCallback();
+    testSwapControlLogic();
+    testSwapControlApi();
     testRecreateAndShareGroups();
     testDeferredDestruction();
     testResourceWarnings();

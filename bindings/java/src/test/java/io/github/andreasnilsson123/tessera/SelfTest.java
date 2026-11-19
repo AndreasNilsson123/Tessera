@@ -250,6 +250,41 @@ public final class SelfTest {
         expect(IllegalStateException.class, "isLost on a closed context", closed::isLost);
     }
 
+    static void swapControl() {
+        // A pbuffer has no swap interval: the query succeeds and says so.
+        try (Context pb = Context.create(ContextConfig.builder().surface(ContextConfig.Surface.PBUFFER)
+                .fallback(ContextConfig.Fallback.BEST_EFFORT).build())) {
+            pb.makeCurrent();
+            final SwapControl none = pb.swapControl();
+            check(!none.supported() && !none.adaptiveSupported() && none.applied() == null, "a pbuffer has no swap control: " + none);
+            Context.releaseCurrent();
+        } catch (TesseraException e) {
+            check(e.result() == Result.NO_MATCHING_CONFIG, "pbuffer refused only as NO_MATCHING_CONFIG: " + e);
+        }
+        // The default (hidden-window) context reports what the driver offers, consistently.
+        try (Context ctx = Context.create(ContextConfig.builder().fallback(ContextConfig.Fallback.BEST_EFFORT).build())) {
+            expect(IllegalStateException.class, "swapControl needs a current context", ctx::swapControl);
+            ctx.makeCurrent();
+            final SwapControl sc = ctx.swapControl();
+            System.out.println("  " + sc);
+            check(sc.requested() == null, "nothing requested yet");
+            if (sc.supported()) {
+                ctx.setSwapInterval(0);
+                final SwapControl after = ctx.swapControl();
+                check(Integer.valueOf(0).equals(after.requested()), "requested follows the call: " + after);
+                if (after.readBack()) {
+                    check(Integer.valueOf(0).equals(after.applied()), "the driver reports what was set: " + after);
+                }
+            } else {
+                final TesseraException e = expect(TesseraException.class, "setSwapInterval without swap control", () -> ctx.setSwapInterval(1));
+                if (e != null) {
+                    check(e.result() == Result.UNSUPPORTED, "UNSUPPORTED, was " + e.result());
+                }
+            }
+            Context.releaseCurrent();
+        }
+    }
+
     static void probeAndPool() {
         // A probe answers like Context.create would, without keeping anything.
         final ProbeReport ok = Tessera.probe(plain());
@@ -489,10 +524,10 @@ public final class SelfTest {
                 + " on Java " + Runtime.version() + (bindingNote() == null ? "" : " (" + bindingNote() + ")"));
 
         final String[] names = {"config and info", "thread rules", "close from another thread", "garbage-collection safety net", "logging",
-                "reset and recreate", "sharing", "probe and pre-warming", "keeping the pool full", "native handles", "window attach (validation)", "GPU selection", "virtual threads",
+                "reset and recreate", "swap control", "sharing", "probe and pre-warming", "keeping the pool full", "native handles", "window attach (validation)", "GPU selection", "virtual threads",
                 "classloaders"};
         final Body[] bodies = {SelfTest::configAndInfo, SelfTest::threadRules, SelfTest::closeFromAnotherThread, SelfTest::cleanerSafetyNet,
-                SelfTest::logging, SelfTest::resetAndRecreate, SelfTest::sharing, SelfTest::probeAndPool, SelfTest::poolTopUp, SelfTest::nativeHandles,
+                SelfTest::logging, SelfTest::resetAndRecreate, SelfTest::swapControl, SelfTest::sharing, SelfTest::probeAndPool, SelfTest::poolTopUp, SelfTest::nativeHandles,
                 SelfTest::windowAttachValidation, SelfTest::gpuSelection, SelfTest::virtualThreadsAreRefused, SelfTest::classLoaders};
         for (int i = 0; i < bodies.length; i++) {
             if (noLoaders && names[i].equals("classloaders")) {

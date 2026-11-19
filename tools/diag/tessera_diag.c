@@ -9,6 +9,8 @@
  *   tessera-diag --json          the same as JSON (for scripts and for attaching to issues)
  *   tessera-diag --backend egl   only this backend (wgl, glx, egl, cgl)
  *   tessera-diag --quick         a short list of cases instead of the full matrix
+ *   tessera-diag --bench-swap [S]  frame pacing: vsync on/off (and adaptive) in a real window, S seconds each
+ *                                (default 2); Windows and X11 only. Add --json for machine-readable output.
  *
  * Exit status: 0 if at least one backend could create a context, 1 if none could, 2 on a usage error.
  * Every case is a real create-inspect-destroy of a context in STRICT mode, so "refused" means the driver
@@ -25,6 +27,14 @@
 #include <string.h>
 
 #if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#elif defined(__linux__)
+#include <dlfcn.h>
+#include <time.h>
+#endif
+
+#if defined(_WIN32)
 #define SETENV(name, value) _putenv_s((name), (value))
 #define UNSETENV(name) _putenv_s((name), "")
 #else
@@ -34,6 +44,7 @@
 
 static int g_json = 0;
 static int g_quick = 0;
+static double g_benchSeconds = 0; /* > 0: --bench-swap */
 
 /* ------------------------------------------------------------------ small output helpers */
 
@@ -194,6 +205,38 @@ static void printInfoJson(const TesseraContextInfo* i) {
            surfaceName(i->surface), flags);
 }
 
+/* What swap control the backend offers, read from a real context (best-effort: the baseline request). */
+typedef struct {
+    int known; /* a context could be created and made current */
+    uint32_t caps;
+} SwapReport;
+
+static SwapReport probeSwapControl(void) {
+    SwapReport rep = {0, 0};
+    TesseraContextConfig cfg = tesseraDefaultContextConfig();
+    cfg.api = TESSERA_API_OPENGL;
+    cfg.fallback = TESSERA_FALLBACK_BEST_EFFORT;
+    TesseraContext ctx = TESSERA_NULL_HANDLE;
+    if (tesseraCreateContext(&cfg, &ctx) != TESSERA_SUCCESS)
+        return rep;
+    if (tesseraMakeCurrent(ctx) == TESSERA_SUCCESS) {
+        TesseraSwapControl sc = tesseraDefaultSwapControl();
+        if (tesseraGetSwapControl(ctx, &sc) == TESSERA_SUCCESS) {
+            rep.known = 1;
+            rep.caps = sc.caps;
+        }
+        tesseraMakeCurrent(TESSERA_NULL_HANDLE);
+    }
+    tesseraDestroyContext(ctx);
+    return rep;
+}
+
+static void swapCapsText(uint32_t caps, char* out, size_t cap) {
+    snprintf(out, cap, "%s%s%s", caps & TESSERA_SWAP_CAP_CONTROL ? "control" : "none",
+             caps & TESSERA_SWAP_CAP_ADAPTIVE ? ", adaptive (-1)" : "",
+             caps & TESSERA_SWAP_CAP_READBACK ? ", read-back" : "");
+}
+
 static BackendSummary runBackend(const char* name, int* firstBackend) {
     BackendSummary sum = {0, 0};
     SETENV("TESSERA_BACKEND", name);
@@ -245,6 +288,12 @@ static BackendSummary runBackend(const char* name, int* firstBackend) {
             jstr(baseline.info.renderer);
             printf(",\"version\":");
             jstr(baseline.info.version);
+            const SwapReport sw = probeSwapControl();
+            if (sw.known)
+                printf(",\"swapControl\":{\"control\":%s,\"adaptive\":%s,\"readback\":%s}",
+                       (sw.caps & TESSERA_SWAP_CAP_CONTROL) ? "true" : "false",
+                       (sw.caps & TESSERA_SWAP_CAP_ADAPTIVE) ? "true" : "false",
+                       (sw.caps & TESSERA_SWAP_CAP_READBACK) ? "true" : "false");
         } else {
             printf(",\"baselineError\":");
             jstr(baseline.message);
@@ -257,6 +306,12 @@ static BackendSummary runBackend(const char* name, int* firstBackend) {
                    baseline.info.renderer, baseline.info.version);
         } else {
             printf("  %s: %s\n", tesseraResultString(r), baseline.message);
+        }
+        if (r == TESSERA_SUCCESS) {
+            const SwapReport sw = probeSwapControl();
+            char caps[96];
+            swapCapsText(sw.caps, caps, sizeof caps);
+            printf("  swap control (default window): %s\n", sw.known ? caps : "unknown");
         }
         printf("  strict requests (a context is really created and destroyed for each):\n");
     }
@@ -300,6 +355,274 @@ static BackendSummary runBackend(const char* name, int* firstBackend) {
     return sum;
 }
 
+/* ------------------------------------------------------------------ frame pacing benchmark */
+
+typedef struct {
+    int frames, dropped;
+    double meanMs, minMs, p99Ms, maxMs;
+} BenchStats;
+
+typedef struct {
+    uint64_t nativeWindow;
+#if defined(_WIN32)
+    HWND hwnd;
+#elif defined(__linux__)
+    void* x11;
+    void* display;
+    unsigned long window;
+    void (*xDestroy)(void*, unsigned long);
+    int (*xClose)(void*);
+    int (*xPending)(void*);
+    void (*xSync)(void*, int);
+#endif
+} BenchWindow;
+
+static double nowMs(void) {
+#if defined(_WIN32)
+    LARGE_INTEGER f, c;
+    QueryPerformanceFrequency(&f);
+    QueryPerformanceCounter(&c);
+    return 1000.0 * (double)c.QuadPart / (double)f.QuadPart;
+#elif defined(__linux__)
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return 1000.0 * (double)ts.tv_sec + (double)ts.tv_nsec / 1e6;
+#else
+    return 0.0;
+#endif
+}
+
+/* 1 = window created. The window is the tool's own; Tessera only borrows it. */
+static int benchWindowCreate(BenchWindow* w, int width, int height) {
+    memset(w, 0, sizeof *w);
+#if defined(_WIN32)
+    w->hwnd = CreateWindowExA(0, "STATIC", "tessera-diag --bench-swap", WS_OVERLAPPEDWINDOW | WS_VISIBLE, 60,
+                              60, width, height, NULL, NULL, NULL, NULL);
+    w->nativeWindow = (uint64_t)(uintptr_t)w->hwnd;
+    return w->hwnd != NULL;
+#elif defined(__linux__)
+    typedef void* (*OpenFn)(const char*);
+    typedef unsigned long (*RootFn)(void*);
+    typedef unsigned long (*SimpleFn)(void*, unsigned long, int, int, unsigned, unsigned, unsigned,
+                                      unsigned long, unsigned long);
+    typedef int (*MapFn)(void*, unsigned long);
+    w->x11 = dlopen("libX11.so.6", RTLD_NOW);
+    if (!w->x11)
+        return 0;
+    OpenFn open = (OpenFn)dlsym(w->x11, "XOpenDisplay");
+    RootFn root = (RootFn)dlsym(w->x11, "XDefaultRootWindow");
+    SimpleFn create = (SimpleFn)dlsym(w->x11, "XCreateSimpleWindow");
+    MapFn map = (MapFn)dlsym(w->x11, "XMapWindow");
+    w->xDestroy = (void (*)(void*, unsigned long))dlsym(w->x11, "XDestroyWindow");
+    w->xClose = (int (*)(void*))dlsym(w->x11, "XCloseDisplay");
+    w->xSync = (void (*)(void*, int))dlsym(w->x11, "XSync");
+    if (!open || !root || !create || !map || !w->xDestroy || !w->xClose || !w->xSync)
+        return 0;
+    w->display = open(NULL); /* $DISPLAY: the same server Tessera's GLX backend talks to */
+    if (!w->display)
+        return 0;
+    w->window = create(w->display, root(w->display), 0, 0, (unsigned)width, (unsigned)height, 0, 0, 0);
+    map(w->display, w->window);
+    w->xSync(w->display, 0);
+    w->nativeWindow = (uint64_t)w->window;
+    return w->window != 0;
+#else
+    (void)width;
+    (void)height;
+    return 0;
+#endif
+}
+
+static void benchWindowPump(BenchWindow* w) {
+#if defined(_WIN32)
+    MSG msg;
+    while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) {
+        TranslateMessage(&msg);
+        DispatchMessageA(&msg);
+    }
+    (void)w;
+#else
+    (void)w;
+#endif
+}
+
+static void benchWindowDestroy(BenchWindow* w) {
+#if defined(_WIN32)
+    if (w->hwnd)
+        DestroyWindow(w->hwnd);
+#elif defined(__linux__)
+    if (w->display && w->window)
+        w->xDestroy(w->display, w->window);
+    if (w->display)
+        w->xClose(w->display);
+    if (w->x11)
+        dlclose(w->x11);
+#endif
+    (void)w;
+}
+
+static int cmpDouble(const void* a, const void* b) {
+    const double x = *(const double*)a, y = *(const double*)b;
+    return x < y ? -1 : x > y;
+}
+
+typedef void (*ClearColorFn)(float, float, float, float);
+typedef void (*ClearFn)(unsigned);
+
+/* Renders and swaps for `seconds`; returns the per-frame statistics. A frame that takes 1.5x the median
+ * counts as dropped. */
+static BenchStats benchRun(TesseraContext ctx, BenchWindow* w, double seconds) {
+    BenchStats st;
+    memset(&st, 0, sizeof st);
+    ClearColorFn clearColor = (ClearColorFn)tesseraGetProcAddress("glClearColor");
+    ClearFn clear = (ClearFn)tesseraGetProcAddress("glClear");
+    if (!clearColor || !clear)
+        return st;
+    size_t cap = 1 << 16, n = 0;
+    double* ms = (double*)malloc(cap * sizeof *ms);
+    if (!ms)
+        return st;
+    double prev = nowMs();
+    const double start = prev;
+    for (int i = 0;; ++i) {
+        benchWindowPump(w);
+        clearColor((float)(i & 1), 0.f, 0.f, 1.f);
+        clear(0x4000); /* GL_COLOR_BUFFER_BIT */
+        if (tesseraSwapBuffers(ctx) != TESSERA_SUCCESS)
+            break;
+        const double t = nowMs();
+        if (i >= 5) { /* warm-up */
+            if (n == cap) {
+                cap *= 2;
+                double* bigger = (double*)realloc(ms, cap * sizeof *ms);
+                if (!bigger)
+                    break;
+                ms = bigger;
+            }
+            ms[n++] = t - prev;
+        }
+        prev = t;
+        if (t - start >= seconds * 1000.0)
+            break;
+    }
+    if (n > 10) {
+        double sum = 0;
+        double* sorted = (double*)malloc(n * sizeof *sorted);
+        if (sorted) {
+            memcpy(sorted, ms, n * sizeof *ms);
+            qsort(sorted, n, sizeof *sorted, cmpDouble);
+            for (size_t i = 0; i < n; ++i)
+                sum += ms[i];
+            const double median = sorted[n / 2];
+            for (size_t i = 0; i < n; ++i)
+                if (ms[i] > 1.5 * median)
+                    ++st.dropped;
+            st.frames = (int)n;
+            st.meanMs = sum / (double)n;
+            st.minMs = sorted[0];
+            st.p99Ms = sorted[(size_t)((double)(n - 1) * 0.99)];
+            st.maxMs = sorted[n - 1];
+            free(sorted);
+        }
+    }
+    free(ms);
+    return st;
+}
+
+/* 0 = ran, 1 = could not (no window, no context, no swap control). */
+static int runBenchSwap(const char* backend) {
+    if (backend)
+        SETENV("TESSERA_BACKEND", backend);
+    if (tesseraInit() != TESSERA_SUCCESS) {
+        fprintf(stderr, "tessera-diag: init failed: %s\n", tesseraGetLastErrorMessage());
+        return 1;
+    }
+    BenchWindow win;
+    if (!benchWindowCreate(&win, 640, 360)) {
+        fprintf(stderr, "tessera-diag: --bench-swap needs a window (Windows or X11 with $DISPLAY) and could "
+                        "not make one\n");
+        tesseraTerminate();
+        return 1;
+    }
+    TesseraContextConfig cfg = tesseraDefaultContextConfig();
+    cfg.api = TESSERA_API_OPENGL;
+    cfg.flags = TESSERA_FLAG_DOUBLE_BUFFER; /* a single-buffered window has nothing to swap, so no pacing */
+    cfg.fallback = TESSERA_FALLBACK_BEST_EFFORT;
+    TesseraContext ctx = TESSERA_NULL_HANDLE;
+    TesseraResult r =
+        tesseraCreateContextForWindow(&cfg, win.nativeWindow, TESSERA_ATTACH_ALLOW_PIXEL_FORMAT, &ctx);
+    if (r != TESSERA_SUCCESS || tesseraMakeCurrent(ctx) != TESSERA_SUCCESS) {
+        fprintf(stderr, "tessera-diag: cannot render into the window: %s (%s)\n", tesseraResultString(r),
+                tesseraGetLastErrorMessage());
+        benchWindowDestroy(&win);
+        tesseraTerminate();
+        return 1;
+    }
+    TesseraSwapControl sc = tesseraDefaultSwapControl();
+    tesseraGetSwapControl(ctx, &sc);
+    TesseraContextInfo info = tesseraDefaultContextInfo();
+    tesseraGetContextInfo(ctx, &info);
+    char caps[96];
+    swapCapsText(sc.caps, caps, sizeof caps);
+    if (!(sc.caps & TESSERA_SWAP_CAP_CONTROL)) {
+        fprintf(stderr, "tessera-diag: this driver exposes no swap control (%s); nothing to compare\n", caps);
+        tesseraMakeCurrent(TESSERA_NULL_HANDLE);
+        tesseraDestroyContext(ctx);
+        benchWindowDestroy(&win);
+        tesseraTerminate();
+        return 1;
+    }
+
+    int intervals[3];
+    int nInt = 0;
+    intervals[nInt++] = 1;
+    intervals[nInt++] = 0;
+    if (sc.caps & TESSERA_SWAP_CAP_ADAPTIVE)
+        intervals[nInt++] = -1;
+
+    if (g_json) {
+        printf("{\n  \"swapBenchmark\":{\"renderer\":");
+        jstr(info.renderer);
+        printf(",\"seconds\":%.2f,\"modes\":[", g_benchSeconds);
+    } else {
+        printf("Frame pacing in a 640x360 window, %.1f s per mode\n  renderer: %s\n  swap control: %s\n",
+               g_benchSeconds, info.renderer, caps);
+    }
+    for (int k = 0; k < nInt; ++k) {
+        const TesseraResult sr = tesseraSetSwapInterval(ctx, intervals[k]);
+        TesseraSwapControl now = tesseraDefaultSwapControl();
+        tesseraGetSwapControl(ctx, &now);
+        const BenchStats st = sr == TESSERA_SUCCESS ? benchRun(ctx, &win, g_benchSeconds) : (BenchStats){0};
+        if (g_json) {
+            printf("%s\n    {\"interval\":%d,\"applied\":", k ? "," : "", intervals[k]);
+            if (now.applied == TESSERA_SWAP_UNKNOWN)
+                printf("null");
+            else
+                printf("%d", now.applied);
+            printf(",\"frames\":%d,\"meanMs\":%.3f,\"fps\":%.1f,\"minMs\":%.3f,\"p99Ms\":%.3f,\"maxMs\":%.3f,"
+                   "\"dropped\":%d}",
+                   st.frames, st.meanMs, st.meanMs > 0 ? 1000.0 / st.meanMs : 0.0, st.minMs, st.p99Ms,
+                   st.maxMs, st.dropped);
+        } else if (sr != TESSERA_SUCCESS) {
+            printf("  interval %2d: refused (%s)\n", intervals[k], tesseraResultString(sr));
+        } else {
+            printf("  interval %2d (driver reports %s%d): %5d frames, mean %.3f ms (%.1f fps), min %.3f, p99 "
+                   "%.3f, max "
+                   "%.3f, dropped %d\n",
+                   intervals[k], now.applied == TESSERA_SWAP_UNKNOWN ? "?" : "",
+                   now.applied == TESSERA_SWAP_UNKNOWN ? 0 : now.applied, st.frames, st.meanMs,
+                   st.meanMs > 0 ? 1000.0 / st.meanMs : 0.0, st.minMs, st.p99Ms, st.maxMs, st.dropped);
+        }
+    }
+    if (g_json)
+        printf("\n  ]}\n}\n");
+    tesseraMakeCurrent(TESSERA_NULL_HANDLE);
+    tesseraDestroyContext(ctx);
+    benchWindowDestroy(&win);
+    tesseraTerminate();
+    return 0;
+}
+
 /* ------------------------------------------------------------------ main */
 
 static const char* platformName(void) {
@@ -315,7 +638,9 @@ static const char* platformName(void) {
 }
 
 static void usage(void) {
-    fputs("usage: tessera-diag [--json] [--quick] [--backend wgl|glx|egl|cgl] [--help]\n", stderr);
+    fputs("usage: tessera-diag [--json] [--quick] [--backend wgl|glx|egl|cgl] [--bench-swap [SECONDS]] "
+          "[--help]\n",
+          stderr);
 }
 
 int main(int argc, char** argv) {
@@ -327,7 +652,16 @@ int main(int argc, char** argv) {
             g_quick = 1;
         else if (!strcmp(argv[i], "--backend") && i + 1 < argc)
             only = argv[++i];
-        else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) {
+        else if (!strcmp(argv[i], "--bench-swap")) {
+            g_benchSeconds = 2.0;
+            if (i + 1 < argc && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9') {
+                g_benchSeconds = atof(argv[++i]);
+                if (g_benchSeconds < 0.2 || g_benchSeconds > 60.0) {
+                    usage();
+                    return 2;
+                }
+            }
+        } else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) {
             usage();
             return 0;
         } else {
@@ -342,6 +676,9 @@ int main(int argc, char** argv) {
         usage();
         return 2;
     }
+
+    if (g_benchSeconds > 0)
+        return runBenchSwap(only);
 
     int32_t major = 0, minor = 0, patch = 0;
     tesseraGetVersion(&major, &minor, &patch);

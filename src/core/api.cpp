@@ -86,6 +86,25 @@ TESSERA_API TesseraResult TESSERA_CALL tesseraSetSwapInterval(TesseraContext con
     return guarded([&] { return Runtime::instance().setSwapInterval(context, interval); });
 }
 
+TESSERA_API TesseraResult TESSERA_CALL tesseraGetSwapControl(TesseraContext context,
+                                                             TesseraSwapControl* outInfo) {
+    return guarded([&]() -> TesseraResult {
+        if (!outInfo)
+            return fail(TESSERA_ERROR_INVALID_ARGUMENT, "outInfo is NULL");
+        const uint32_t callerSize = outInfo->structSize;
+        if (callerSize < sizeof(uint32_t) * 2)
+            return fail(TESSERA_ERROR_INVALID_ARGUMENT, "outInfo->structSize not set");
+        TesseraSwapControl full = tesseraDefaultSwapControl();
+        if (TesseraResult r = Runtime::instance().getSwapControl(context, full); r != TESSERA_SUCCESS)
+            return r;
+        // Write at most what the caller's (possibly older/newer) struct can hold.
+        const uint32_t n = callerSize < sizeof full ? callerSize : static_cast<uint32_t>(sizeof full);
+        full.structSize = callerSize;
+        std::memcpy(outInfo, &full, n);
+        return TESSERA_SUCCESS;
+    });
+}
+
 TESSERA_API void TESSERA_CALL tesseraSetContextLostCallback(TesseraContextLostCallback callback,
                                                             void* userData) {
     guarded([&] {
