@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Tessera contributors
 add_executable(test_abi test_abi.cpp)
 target_link_libraries(test_abi PRIVATE Tessera::tessera)
 tessera_apply_options(test_abi)

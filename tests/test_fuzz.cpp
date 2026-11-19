@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Tessera contributors
 // Seeded, deterministic fuzzing of everything that parses untrusted input: configuration structs, handles,
 // struct sizes, proc-address names and driver version strings. Runs in seconds without a GPU (a fake backend
 // serves the requests) and is meant to run under ASan/UBSan: every caller-provided buffer is allocated with

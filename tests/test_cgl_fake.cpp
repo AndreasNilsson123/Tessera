@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Tessera contributors
 // Runs the macOS (CGL) backend against tests/fake_cgl.cpp on any platform with dlopen. This checks the
 // backend's own logic - attribute building, the negotiation ladder, strict vs best-effort, sharing rules,
 // state restoration, release order and leaks. It does NOT check that Apple's real CGL accepts these

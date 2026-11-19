@@ -115,7 +115,7 @@ Everything here was implemented-but-untested, deliberately skipped, or needs som
 
 ### 10.4 Release engineering
 
-- [x] **Java bindings for the Phase 8 and probe calls** (`Context.nativeHandles`, `Tessera.prewarm`, `Context.createForWindow`, `Tessera.probe`; JNI and FFM): tested on Windows (both bindings, plus LWJGL identity checks against `WGL`) and on Linux (JNI, `GLX` identity check). Window attach is covered by argument validation only in Java (a real window needs a toolkit; the native tests cover it). Still open in this item: choose the real package name (`dev.tessera` is a placeholder); consider a `module-info`.
+- [x] **Java bindings for the Phase 8 and probe calls** (`Context.nativeHandles`, `Tessera.prewarm`, `Context.createForWindow`, `Tessera.probe`; JNI and FFM): tested on Windows (both bindings, plus LWJGL identity checks against `WGL`) and on Linux (JNI, `GLX` identity check). Window attach is covered by argument validation only in Java (a real window needs a toolkit; the native tests cover it). The package is now the real one, `io.github.andreasnilsson123.tessera` (Maven `io.github.andreasnilsson123:tessera`).
 - [ ] **Maven Central artifact** with per-platform natives (the jar currently embeds only the natives of the machine that built it), signing, javadoc/sources jars.
 - [ ] **vcpkg and Conan recipes** (the CMake package itself is verified).
 - [ ] Generated API reference (the header comments are the reference today).

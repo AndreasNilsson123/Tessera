@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Tessera contributors
 // Checks for the Phase 8 additions that are independent of the platform: pre-warmed contexts and native
 // handles. It needs `g_failures`, `CHECK` and `EXPECT` from the including file, defined before this header
 // is included.

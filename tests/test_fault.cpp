@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Tessera contributors
 // Fault injection for the real backends (WGL, GLX, EGL), the counterpart of the CGL fake-driver sweep.
 //
 // The backends call the driver through function tables (and through wglGetProcAddress / glXGetProcAddress for

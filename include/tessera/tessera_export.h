@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Tessera contributors
 /* Symbol visibility for the Tessera C ABI. Hand-written on purpose: no build-time generation. */
 #ifndef TESSERA_EXPORT_H
 #define TESSERA_EXPORT_H

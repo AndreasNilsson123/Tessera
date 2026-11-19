@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Tessera contributors
 // Integration tests for the EGL backend, through the public C API only (the backend is forced with
 // TESSERA_BACKEND=egl). Needs an EGL implementation with a headless platform (Mesa surfaceless, or a vendor
 // EGL with EGL_EXT_platform_device). Raw EGL contexts created here play the role of "other libraries in the

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Tessera contributors
 """Downloads the third-party jars the optional Java integration tests need (LWJGL, JavaFX) into third_party/java/.
 
 Only the integration tests use them; the library and its own tests need nothing from here. Versions are pinned, files come

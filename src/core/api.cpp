@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Tessera contributors
 // extern "C" entry points for lifecycle and contexts. Everything goes through guarded().
 #include <tessera/tessera.h>
 

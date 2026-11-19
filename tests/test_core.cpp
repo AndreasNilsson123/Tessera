@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Tessera contributors
 // White-box tests for the Phase 1 core. Links the core objects directly (internals are not exported by
 // the shared library). A fake backend exercises the full create/describe/destroy/terminate flow without
 // needing a GPU or window system.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Tessera contributors
 // Robustness checks shared by the real-driver integration tests (WGL, GLX, EGL). Public API only.
 //
 // Include after defining, in the including file:  `static int g_failures;`  `CHECK(cond)`  `EXPECT(call,

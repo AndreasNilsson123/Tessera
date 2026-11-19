@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Tessera contributors
 // Integration tests for the GLX backend, through the public C API only. Needs an X server with GLX (a
 // software renderer such as Mesa llvmpipe under Xvfb is fine). A raw GLX context on its own X connection
 // plays the role of "another library in the same process" (JavaFX/GTK, AWT, LWJGL...) whose current context

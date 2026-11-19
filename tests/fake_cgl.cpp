@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Tessera contributors
 // A fake OpenGL.framework: just enough of CGL and a handful of GL functions to drive the macOS backend on any
 // platform. It models the *shape* of CGL as the backend relies on it (pixel-format matching with limits,
 // profile- compatible sharing, per-thread current context, share-group textures) and counts live objects so

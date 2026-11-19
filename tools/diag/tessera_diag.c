@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Tessera contributors
 /*
  * tessera-diag: reports what Tessera can do on this machine. It uses only the public C API (tesseraProbe), so
  * what it prints is exactly what an application linking Tessera would experience. Paste its output into a bug

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Tessera contributors
 # Reproduce the Linux CI jobs locally (works in WSL, including with the repo on /mnt/c).
 #
 #   scripts/check-linux.sh                 # the "ci" preset

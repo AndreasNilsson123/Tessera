@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Tessera contributors
 cmake_minimum_required(VERSION 3.21)
 
 # Single source of truth for the version: include/tessera/tessera.h

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Tessera contributors
 // Create / use / switch / destroy loops against the real driver, with leak tracking. Public API only.
 //
 //   TESSERA_SOAK_CYCLES   cycles per thread (default 1500; the Phase 2 exit criterion is 10000)

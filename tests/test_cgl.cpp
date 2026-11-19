@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Tessera contributors
 // macOS integration test: the public C API against the REAL OpenGL.framework (CGL). Registered only on Apple
 // platforms.
 //

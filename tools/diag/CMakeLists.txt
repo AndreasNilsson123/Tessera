@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Tessera contributors
 # tessera-diag: capability report built on the public API only (tesseraProbe).
 include(GNUInstallDirs)
 add_executable(tessera-diag tessera_diag.c)

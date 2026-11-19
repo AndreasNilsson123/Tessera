@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Tessera contributors
 // A context from "another library" that belongs to the OTHER windowing API than the Tessera backend under
 // test: an EGL context while Tessera uses GLX, a GLX context while Tessera uses EGL. On Mesa a thread has one
 // native current context whichever API made it current, so these are the cases where backends can step on

@@ -125,7 +125,6 @@ The jar is `build/java/bindings/java/tessera.jar`. Any JDK 11+ can run it.
 
 ## Known limits
 
-- The package name `dev.tessera` is a placeholder.
 - Tested end to end on Windows (NVIDIA, JavaFX Direct3D and software pipelines). The Linux JNI glue is compile-checked but the
   Java tests have not run on Linux, and JavaFX's own OpenGL pipeline (Linux only) has not been tried alongside Tessera.
 - macOS: not built or tried.

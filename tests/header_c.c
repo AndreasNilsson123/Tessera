@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Tessera contributors
 /*
  * The public header promises to be plain C99. This file is compiled as C (not C++) with the project's
  * warning flags, so any C++-ism that sneaks into tessera.h breaks the build.

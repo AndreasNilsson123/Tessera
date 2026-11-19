@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Tessera contributors
 # Warning / sanitizer configuration shared by all Tessera targets.
 
 function(tessera_apply_options target)

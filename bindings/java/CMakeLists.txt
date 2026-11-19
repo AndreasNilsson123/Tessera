@@ -1,4 +1,6 @@
-# Java bindings: one multi-release jar (dev.tessera) with the native library embedded.
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Tessera contributors
+# Java bindings: one multi-release jar (io.github.andreasnilsson123.tessera) with the native library embedded.
 #
 #   base classes + JNI binding   compiled for Java 11   -> the jar root
 #   FFM (java.lang.foreign)      compiled for Java 22   -> META-INF/versions/22 (only when the build JDK is 22+)
@@ -74,7 +76,7 @@ if(Java_VERSION_MAJOR GREATER_EQUAL 22)
 else()
     message(STATUS "Java ${Java_VERSION}: the FFM binding (Java 22+) is not built; the jar will use JNI only")
 endif()
-add_custom_target(tessera_java_classes ${_class_commands} COMMENT "javac: dev.tessera" VERBATIM)
+add_custom_target(tessera_java_classes ${_class_commands} COMMENT "javac: io.github.andreasnilsson123.tessera" VERBATIM)
 
 # 2. The jar, with the native library embedded.
 add_custom_target(tessera_java_jar
@@ -89,7 +91,7 @@ add_custom_target(tessera_java_tests
     COMMAND ${CMAKE_COMMAND} -E remove_directory ${JAVA_CLASSES}/test
     COMMAND ${CMAKE_COMMAND} -E make_directory ${JAVA_CLASSES}/test
     COMMAND ${Java_JAVAC_EXECUTABLE} --release 11 ${JAVAC_COMMON} -cp ${JAVA_CLASSES}/main -d ${JAVA_CLASSES}/test ${TESSERA_JAVA_TEST}
-    COMMENT "javac: dev.tessera tests" VERBATIM)
+    COMMENT "javac: io.github.andreasnilsson123.tessera tests" VERBATIM)
 add_dependencies(tessera_java_tests tessera_java_classes)
 
 add_custom_target(tessera_java ALL)
@@ -137,16 +139,16 @@ if(BUILD_TESTING AND TESSERA_BUILD_TESTS)
     endif()
 
     # Against the library as built (-Dtessera.library.path), through JNI.
-    tessera_java_test(java_jni dev.tessera.SelfTest BINDING jni NATIVE_LIB CLASSPATH ${_cp} ${_native_access})
+    tessera_java_test(java_jni io.github.andreasnilsson123.tessera.SelfTest BINDING jni NATIVE_LIB CLASSPATH ${_cp} ${_native_access})
     # Through the copy embedded in the jar (extract, checksum, load): no property, so the loader must find its own file.
-    tessera_java_test(java_jni_embedded dev.tessera.SelfTest BINDING jni CLASSPATH ${_cp} ${_native_access})
-    tessera_java_test(java_shutdown dev.tessera.ShutdownTest BINDING jni CLASSPATH ${_cp} ${_native_access})
+    tessera_java_test(java_jni_embedded io.github.andreasnilsson123.tessera.SelfTest BINDING jni CLASSPATH ${_cp} ${_native_access})
+    tessera_java_test(java_shutdown io.github.andreasnilsson123.tessera.ShutdownTest BINDING jni CLASSPATH ${_cp} ${_native_access})
     set(JAVA_TESTS java_jni java_jni_embedded java_shutdown)
     set(JAVA_SHUTDOWN_TESTS java_shutdown)
     if(Java_VERSION_MAJOR GREATER_EQUAL 22)
-        tessera_java_test(java_ffm dev.tessera.SelfTest BINDING ffm NATIVE_LIB NATIVE_ACCESS CLASSPATH ${_cp})
-        tessera_java_test(java_ffm_embedded dev.tessera.SelfTest BINDING ffm NATIVE_ACCESS CLASSPATH ${_cp})
-        tessera_java_test(java_shutdown_ffm dev.tessera.ShutdownTest BINDING ffm NATIVE_ACCESS CLASSPATH ${_cp})
+        tessera_java_test(java_ffm io.github.andreasnilsson123.tessera.SelfTest BINDING ffm NATIVE_LIB NATIVE_ACCESS CLASSPATH ${_cp})
+        tessera_java_test(java_ffm_embedded io.github.andreasnilsson123.tessera.SelfTest BINDING ffm NATIVE_ACCESS CLASSPATH ${_cp})
+        tessera_java_test(java_shutdown_ffm io.github.andreasnilsson123.tessera.ShutdownTest BINDING ffm NATIVE_ACCESS CLASSPATH ${_cp})
         list(APPEND JAVA_TESTS java_ffm java_ffm_embedded java_shutdown_ffm)
         list(APPEND JAVA_SHUTDOWN_TESTS java_shutdown_ffm)
     endif()
@@ -193,32 +195,32 @@ if(_have_lwjgl_api AND _have_lwjgl_gl)
         COMMAND ${CMAKE_COMMAND} -E make_directory ${JAVA_CLASSES}/lwjgl-test
         COMMAND ${Java_JAVAC_EXECUTABLE} --release 11 ${JAVAC_COMMON} @${JAVA_ARGS}/lwjgl-test-compile.args
                 -d ${JAVA_CLASSES}/lwjgl-test ${TESSERA_JAVA_LWJGL_TEST}
-        COMMENT "javac: dev.tessera.lwjgl adapter and test" VERBATIM)
+        COMMENT "javac: io.github.andreasnilsson123.tessera.lwjgl adapter and test" VERBATIM)
     add_dependencies(tessera_java_lwjgl tessera_java_classes)
 
     if(BUILD_TESTING AND TESSERA_BUILD_TESTS)
         set(_lwjgl_cp ${TESSERA_JAR} ${TESSERA_LWJGL_JAR} ${JAVA_CLASSES}/lwjgl-test ${TESSERA_LWJGL_JARS})
-        tessera_java_test(java_lwjgl dev.tessera.lwjgl.LwjglTest BINDING jni NATIVE_LIB CLASSPATH ${_lwjgl_cp} ${_native_access})
+        tessera_java_test(java_lwjgl io.github.andreasnilsson123.tessera.lwjgl.LwjglTest BINDING jni NATIVE_LIB CLASSPATH ${_lwjgl_cp} ${_native_access})
         set(_lwjgl_tests java_lwjgl)
         if(Java_VERSION_MAJOR GREATER_EQUAL 22)
-            tessera_java_test(java_lwjgl_ffm dev.tessera.lwjgl.LwjglTest BINDING ffm NATIVE_LIB NATIVE_ACCESS CLASSPATH ${_lwjgl_cp})
+            tessera_java_test(java_lwjgl_ffm io.github.andreasnilsson123.tessera.lwjgl.LwjglTest BINDING ffm NATIVE_LIB NATIVE_ACCESS CLASSPATH ${_lwjgl_cp})
             list(APPEND _lwjgl_tests java_lwjgl_ffm)
         endif()
         set_tests_properties(${_lwjgl_tests} PROPERTIES LABELS "gpu;java;lwjgl" TIMEOUT 180)
         # GLFW (through LWJGL) in the same process as Tessera: its own window and context, Tessera around it and in its windows.
         # Exits 77 (skipped) where GLFW cannot open a window at all (no display).
         if(_have_lwjgl_glfw)
-            tessera_java_test(java_glfw dev.tessera.lwjgl.GlfwCoexistence BINDING jni NATIVE_LIB CLASSPATH ${_lwjgl_cp} ${_native_access})
+            tessera_java_test(java_glfw io.github.andreasnilsson123.tessera.lwjgl.GlfwCoexistence BINDING jni NATIVE_LIB CLASSPATH ${_lwjgl_cp} ${_native_access})
             set(_glfw_tests java_glfw)
             if(Java_VERSION_MAJOR GREATER_EQUAL 22)
-                tessera_java_test(java_glfw_ffm dev.tessera.lwjgl.GlfwCoexistence BINDING ffm NATIVE_LIB NATIVE_ACCESS CLASSPATH ${_lwjgl_cp})
+                tessera_java_test(java_glfw_ffm io.github.andreasnilsson123.tessera.lwjgl.GlfwCoexistence BINDING ffm NATIVE_LIB NATIVE_ACCESS CLASSPATH ${_lwjgl_cp})
                 list(APPEND _glfw_tests java_glfw_ffm)
             endif()
             set_tests_properties(${_glfw_tests} PROPERTIES LABELS "gpu;java;lwjgl;glfw" TIMEOUT 180 SKIP_RETURN_CODE 77)
         endif()
         # Java2D's OpenGL pipeline (WGL on Windows, GLX on Linux) inside the same JVM: AWT/Swing owns GL contexts too.
         # Skips (77) where the pipeline does not come up (no display, or a driver Java2D does not accept).
-        tessera_java_test(java_awt_opengl dev.tessera.lwjgl.AwtCoexistence BINDING jni NATIVE_LIB CLASSPATH ${_lwjgl_cp}
+        tessera_java_test(java_awt_opengl io.github.andreasnilsson123.tessera.lwjgl.AwtCoexistence BINDING jni NATIVE_LIB CLASSPATH ${_lwjgl_cp}
             JVM_OPTIONS -Dsun.java2d.opengl=True ${_native_access})
         set(_awt_tests java_awt_opengl)
         set_tests_properties(${_awt_tests} PROPERTIES LABELS "gpu;java;lwjgl;awt" TIMEOUT 180 SKIP_RETURN_CODE 77)
@@ -264,7 +266,7 @@ if(TARGET tessera_java_lwjgl AND TESSERA_JAVAFX_JARS)
             if(_pipeline STREQUAL "es2")
                 set(_fx_extra -Dprism.forceGPU=true)
             endif()
-            tessera_java_test(java_javafx_${_pipeline} dev.tessera.javafx.FxCoexistence BINDING jni NATIVE_LIB
+            tessera_java_test(java_javafx_${_pipeline} io.github.andreasnilsson123.tessera.javafx.FxCoexistence BINDING jni NATIVE_LIB
                 CLASSPATH ${_fx_cp} MODULE_PATH ${TESSERA_JAVAFX_JARS}
                 JVM_OPTIONS -Dprism.order=${_pipeline} -Dprism.verbose=true ${_fx_extra} ${_native_access})
             set_tests_properties(java_javafx_${_pipeline} PROPERTIES LABELS "gpu;java;javafx" TIMEOUT 120)
@@ -280,7 +282,7 @@ if(TARGET tessera_java_lwjgl AND TESSERA_JAVAFX_JARS)
             if(_stress_pipeline STREQUAL "es2")
                 set(_stress_extra -Dprism.forceGPU=true)
             endif()
-            tessera_java_test(java_javafx_${_stress_pipeline}_stress dev.tessera.javafx.FxCoexistence BINDING jni NATIVE_LIB
+            tessera_java_test(java_javafx_${_stress_pipeline}_stress io.github.andreasnilsson123.tessera.javafx.FxCoexistence BINDING jni NATIVE_LIB
                 CLASSPATH ${_fx_cp} MODULE_PATH ${TESSERA_JAVAFX_JARS}
                 JVM_OPTIONS -Dprism.order=${_stress_pipeline} -Dprism.verbose=true -Dfxtest.frames=${TESSERA_JAVA_STRESS_FRAMES} ${_stress_extra} ${_native_access})
             set_tests_properties(java_javafx_${_stress_pipeline}_stress PROPERTIES LABELS "gpu;java;javafx;stress" TIMEOUT 3000

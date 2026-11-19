@@ -1,6 +1,8 @@
-// JNI glue for dev.tessera.internal.JniNativeApi. Compiled into the tessera shared library when
-// TESSERA_BUILD_JAVA is on, so one native file serves both the JNI binding (Java 11+) and the FFM binding
-// (Java 22+, which just dlsym's the C API).
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Tessera contributors
+// JNI glue for io.github.andreasnilsson123.tessera.internal.JniNativeApi. Compiled into the tessera shared
+// library when TESSERA_BUILD_JAVA is on, so one native file serves both the JNI binding (Java 11+) and the
+// FFM binding (Java 22+, which just dlsym's the C API).
 //
 // Rules this file follows:
 //  - No C++ exception and no JNI exception ever crosses back into the C API or out of a native method
@@ -129,7 +131,8 @@ JNIEXPORT void JNICALL JNI_OnUnload(JavaVM* /*vm*/, void* /*reserved*/) {
     g_vm.store(nullptr);
 }
 
-#define TESSERA_JNI(ret, name) JNIEXPORT ret JNICALL Java_dev_tessera_internal_JniNativeApi_##name
+#define TESSERA_JNI(ret, name)                                                                               \
+    JNIEXPORT ret JNICALL Java_io_github_andreasnilsson123_tessera_internal_JniNativeApi_##name
 
 TESSERA_JNI(jint, nInit)(JNIEnv*, jclass) {
     return tesseraInit();

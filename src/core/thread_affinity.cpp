@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Tessera contributors
 #include "thread_affinity.hpp"
 
 namespace tessera {

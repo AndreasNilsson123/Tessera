@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Tessera contributors
 // Phase 0 smoke + ABI-shape tests. Intentionally dependency-free (no test framework yet).
 #include <tessera/tessera.h>
 

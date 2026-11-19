@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Tessera contributors
 // Integration tests for the WGL backend, through the public C API only. Needs a working OpenGL driver
 // (a software renderer is fine). A raw WGL context created here plays the role of "another library in the
 // same process" (JavaFX, AWT, LWJGL...) whose current context Tessera must never disturb.

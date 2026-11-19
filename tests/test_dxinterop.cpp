@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Tessera contributors
 // Zero-copy handoff between OpenGL and Direct3D 11 through a Tessera context, using only what Tessera
 // exposes: the native handles and tesseraGetProcAddress (which resolves the WGL_NV_DX_interop2 entry points).
 // Tessera has no interop API of its own on purpose: the extension is the API, and the missing piece was
