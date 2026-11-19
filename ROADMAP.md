@@ -63,6 +63,7 @@ Phases 0-9 are **built and tested on the one machine this was developed on** (Wi
 | 9 Hardening | Seeded fuzzing under sanitizers (found and fixed an over-read), leak-tracked soak (10,200 cycles flat on Windows), security self-review, threading/coexistence/troubleshooting/compat docs, verified CMake package | `docs/security-review.md`, `docs/compat.md` |
 | post-9 Diagnostics | `tesseraProbe` (ABI 0.6.0) and the `tessera-diag` tool | `docs/diag.md` |
 | post-9 Context-loss events | `tesseraSetContextLostCallback` / `tesseraIsContextLost` (ABI 0.9.0), Java `setContextLostListener` / `isLost` | ADR 0011 |
+| 12 Selection depth | **Planned, not started:** format ranking and enumeration, relaxation and acceleration reporting, quirk table, adapter inventory, attempt trace | see Phase 12 |
 
 Verified here: WGL (NVIDIA), GLX and EGL (Mesa), Java JNI+FFM on Windows (JavaFX D3D and software pipelines), Java JNI on Linux (JavaFX software **and OpenGL/es2** pipelines, LWJGL; Mesa D3D12 via WSLg and llvmpipe), ASan/UBSan/TSan on everything that needs no GPU.
 
@@ -76,7 +77,7 @@ Verified here: WGL (NVIDIA), GLX and EGL (Mesa), Java JNI+FFM on Windows (JavaFX
 - FFM bindings are hand-written, not `jextract`ed; the JNI glue is compiled into the same native library (ADR 0009).
 - `tesseraDestroyContext` of a context current on another thread succeeds and defers the teardown to that thread (changed API in 0.4.0).
 - Interop is "hand out the native objects", not a wrapper API (ADR 0010).
-- No quirks database yet: there is not one reproducible quirk to put in it.
+- No quirks database yet: workarounds are one-off code in the backends. Phase 12.3 turns them into a tested, switch-off-able table.
 
 ---
 
@@ -113,7 +114,7 @@ Everything here was implemented-but-untested, deliberately skipped, or needs som
 - [ ] ANGLE / Mesa-on-Windows through the EGL backend: the EGL backend is built on Linux only, and the Windows loader is restricted to System32 by design (loading ANGLE from an application directory needs `LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR` handling and a test). Same for Metal-backed ANGLE on macOS (CGL is deprecated).
 - [~] Interop beyond the handles: **EGLImage between two contexts verified** on Linux (`test_eglimage`: Mesa D3D12 and llvmpipe), after fixing the EGL backend not resolving `egl*` names through `tesseraGetProcAddress`. Not done: dma-buf export/import with fences (the Mesa drivers here lack the extensions), IOSurface (macOS), Vulkan `GL_EXT_memory_object` + semaphores. Each needs a consumer to test against.
 - [ ] Window attach for EGL (window surfaces), Wayland `wl_surface`, macOS `NSView`. (Windows and X11 are done.)
-- [ ] The quirks database: add the machinery with the first real, regression-tested quirk, not before.
+- [~] The quirks database: now planned as Phase 12.3. The rule is unchanged (no entry without a reproducible symptom and a test); the first entries are the workarounds already in the code.
 
 ### 10.4 Release engineering
 
@@ -131,7 +132,7 @@ Everything here was implemented-but-untested, deliberately skipped, or needs som
 - [ ] Minimum GL and GLES version floor (3.2 core? 2.1 compat? GLES 2.0?).
 - [ ] Do we ship our own ANGLE/Mesa builds, or only detect system ones?
 - [ ] Real package/group names, license, release cadence.
-- [ ] **Freeze ABI v1.** Deliberately not done: the ABI changed as recently as 0.7.0 and only one GPU vendor has been tested. Freezing is a one-line version change; living with a wrong freeze is not. Suggested gate: 10.1 (at least AMD or Intel on Windows, and macOS) plus the decisions above plus CI green on a real remote.
+- [ ] **Freeze ABI v1.** Deliberately not done: the ABI changed as recently as 0.7.0 and only one GPU vendor has been tested. Freezing is a one-line version change; living with a wrong freeze is not. Suggested gate: 10.1 (at least AMD or Intel on Windows, and macOS) plus the decisions above plus CI green on a real remote **plus the Phase 12 ABI batch (0.10.0)**, so the freeze is not followed by additive-but-needed fields such as `info.relaxed`, adapter ids and the attempt trace. Also decide here whether "minimum version" means a floor or an exact request (12.2).
 
 **Exit for 1.0:** the 10.1 items that have hardware available are green and recorded in `docs/compat.md`; 10.5 decided; CI has run green at least once; ABI frozen and tagged.
 
@@ -156,6 +157,195 @@ New capabilities worth considering, with a recommendation. Items 1, 2, 5 and 7 a
 
 ---
 
+## Phase 12 — Context selection depth
+
+Goal: make *choosing* a context as strong as *creating and surviving with* one. Today the negotiation is
+declarative and verified (request → plan → create → read back → strict re-check), but the choice itself is
+largely delegated to the driver (`configs[0]`, "the server sorts best-first"), failures are explained by one
+message, driver knowledge is ad hoc, and the host cannot take part in the decision. These tasks close those gaps
+without breaking the principles above: no threads, nothing process-global, nothing silently weaker.
+
+Rules for every item: it lands with a fake-backend test (so it runs in CI without a GPU), a real-driver test where
+one exists, and an entry in `docs/compat.md` for what was actually run. Items marked **ABI** change
+`tessera.h` and must be batched into one ABI bump (0.10.0) *before* the 1.0 freeze (see 10.5).
+
+### 12.1 Selecting the framebuffer format ourselves
+
+Today: attributes are built per attempt and the first result wins; the relaxation order (samples → sRGB → depth)
+is fixed and only logged.
+
+- [ ] **Deterministic candidate ranking.** Stop trusting driver ordering. Fetch the candidate list per backend
+  (`wglGetPixelFormatAttribivARB` loop, `glXGetFBConfigs`, `eglGetConfigs`, CGL pixel-format enumeration) and rank
+  in one shared function: no missing required attribute, then smallest excess in colour/depth/stencil, exact sample
+  count over larger, no config caveat (EGL `SLOW`/`NON_CONFORMANT`), native-visual-matching on GLX. Tested with a
+  fake driver that returns the same set in shuffled and adversarial orders (result must not change).
+- [ ] **Say what was relaxed.** Replace the log-only message with data: `TesseraContextInfo.relaxed` bitmask
+  (samples, sRGB, depth, stencil, alpha, version, flags). Strict mode never sets it; best-effort always reports it.
+  **ABI**
+- [ ] **Relaxation priority.** Let the caller say what may be given up first (a small ordered list in the config,
+  default = today's order) so a request that cares about depth more than MSAA can say so. **ABI**
+- [ ] **Hardware vs. software awareness.** Classify what we got (WGL generic-format flag / GDI renderer, EGL caveat
+  and renderer string, `llvmpipe`/`WARP`/`Basic Render` identities) into `TesseraContextInfo.accelerated`, and add a
+  `TESSERA_FLAG_REQUIRE_ACCELERATED` request that fails with `NO_MATCHING_CONFIG` instead of returning GL 1.1 or a
+  software rasteriser. (CI already hit "GDI Generic GL 1.1 returned to a request that wanted more"; this makes the
+  distinction a first-class result instead of a version check.) **ABI**
+- [ ] **Enumerate before you choose.** `tesseraEnumerateConfigs(config, out[], capacity, &count)`: the formats the
+  driver offers that satisfy a request, with their bits/samples/sRGB/float/caveat, no context created. A
+  `configIndex` in the (reserved) config space then selects one. `tesseraProbe` is rebuilt on top of it. **ABI**
+- [ ] **Window-format handoff.** Attach currently *adopts* whatever format the host's window already has, or sets
+  one only with `ALLOW_PIXEL_FORMAT`. Add the other direction: `tesseraChooseWindowFormat(config, …)` returns the
+  native id the host must create its window with (WGL pixel-format index, X visual id + depth, EGL native visual
+  id), so a toolkit can build the right window first and attach strictly. Tested with a window created by an
+  unrelated library from the returned id. **ABI**
+
+Exit: ranking is order-independent under the shuffle test; every relaxation appears in `info.relaxed`; a host can
+choose a format, create its own window with it, and attach under STRICT with no pixel-format mutation.
+
+### 12.2 Version and profile negotiation
+
+Today: a ladder (4.6 → 3.2) exists only for "core/compat with no version"; an explicit version is tried exactly
+once; ES is fixed to 2.0 when unspecified; every failed rung is a real driver call.
+
+- [ ] **ES ladder.** Unspecified ES walks 3.2 → 3.1 → 3.0 → 2.0 (EGL, plus WGL/GLX ES-profile paths), reported in
+  `info`.
+- [ ] **"Minimum" means minimum.** The header documents `versionMajor/Minor` as a *minimum*, but an explicit core
+  request is created at exactly that version. Decide (owner decision, with 10.5) between: try upwards from the
+  newest version down to the floor, or add an explicit `TESSERA_FLAG_EXACT_VERSION` and make the default a floor.
+  Whichever is chosen, document it next to the field and pin it with a test.
+- [ ] **Remember what worked.** Cache, per (backend, adapter/renderer identity, profile), the highest version that
+  created and the versions that failed, so the second context does not repeat up to nine failing driver calls
+  (each of which can emit driver-side error output and costs time in the pre-warm path). Invalidate on
+  `tesseraTerminate` and when the adapter changes. Never cache a success as a guarantee: a cached rung that now
+  fails falls back to the full ladder.
+- [ ] **Map driver refusal codes in one table.** The WGL error mapping (`0x2095`, `0x2096`, `ERROR_INVALID_DATA`,
+  `ERROR_INVALID_PARAMETER`) lives inside one backend; move "this error means unsupported combination" for all four
+  backends to one reviewed table with a test per row.
+
+Exit: unspecified ES on a 3.x driver returns 3.x; the second identical create makes no failing driver calls
+(counted on the fake backend); the "minimum" semantics are decided, documented and tested.
+
+### 12.3 Driver quirks, with evidence
+
+This replaces the open "quirks database" item in 10.3. The rule stays: **no entry without a reproducible symptom
+and a regression test.** What changes is that the first entries already exist, scattered as one-off code.
+
+- [ ] **Driver identity, once per backend.** Capture `GL_VENDOR` / `GL_RENDERER` / `GL_VERSION`, the platform
+  driver version (Windows driver version string, Mesa version from `GL_VERSION`, EGL vendor) and the extension set
+  at bootstrap (the WGL bootstrap context and the EGL/GLX display already exist), expose it read-only to the
+  planning code.
+- [ ] **Data-driven quirk table.** Entries are `{ id, backend, vendor/renderer match, driver-version range, OS,
+  action, evidence, test }`; actions are a closed set (drop an attribute, reorder or skip an attempt, force a
+  fallback surface, tolerate an error code, cap a resource count, warn). Applied quirks are logged at INFO with
+  their id, reported in `TesseraProbeReport` and `tessera-diag`, and can be switched off with
+  `TESSERA_QUIRKS=off` (or per id) so a host can tell whether a quirk is the cause of a problem.
+- [ ] **Seed it with what this repo already knows** (each becomes an entry plus its existing test, then the
+  ad-hoc code is removed): WGL `wglMakeCurrent(NULL, rc)` refused by NVIDIA (hidden-window fallback), NVIDIA
+  answering an unsupported combination with `ERROR_INVALID_DATA`, GLVND returning a stub for any `gl*` name, one
+  current context per thread across GLX and EGL on Mesa, Mesa D3D12 `glXDestroyContext` crash with many live
+  contexts (10.1; mitigation = cap/serialise, only if reproduced on a second system).
+- [ ] **Evidence intake.** `tessera-diag --report` writes a self-contained, anonymised bundle (identity, extension
+  list, per-backend strict matrix, applied quirks, Tessera version) meant to be attached to an issue; a quirk PR
+  must reference one. Nothing is sent anywhere.
+- [ ] **Expiry.** Each entry carries the driver version it was last seen on; `docs/compat.md` lists entries with no
+  re-verification in a release cycle so dead workarounds get removed rather than accumulate.
+
+Exit: the table ships with at least the seed entries, every entry fails its test when disabled, and no
+vendor-name `if` remains in backend code outside the table.
+
+### 12.4 Platforms and hosts
+
+- [ ] **Wayland.** EGL on a `wl_display` the *host* owns: attach to a borrowed `wl_surface` through a
+  `wl_egl_window`, creating no connection of our own and never dispatching the host's queue. Needs an explicit
+  native-display argument on attach (an EGL display must match the one the surface belongs to). Test against a
+  compositor in CI (headless weston) once it is available; until then keep the WSLg manual check. **ABI**
+- [ ] **EGL window surfaces on X11 and Windows (ANGLE)**, sharing the attach rules above; tied to the loader policy
+  decision in 10.5.
+- [ ] **Attach with an explicit native display on X11.** Attach currently assumes `$DISPLAY`; accept the host's
+  `Display*`/server so a host connected elsewhere (or through a different screen) attaches correctly. **ABI**
+- [ ] **Foreign-state matrix.** Extend the coexistence tests from "a host context current" to the other pieces of
+  host state each backend can disturb: the bound EGL API, the current drawable (not just context), swap interval
+  of a shared window, GLX drawable on a different screen. One table in `docs/coexistence.md` listing what is
+  saved/restored per backend.
+- [ ] **Detect, don't assume, host threading.** Detect (or at least report) whether the host called `XInitThreads`
+  (10.3) and whether the host already initialised EGL on the same display, and log the consequence once.
+
+### 12.5 One way to say "this GPU"
+
+Today: Windows verifies an adapter (never switches), EGL selects through an environment variable, GLX and CGL have
+nothing, and the reported context does not say which GPU served it.
+
+- [ ] **Adapter inventory.** `tesseraEnumerateAdapters` returns a uniform descriptor per backend (stable id —
+  LUID / PCI address / render node / device UUID / CGL renderer id — plus vendor, name, software flag, and whether
+  it drives a display). **ABI**
+- [ ] **One selection field.** A config `adapter` (an id from the inventory) honoured wherever the backend can,
+  refused with `UNSUPPORTED` where it cannot, under the existing rule that an explicit choice is never silently
+  replaced. `TESSERA_EGL_DEVICE` becomes a spelling of it, not the only way. **ABI**
+- [ ] **Report who served the context.** `TesseraContextInfo.adapter` (the id and the software/integrated/discrete
+  class) for every backend, so applications and the probe can see a hybrid-laptop mismatch instead of inferring it
+  from `GL_RENDERER`. **ABI**
+- [ ] **CGL renderer selection.** macOS can really target a renderer (renderer id attribute; offline renderers
+  already handled last); implement it, with the "allowing offline renderers can wake a discrete GPU" cost
+  documented.
+- [ ] **Real targeting on Windows** (`WGL_NV_gpu_affinity`, `WGL_AMD_gpu_association`) once hardware that exposes
+  them is available (10.3); until then keep verify-only.
+- [ ] **Hybrid-laptop advisory.** When verification shows the process got the low-power adapter while a
+  high-performance one exists, log the one-line fix for hosts (the exported `NvOptimusEnablement` /
+  `AmdPowerXpressRequestHighPerformance` symbols) once per process. Requires an actual hybrid machine to test.
+
+### 12.6 Loss and reset beyond polling
+
+- [ ] **Opportunistic polling.** For contexts created with reset notification, check `glGetGraphicsResetStatus`
+  inside `tesseraSwapBuffers` / `tesseraMakeCurrent` (cheap, already on the right thread, context current) so the
+  lost callback fires without the application having to remember a poll. Opt-out flag; still no Tessera threads.
+- [ ] **Recreate onto a different adapter.** After device removal the same adapter may be gone. Let
+  `tesseraRecreateContext` take a policy (same adapter / any hardware / allow software) and report which was used;
+  share-group preservation rules unchanged. **ABI**
+- [ ] **Real reset test** (10.1): a deliberately hanging workload on a robust context on real hardware to produce
+  a genuine `GUILTY`/`INNOCENT`, then recreate with shared objects re-uploaded. Until run, claims stay "fake
+  backend only".
+- [ ] **Distinguish loss causes.** Separate "GPU reset" from "display/driver removed" from "window gone" in the
+  lost callback's status, since the right response differs (re-upload, switch adapter, give up).
+
+### 12.7 Sharing, explained
+
+- [ ] **Preflight.** `tesseraCanShare(a, b)` (or a config + context form) returns *why not* before a failed
+  create: API mismatch, profile mismatch (CGL legacy vs core), different backend, different display, lost parent.
+  Today these are discovered as failures of the create call. **ABI**
+- [ ] **Introspection.** Share-group id and member count for a context, so a host can reason about what survives a
+  loss without keeping its own bookkeeping. **ABI**
+- [ ] **Cross-format sharing on WGL/GLX.** Establish by test which pixel-format/FBConfig differences break sharing
+  on each real driver and record them; make `tesseraCanShare` and the ranking in 12.1 prefer the parent's format
+  when a share parent is given.
+
+### 12.8 Explaining a failed selection
+
+- [ ] **Attempt trace.** `TesseraProbeReport` and the thread-local message currently carry only the last failure.
+  Record every attempt (version rung, relaxation step, config id, driver error) in an ordered list and return it
+  from probe; log it at DEBUG on any failed create. **ABI**
+- [ ] **`tessera-diag` explains, not just reports:** for a failing request, print the first rung that failed and
+  the smallest change to the request that succeeds ("drop sRGB", "lower to 4.3"), computed by the same ranking and
+  ladder code (never a second implementation).
+- [ ] **Compat table from data.** Generate the per-driver table in `docs/compat.md` from `tessera-diag` JSON
+  output instead of by hand, so what is claimed equals what was run.
+
+### Suggested order
+
+| Order | Item | Why first | Touches ABI |
+|---|---|---|---|
+| 1 | 12.1 relaxed-report + acceleration class | cheapest honest-answer gain; unblocks CI-style "software returned" cases | yes |
+| 2 | 12.3 quirk table with seed entries | turns existing ad-hoc code into tested data; needs no new hardware | no |
+| 3 | 12.8 attempt trace | makes every later item debuggable | yes |
+| 4 | 12.1 ranking + enumerate + window-format handoff | the largest structural gap; biggest integration win | yes |
+| 5 | 12.2 ES ladder + version cache + "minimum" decision | small, mostly internal; one owner decision | maybe |
+| 6 | 12.5 adapter inventory/selection/report | needs hybrid/multi-GPU hardware for real confidence | yes |
+| 7 | 12.6, 12.7 | depend on 12.1/12.5 shapes | yes |
+| 8 | 12.4 Wayland and host-display attach | needs a compositor in CI | yes |
+
+Items 1, 3, 4, 5, 6, 7 and 8 together are the **0.10.0** ABI batch: do the ABI-touching parts in one bump so the
+1.0 freeze is not preceded by a string of small breaking releases.
+
+---
+
 ## Coexistence checklist (applies to every change)
 
 - [ ] Does it change anything process-global (DPI awareness, error handlers, signal handlers, locale, env vars, working directory, COM init, `timeBeginPeriod`, AppKit app state)? → Don't, or scope and restore.
@@ -175,5 +365,6 @@ New capabilities worth considering, with a recommendation. Items 1, 2, 5 and 7 a
 | M2 – Beta | 3, 4 | Done on Mesa/WSLg; not on a real Xorg/Wayland desktop |
 | M3 – RC | 5, 6, 7 | Done except macOS (fake driver only) and Java on Linux/macOS |
 | M4 – Hardened | 8, 9 | Done on one machine |
+| M4.5 – Selection depth | 12 (ABI batch 0.10.0) | Planned; ABI parts must precede the freeze, the rest can follow 1.0 |
 | M5 – 1.0 | 10 | Open: other hardware, a real CI run, owner decisions, then freeze |
 | Later | 11 | Candidates |
