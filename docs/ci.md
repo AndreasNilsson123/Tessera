@@ -80,3 +80,23 @@ under Xvfb. They exit 77 (skipped) where the host library cannot come up (no dis
 the LWJGL GLFW jars, which `scripts/fetch-java-deps.py` now downloads. There is no Windows Java job: the hosted runner's GDI
 renderer is OpenGL 1.1, which the LWJGL rendering tests cannot use. `-DTESSERA_JAVA_STRESS=ON` adds a 6000-frame JavaFX run
 (label `stress`, about 1-2 minutes) for nightly or local use.
+
+## Fuzzing with libFuzzer
+
+`cmake --preset fuzz` (clang) builds `fuzz_api` (the public C API against a fake backend: config images, structs, handles, proc
+names; the first byte selects the entry point) and `fuzz_glversion` (the GL_VERSION parser) with ASan + UBSan. Seeds are in
+`tests/fuzz/corpus/<target>`.
+
+```
+build/fuzz/tests/fuzz_api -max_total_time=60 tests/fuzz/corpus/fuzz_api
+```
+
+The CI `fuzz` job runs a minute per target; `nightly.yml` runs ten. A struct whose `structSize` claims more than the caller
+allocated is the caller's bug and is clamped by the harness (the first run of `fuzz_api` "found" exactly that, in the harness, not in
+the library). Locally: 15.9 million inputs in 91 s on `fuzz_api`, 5.2 million in 16 s on `fuzz_glversion`, no findings.
+
+## Release and nightly workflows
+
+`release.yml` (tag `vX.Y.Z`) builds every platform, assembles the Java release and drafts a GitHub release; `nightly.yml` runs a 30
+minute soak, the fault sweeps, the long fuzz runs and the JavaFX/GLFW/AWT stress on software GL. Neither has run on GitHub yet.
+See `releasing.md`. The `conan` job builds and tests the Conan package on every push.

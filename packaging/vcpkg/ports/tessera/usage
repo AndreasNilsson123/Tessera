@@ -1,0 +1,4 @@
+tessera provides CMake targets:
+
+    find_package(Tessera CONFIG REQUIRED)
+    target_link_libraries(main PRIVATE Tessera::tessera)

@@ -27,6 +27,19 @@
       }
     },
     {
+      "name": "fuzz",
+      "displayName": "libFuzzer targets with ASan+UBSan (clang)",
+      "inherits": "base",
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "TESSERA_SANITIZE": "fuzzer-no-link,address,undefined",
+        "TESSERA_BUILD_FUZZERS": "ON"
+      }
+    },
+    {
       "name": "tsan",
       "displayName": "ThreadSanitizer (Linux/macOS)",
       "inherits": "base",
@@ -59,6 +72,7 @@
   "buildPresets": [
     { "name": "ci", "configurePreset": "ci" },
     { "name": "asan-ubsan", "configurePreset": "asan-ubsan" },
+    { "name": "fuzz", "configurePreset": "fuzz" },
     { "name": "tsan", "configurePreset": "tsan" },
     { "name": "java", "configurePreset": "java" },
     { "name": "tidy", "configurePreset": "tidy" }

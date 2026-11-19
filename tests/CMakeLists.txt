@@ -86,6 +86,20 @@ if(WIN32 OR (UNIX AND NOT APPLE))
     tessera_apply_options(test_fault)
 endif()
 
+# Coverage-guided fuzzing (libFuzzer). Needs clang: configure with the `fuzz` preset, which compiles everything with
+# -fsanitize=fuzzer-no-link,address,undefined; the targets add the fuzzer runtime. Run: tests/fuzz/corpus/<target> holds the seeds.
+if(TESSERA_BUILD_FUZZERS)
+    foreach(_fuzz fuzz_api fuzz_glversion)
+        add_executable(${_fuzz} fuzz/${_fuzz}.cpp $<TARGET_OBJECTS:tessera_core>)
+        target_include_directories(${_fuzz} PRIVATE ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/include)
+        target_compile_definitions(${_fuzz} PRIVATE TESSERA_STATIC)
+        target_link_libraries(${_fuzz} PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+        target_compile_options(${_fuzz} PRIVATE -fsanitize=fuzzer-no-link)
+        target_link_options(${_fuzz} PRIVATE -fsanitize=fuzzer)
+        tessera_apply_options(${_fuzz})
+    endforeach()
+endif()
+
 # Create/use/destroy loops with leak tracking (handles, GDI/USER objects, fds, memory). Real driver; exits 77 without one.
 # Scale with TESSERA_SOAK_CYCLES / TESSERA_SOAK_SECONDS (see the file header); the default is a ~1 minute smoke run.
 if(TESSERA_BUILD_SHARED AND (WIN32 OR (UNIX AND NOT APPLE)))

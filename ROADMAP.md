@@ -116,11 +116,11 @@ Everything here was implemented-but-untested, deliberately skipped, or needs som
 ### 10.4 Release engineering
 
 - [x] **Java bindings for the Phase 8 and probe calls** (`Context.nativeHandles`, `Tessera.prewarm`, `Context.createForWindow`, `Tessera.probe`; JNI and FFM): tested on Windows (both bindings, plus LWJGL identity checks against `WGL`) and on Linux (JNI, `GLX` identity check). Window attach is covered by argument validation only in Java (a real window needs a toolkit; the native tests cover it). The package is now the real one, `io.github.andreasnilsson123.tessera` (Maven `io.github.andreasnilsson123:tessera`).
-- [ ] **Maven Central artifact** with per-platform natives (the jar currently embeds only the natives of the machine that built it), signing, javadoc/sources jars.
-- [ ] **vcpkg and Conan recipes** (the CMake package itself is verified).
-- [ ] Generated API reference (the header comments are the reference today).
-- [ ] Coverage-guided fuzzing (libFuzzer/AFL targets) and fuzzing of the JNI glue and Java layer; an independent security review.
-- [ ] The 24 h soak (`TESSERA_SOAK_SECONDS=86400`), tracking X resources and Mach ports as well as handles and memory.
+- [~] **Maven artifacts**: `scripts/assemble-release.py` assembles one multi-platform multi-release jar (natives for Windows, Linux, macOS, `module-info`), sources/javadoc jars, the LWJGL adapter, POMs, a CycloneDX SBOM, checksums and a Maven bundle, reproducibly; verified on a Windows+Linux pair (the assembled jar runs `SelfTest` from its embedded natives on both, and as a named module). `release.yml` drives it from CI with a draft GitHub release. **Not done:** the workflow itself has not run; GPG signing and the Central Portal upload are untested; the macOS native has never run; nothing is published (`docs/releasing.md`).
+- [~] **Conan recipe verified** (`conan create` builds, installs and runs a consumer on Linux; also a CI job). **vcpkg port written but untested** (vcpkg could not be run here); neither is submitted to a public registry.
+- [~] API reference: `tessera.h` is the C reference (documented in place); Javadoc is generated into the release (`-javadoc.jar`). Not done: a Doxygen build of the C header.
+- [~] Coverage-guided fuzzing: libFuzzer targets for the C API (`fuzz_api`) and the version parser (`fuzz_glversion`), `fuzz` preset, CI job (1 min) and nightly (10 min); 15.9 M inputs locally, no findings (one harness bug fixed). Not done: fuzzing the JNI glue and Java layer, an independent security review.
+- [~] Soak: `nightly.yml` runs 30 min on Linux and 15 min on Windows (software GL) plus the fault sweeps. The 24 h run on real hardware and X resource / Mach port tracking are not done.
 - [ ] Coexistence matrix filled in: JavaFX {d3d, es2, sw, metal} x OS x Tessera {hidden, offscreen, surfaceless, shared}. Only d3d and sw on Windows are done.
 
 ### 10.5 Decisions only the project owner can make (these gate the 1.0 freeze)

@@ -23,6 +23,7 @@ option(TESSERA_BUILD_SHARED "Build Tessera as a shared library" ON)
 option(TESSERA_BUILD_TESTS "Build Tessera tests" ${BUILD_TESTING})
 option(TESSERA_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 option(TESSERA_CLANG_TIDY "Run clang-tidy on the library sources during the build" OFF)
+option(TESSERA_BUILD_FUZZERS "Build the libFuzzer targets (clang; use the fuzz preset)" OFF)
 option(TESSERA_BUILD_TOOLS "Build the tessera-diag command-line tool" ON)
 option(TESSERA_BUILD_JAVA "Build the Java bindings: JNI glue inside the library plus bindings/java (needs a JDK 11+)" OFF)
 option(TESSERA_SANITIZE "Sanitizer to enable: address, undefined, thread (or empty)" "")
@@ -172,3 +173,16 @@ write_basic_package_version_file(${CMAKE_CURRENT_BINARY_DIR}/TesseraConfigVersio
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/TesseraConfig.cmake
               ${CMAKE_CURRENT_BINARY_DIR}/TesseraConfigVersion.cmake
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/Tessera)
+
+install(FILES LICENSE NOTICE THIRD_PARTY_NOTICES.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
+
+# Binary packages (cpack -G ZIP / TGZ): the library, headers, CMake package, tessera-diag and the license files.
+set(CPACK_PACKAGE_NAME tessera)
+set(CPACK_PACKAGE_VENDOR "Tessera contributors")
+set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "OpenGL / OpenGL ES context creation that coexists with other OpenGL users in the same process")
+set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/AndreasNilsson123/Tessera")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+set(CPACK_PACKAGE_FILE_NAME "tessera-${PROJECT_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
+set(CPACK_GENERATOR "ZIP;TGZ")
+include(CPack)

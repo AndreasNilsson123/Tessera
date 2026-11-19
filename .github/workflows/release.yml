@@ -1,0 +1,175 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Tessera contributors
+#
+# Release: push a tag `vMAJOR.MINOR.PATCH` that matches TESSERA_VERSION_* in include/tessera/tessera.h.
+#   1. builds the native library on Windows, Linux and macOS (Release, with the Java glue) and runs the tests that need no GPU
+#   2. packages each (ZIP / TGZ with headers, CMake package, tessera-diag, licenses) and keeps its tessera.jar
+#   3. assembles ONE multi-platform jar (+ sources, javadoc, LWJGL adapter, POMs, CycloneDX SBOM, SHA256SUMS, a Maven bundle)
+#   4. creates a DRAFT GitHub release with all of it (review, then publish by hand)
+# Publishing to Maven Central is a separate, manual step (workflow_dispatch with publish=true), see docs/releasing.md.
+#
+# Status: the assembly script is tested locally (reproducible output; the jar runs from the module path and the class path on
+# Windows and Linux). This workflow itself has NOT run yet: expect to adjust on the first tag, ideally a `v0.7.0-rc1`-style
+# dry run via workflow_dispatch.
+name: Release
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Upload the signed Maven bundle to the Central Portal (needs the secrets listed in docs/releasing.md)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          v=$(python3 - <<'EOF'
+          import re
+          t = open('include/tessera/tessera.h').read()
+          print('.'.join(re.search(r'#define TESSERA_VERSION_%s (\d+)' % p, t).group(1) for p in ('MAJOR', 'MINOR', 'PATCH')))
+          EOF
+          )
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "v$v" ]; then
+            echo "tag ${GITHUB_REF_NAME} does not match tessera.h ($v)" >&2; exit 1
+          fi
+
+  native:
+    needs: version
+    name: native (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ubuntu-22.04 on purpose: the oldest glibc we ship against.
+          - name: linux-x86_64
+            os: ubuntu-22.04
+            key: linux-x86_64
+            cpack: TGZ
+          - name: windows-x86_64
+            os: windows-2022
+            key: windows-x86_64
+            cpack: ZIP
+          - name: macos-aarch64
+            os: macos-latest
+            key: macos-aarch64
+            cpack: TGZ
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25' # 22+ so the FFM binding is built into the multi-release jar
+      - name: Fetch the LWJGL jars (only to compile the adapter)
+        if: runner.os == 'Linux'
+        run: python3 scripts/fetch-java-deps.py --lwjgl
+      - name: Configure
+        run: cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release -DTESSERA_BUILD_JAVA=ON -DTESSERA_BUILD_TESTS=ON
+      - name: Build
+        run: cmake --build build/release --config Release --parallel
+      - name: Test (no GPU required)
+        run: ctest --test-dir build/release -C Release --output-on-failure -E "gpu|java|soak|fault|diag_(text|json)"
+      - name: Package
+        run: cpack --config build/release/CPackConfig.cmake -G ${{ matrix.cpack }} -C Release -B dist
+      - name: Collect the Java build outputs
+        shell: bash
+        run: |
+          mkdir -p dist/java
+          cp build/release/bindings/java/tessera.jar dist/java/
+          if [ -f build/release/bindings/java/tessera-lwjgl.jar ]; then cp build/release/bindings/java/tessera-lwjgl.jar dist/java/; fi
+          # the real library file (not the version symlinks): tessera.dll, libtessera.so.X.Y.Z or libtessera.X.Y.Z.dylib
+          lib=$(find build/release -maxdepth 2 -type f \( -name 'tessera.dll' -o -name 'libtessera.so.*.*.*' -o -name 'libtessera.*.*.*.dylib' \) | head -1)
+          test -n "$lib" || { echo "no native library found" >&2; exit 1; }
+          cp "$lib" "dist/java/${{ matrix.key }}.native"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.name }}
+          path: dist/
+          if-no-files-found: error
+
+  assemble:
+    needs: [version, native]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write # create the draft release
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - run: python3 scripts/fetch-java-deps.py --lwjgl # the LWJGL jars for the adapter's javadoc classpath
+      - name: Assemble
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          sign=""
+          if [ -n "$GPG_PRIVATE_KEY" ]; then
+            echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+            sign="--sign"
+            export GPG_TTY=$(tty || true)
+          fi
+          lw=$(ls third_party/java/lwjgl-3.3.4.jar third_party/java/lwjgl-opengl-3.3.4.jar | paste -sd: -)
+          python3 scripts/assemble-release.py \
+            --base-jar artifacts/native-linux-x86_64/java/tessera.jar \
+            --lwjgl-jar artifacts/native-linux-x86_64/java/tessera-lwjgl.jar --lwjgl-classpath "$lw" \
+            --native linux-x86_64=artifacts/native-linux-x86_64/java/linux-x86_64.native \
+            --native windows-x86_64=artifacts/native-windows-x86_64/java/windows-x86_64.native \
+            --native macos-aarch64=artifacts/native-macos-aarch64/java/macos-aarch64.native \
+            --version "${{ needs.version.outputs.version }}" --out release $sign
+      - name: Native packages and checksums
+        run: |
+          cp artifacts/native-*/tessera-*.zip artifacts/native-*/tessera-*.tar.gz release/ 2>/dev/null || true
+          (cd release && sha256sum *.zip *.tar.gz *.jar *.pom *.json > SHA256SUMS)
+          cd release/maven && zip -qr ../tessera-${{ needs.version.outputs.version }}-maven-bundle.zip .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: release/
+      - name: Draft GitHub release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" --draft --verify-tag --title "Tessera ${{ needs.version.outputs.version }}" \
+            --notes "Pre-1.0: the ABI may change between minor versions (docs/abi-policy.md). See ROADMAP.md for what has and has not been verified." \
+            release/*.jar release/*.pom release/*.json release/*.zip release/*.tar.gz release/SHA256SUMS
+
+  # Manual: uploads the signed bundle to the Central Portal. UNTESTED (needs a verified namespace and a user token); see
+  # docs/releasing.md for the one-time setup. It publishes as USER_MANAGED: the upload only stages it, you press "Publish".
+  publish-maven:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
+    needs: [version, assemble]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: release
+      - name: Upload to the Central Portal
+        env:
+          CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
+          CENTRAL_PASSWORD: ${{ secrets.CENTRAL_PASSWORD }}
+        run: |
+          test -n "$CENTRAL_USERNAME" || { echo "CENTRAL_USERNAME is not set" >&2; exit 1; }
+          bundle=release/tessera-${{ needs.version.outputs.version }}-maven-bundle.zip
+          unzip -l "$bundle" | grep -q '\.asc$' || { echo "the bundle is not signed (no GPG_PRIVATE_KEY secret)" >&2; exit 1; }
+          curl --fail-with-body -u "$CENTRAL_USERNAME:$CENTRAL_PASSWORD" \
+            -F "bundle=@$bundle" "https://central.sonatype.com/api/v1/publisher/upload?publishingType=USER_MANAGED"

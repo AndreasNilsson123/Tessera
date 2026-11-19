@@ -69,6 +69,33 @@ jobs:
       - name: Test
         run: ctest --preset ${{ matrix.preset }}
 
+  # A minute of libFuzzer per target (clang, ASan + UBSan) from the seed corpus: catches regressions in the parsers and the
+  # struct-size handling. The long runs are in nightly.yml.
+  fuzz:
+    name: libFuzzer (short)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: |
+          cmake --preset fuzz
+          cmake --build --preset fuzz --parallel
+      - name: Fuzz
+        run: |
+          for t in fuzz_api fuzz_glversion; do
+            ./build/fuzz/tests/$t -max_total_time=60 -timeout=20 "tests/fuzz/corpus/$t"
+          done
+
+  # The Conan recipe: builds the package from the checkout and runs the consumer test (find_package + link + init/terminate).
+  conan:
+    name: conan package
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install conan
+      - run: conan profile detect --force
+      - run: conan create packaging/conan --build=missing -s build_type=Release
+
   # The WGL integration test against whatever OpenGL the hosted Windows runner offers (no GPU: Microsoft's GDI software
   # renderer, GL 1.1). The tests accept what that renderer cannot do (no ARB_create_context, no swap control) but still check
   # that nothing weaker than the request is ever returned. Real-driver results come from local runs

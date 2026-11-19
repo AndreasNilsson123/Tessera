@@ -1,0 +1,26 @@
+{
+  "name": "tessera",
+  "version": "0.7.0",
+  "description": "OpenGL / OpenGL ES context creation that coexists safely with other OpenGL users in the same process",
+  "homepage": "https://github.com/AndreasNilsson123/Tessera",
+  "license": "Apache-2.0",
+  "supports": "windows | linux | osx",
+  "dependencies": [
+    {
+      "name": "vcpkg-cmake",
+      "host": true
+    },
+    {
+      "name": "vcpkg-cmake-config",
+      "host": true
+    }
+  ],
+  "features": {
+    "tools": {
+      "description": "Build tessera-diag, a capability report tool"
+    }
+  },
+  "default-features": [
+    "tools"
+  ]
+}

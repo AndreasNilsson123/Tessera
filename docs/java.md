@@ -94,6 +94,13 @@ Creating and destroying contexts on other threads while JavaFX renders is safe: 
 connections and displays and puts back whatever context a thread had current (tested with three threads churning contexts
 the whole time).
 
+## Module path
+
+The jar is a named module, `io.github.andreasnilsson123.tessera`, exporting only the API package (the JNI/FFM bindings and the loader
+are not exported). It loads a native library, so give it native access: `--enable-native-access=io.github.andreasnilsson123.tessera`
+on the module path (`ALL-UNNAMED` on the class path; JDK 24+ warns without it). Tested in `java_module_jni` / `java_module_ffm`.
+The module name ends in digits (from the GitHub namespace), which `javac -Xlint` advises against; it is harmless.
+
 ## System properties and JVM flags
 
 | Property / flag | Meaning |

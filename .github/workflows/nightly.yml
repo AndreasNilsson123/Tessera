@@ -1,0 +1,87 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Tessera contributors
+#
+# Nightly: the long-running checks that are too slow for every push. All on software GL (hosted runners have no GPU), so they
+# test Tessera's own logic and its coexistence with Mesa/GDI, not vendor drivers. Failures here do not block merges.
+name: Nightly
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  soak-linux:
+    name: soak + fault sweeps (Linux, Mesa llvmpipe)
+    runs-on: ubuntu-24.04
+    env:
+      LIBGL_ALWAYS_SOFTWARE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install X server and Mesa
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgl1 libgl1-mesa-dri libglx-mesa0 libegl1 libegl-mesa0 libgles2
+      - run: cmake --preset ci -DCMAKE_BUILD_TYPE=Release && cmake --build --preset ci --parallel
+      - name: Soak (30 minutes)
+        env:
+          TESSERA_SOAK_SECONDS: "1800"
+        run: xvfb-run -a -s "-screen 0 1280x1024x24" ctest --test-dir build/ci -R soak --output-on-failure
+      - name: Fault sweeps
+        run: xvfb-run -a -s "-screen 0 1280x1024x24" ctest --test-dir build/ci -L fault --output-on-failure
+
+  soak-windows:
+    name: soak (Windows, GDI software renderer)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake --preset ci && cmake --build --preset ci --config Release --parallel
+      - name: Soak (15 minutes)
+        env:
+          TESSERA_SOAK_SECONDS: "900"
+        run: ctest --test-dir build/ci -C Release -R "soak|fault" --output-on-failure
+
+  fuzz:
+    name: libFuzzer (10 minutes per target)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake --preset fuzz && cmake --build --preset fuzz --parallel
+      - name: Fuzz
+        run: |
+          for t in fuzz_api fuzz_glversion; do
+            mkdir -p "corpus/$t"
+            ./build/fuzz/tests/$t -max_total_time=600 -timeout=20 "corpus/$t" "tests/fuzz/corpus/$t"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fuzz-findings
+          path: |
+            crash-*
+            leak-*
+            timeout-*
+          if-no-files-found: ignore
+
+  java-stress:
+    name: JavaFX / GLFW / AWT stress (Linux, Xvfb + Mesa)
+    runs-on: ubuntu-24.04
+    env:
+      LIBGL_ALWAYS_SOFTWARE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - name: Install X server, Mesa and GTK (for JavaFX)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgl1 libgl1-mesa-dri libglx-mesa0 libegl1 libegl-mesa0 libgtk-3-0t64 libxtst6
+      - run: python3 scripts/fetch-java-deps.py
+      - run: cmake --preset java -DCMAKE_BUILD_TYPE=Release -DTESSERA_JAVA_STRESS=ON -DTESSERA_JAVA_STRESS_FRAMES=30000 && cmake --build --preset java --parallel
+      - name: Everything, including the stress run
+        run: xvfb-run -a -s "-screen 0 1280x1024x24" ctest --preset java --output-on-failure

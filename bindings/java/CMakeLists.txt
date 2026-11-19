@@ -51,7 +51,8 @@ else()
 endif()
 set(JAVA_NATIVE_DIR ${JAVA_STAGE}/natives/${JAVA_OS}-${JAVA_ARCH})
 
-set(JAVAC_COMMON -encoding UTF-8 -Xlint:all -Werror)
+# [module] lint: the module name ends in digits ("andreasnilsson123", from the GitHub namespace); javac advises against that, it is harmless.
+set(JAVAC_COMMON -encoding UTF-8 -Xlint:all,-module -Werror)
 
 # javac with a classpath: `javac_args(<file> <classpath...>)` writes "-cp <joined>" for @file.
 function(tessera_cp_file file)
@@ -155,6 +156,21 @@ if(BUILD_TESTING AND TESSERA_BUILD_TESTS)
     # They need a real OpenGL driver, like the other integration tests.
     set_tests_properties(${JAVA_TESTS} PROPERTIES LABELS "gpu;java" TIMEOUT 180)
     set_tests_properties(${JAVA_SHUTDOWN_TESTS} PROPERTIES TIMEOUT 60) # the JVM must exit promptly with contexts still alive
+
+    # The jar as a named module on the module path (module-info, only the API package exported). The tests live in the API package,
+    # so they are patched into the module instead of sitting on the class path (a split package would hide them).
+    set(_module io.github.andreasnilsson123.tessera)
+    set(_module_tests java_module_jni)
+    add_test(NAME java_module_jni COMMAND ${Java_JAVA_EXECUTABLE} --enable-native-access=${_module} -p ${TESSERA_JAR}
+        --add-modules ${_module} --patch-module ${_module}=${JAVA_CLASSES}/test -Dtessera.binding=jni
+        io.github.andreasnilsson123.tessera.SelfTest --no-classloaders)
+    if(Java_VERSION_MAJOR GREATER_EQUAL 22)
+        add_test(NAME java_module_ffm COMMAND ${Java_JAVA_EXECUTABLE} --enable-native-access=${_module} -p ${TESSERA_JAR}
+            --add-modules ${_module} --patch-module ${_module}=${JAVA_CLASSES}/test -Dtessera.binding=ffm
+            io.github.andreasnilsson123.tessera.SelfTest --no-classloaders)
+        list(APPEND _module_tests java_module_ffm)
+    endif()
+    set_tests_properties(${_module_tests} PROPERTIES LABELS "gpu;java;module" TIMEOUT 180)
 endif()
 
 # ---- Optional LWJGL integration (adapter jar + a rendering test) -----------------------------------------------------
