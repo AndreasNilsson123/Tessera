@@ -16,3 +16,5 @@ CMakeUserPresets.json
 
 # Optional third-party jars for the Java integration tests (scripts/fetch-java-deps.py)
 /third_party/
+
+__pycache__/
