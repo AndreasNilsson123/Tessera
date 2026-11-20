@@ -1,0 +1,40 @@
+{
+  "tessera":"0.12.0","abi":1,"headerAbi":1,"platform":"windows","pointerBits":64,
+  "environment":{},
+  "backends":[
+    {"backend":"wgl","available":true,"answeredBy":"wgl","vendor":"NVIDIA Corporation","renderer":"NVIDIA GeForce RTX 3060 Laptop GPU/PCIe/SSE2","version":"4.6.0 NVIDIA 546.30","swapControl":{"control":true,"adaptive":true,"readback":true},
+      "cases":[
+        {"case":"OpenGL, driver's choice","result":"success","info":{"api":"GL","version":"4.6","profile":"compatibility","red":8,"green":8,"blue":8,"alpha":0,"depth":24,"stencil":0,"samples":0,"surface":"hidden-window","flags":"srgb,release-flush"}},
+        {"case":"OpenGL 2.1 (legacy)","result":"success","info":{"api":"GL","version":"4.6","profile":"compatibility","red":8,"green":8,"blue":8,"alpha":0,"depth":24,"stencil":0,"samples":0,"surface":"hidden-window","flags":"srgb,release-flush"}},
+        {"case":"OpenGL 3.2 core","result":"success","info":{"api":"GL","version":"3.2","profile":"core","red":8,"green":8,"blue":8,"alpha":0,"depth":24,"stencil":0,"samples":0,"surface":"hidden-window","flags":"srgb,release-flush"}},
+        {"case":"OpenGL 3.3 core","result":"success","info":{"api":"GL","version":"3.3","profile":"core","red":8,"green":8,"blue":8,"alpha":0,"depth":24,"stencil":0,"samples":0,"surface":"hidden-window","flags":"srgb,release-flush"}},
+        {"case":"OpenGL 4.1 core","result":"success","info":{"api":"GL","version":"4.1","profile":"core","red":8,"green":8,"blue":8,"alpha":0,"depth":24,"stencil":0,"samples":0,"surface":"hidden-window","flags":"srgb,release-flush"}},
+        {"case":"OpenGL 4.3 core","result":"success","info":{"api":"GL","version":"4.3","profile":"core","red":8,"green":8,"blue":8,"alpha":0,"depth":24,"stencil":0,"samples":0,"surface":"hidden-window","flags":"srgb,release-flush"}},
+        {"case":"OpenGL 4.5 core","result":"success","info":{"api":"GL","version":"4.5","profile":"core","red":8,"green":8,"blue":8,"alpha":0,"depth":24,"stencil":0,"samples":0,"surface":"hidden-window","flags":"srgb,release-flush"}},
+        {"case":"OpenGL 4.6 core","result":"success","info":{"api":"GL","version":"4.6","profile":"core","red":8,"green":8,"blue":8,"alpha":0,"depth":24,"stencil":0,"samples":0,"surface":"hidden-window","flags":"srgb,release-flush"}},
+        {"case":"OpenGL 3.2 compatibility","result":"success","info":{"api":"GL","version":"4.6","profile":"compatibility","red":8,"green":8,"blue":8,"alpha":0,"depth":24,"stencil":0,"samples":0,"surface":"hidden-window","flags":"srgb,release-flush"}},
+        {"case":"OpenGL 4.5 compatibility","result":"success","info":{"api":"GL","version":"4.6","profile":"compatibility","red":8,"green":8,"blue":8,"alpha":0,"depth":24,"stencil":0,"samples":0,"surface":"hidden-window","flags":"srgb,release-flush"}},
+        {"case":"OpenGL ES 2.0","result":"success","info":{"api":"GLES","version":"3.2","profile":"any","red":8,"green":8,"blue":8,"alpha":0,"depth":24,"stencil":0,"samples":0,"surface":"hidden-window","flags":"srgb,release-flush"}},
+        {"case":"OpenGL ES 3.0","result":"success","info":{"api":"GLES","version":"3.2","profile":"any","red":8,"green":8,"blue":8,"alpha":0,"depth":24,"stencil":0,"samples":0,"surface":"hidden-window","flags":"srgb,release-flush"}},
+        {"case":"OpenGL ES 3.1","result":"success","info":{"api":"GLES","version":"3.2","profile":"any","red":8,"green":8,"blue":8,"alpha":0,"depth":24,"stencil":0,"samples":0,"surface":"hidden-window","flags":"srgb,release-flush"}},
+        {"case":"OpenGL ES 3.2","result":"success","info":{"api":"GLES","version":"3.2","profile":"any","red":8,"green":8,"blue":8,"alpha":0,"depth":24,"stencil":0,"samples":0,"surface":"hidden-window","flags":"srgb,release-flush"}},
+        {"case":"core 3.3 + debug","result":"success","info":{"api":"GL","version":"3.3","profile":"core","red":8,"green":8,"blue":8,"alpha":0,"depth":24,"stencil":0,"samples":0,"surface":"hidden-window","flags":"debug,srgb,release-flush"}},
+        {"case":"core 3.3 + forward-compatible","result":"success","info":{"api":"GL","version":"3.3","profile":"core","red":8,"green":8,"blue":8,"alpha":0,"depth":24,"stencil":0,"samples":0,"surface":"hidden-window","flags":"forward-compatible,srgb,release-flush"}},
+        {"case":"core 3.3 + robust access","result":"success","info":{"api":"GL","version":"3.3","profile":"core","red":8,"green":8,"blue":8,"alpha":0,"depth":24,"stencil":0,"samples":0,"surface":"hidden-window","flags":"robust-access,srgb,release-flush"}},
+        {"case":"core 3.3 + robust + reset notification","result":"success","info":{"api":"GL","version":"3.3","profile":"core","red":8,"green":8,"blue":8,"alpha":0,"depth":24,"stencil":0,"samples":0,"surface":"hidden-window","flags":"robust-access,reset-notification,srgb,release-flush"}},
+        {"case":"core 3.3 + no-error","result":"success","info":{"api":"GL","version":"3.3","profile":"core","red":8,"green":8,"blue":8,"alpha":0,"depth":24,"stencil":0,"samples":0,"surface":"hidden-window","flags":"no-error,srgb,release-flush"}},
+        {"case":"core 3.3 + release-flush","result":"success","info":{"api":"GL","version":"3.3","profile":"core","red":8,"green":8,"blue":8,"alpha":0,"depth":24,"stencil":0,"samples":0,"surface":"hidden-window","flags":"srgb,release-flush"}},
+        {"case":"core 3.3, 4x MSAA","result":"success","info":{"api":"GL","version":"3.3","profile":"core","red":8,"green":8,"blue":8,"alpha":0,"depth":24,"stencil":0,"samples":4,"surface":"hidden-window","flags":"srgb,double-buffer,release-flush"}},
+        {"case":"core 3.3, 8x MSAA","result":"success","info":{"api":"GL","version":"3.3","profile":"core","red":8,"green":8,"blue":8,"alpha":0,"depth":24,"stencil":0,"samples":8,"surface":"hidden-window","flags":"srgb,double-buffer,release-flush"}},
+        {"case":"core 3.3, sRGB framebuffer","result":"success","info":{"api":"GL","version":"3.3","profile":"core","red":8,"green":8,"blue":8,"alpha":0,"depth":24,"stencil":0,"samples":0,"surface":"hidden-window","flags":"srgb,release-flush"}},
+        {"case":"core 3.3, float colour buffer","result":"success","info":{"api":"GL","version":"3.3","profile":"core","red":16,"green":16,"blue":16,"alpha":16,"depth":24,"stencil":0,"samples":0,"surface":"hidden-window","flags":"float-color,double-buffer,release-flush"}},
+        {"case":"core 3.3, stereo","result":"no matching configuration","message":"no pixel format matches the requested configuration"},
+        {"case":"core 3.3, double-buffered","result":"success","info":{"api":"GL","version":"3.3","profile":"core","red":8,"green":8,"blue":8,"alpha":0,"depth":24,"stencil":0,"samples":0,"surface":"hidden-window","flags":"srgb,double-buffer,release-flush"}},
+        {"case":"core 3.3, pbuffer surface","result":"success","info":{"api":"GL","version":"3.3","profile":"core","red":8,"green":8,"blue":8,"alpha":0,"depth":24,"stencil":0,"samples":0,"surface":"pbuffer","flags":"srgb,release-flush"}},
+        {"case":"core 3.3, no surface (FBO only)","result":"success","info":{"api":"GL","version":"3.3","profile":"core","red":8,"green":8,"blue":8,"alpha":0,"depth":24,"stencil":0,"samples":0,"surface":"none","flags":"srgb,release-flush"}}
+      ]},
+    {"backend":"glx","available":false,"reason":"no OpenGL backend is available in this build/platform"},
+    {"backend":"egl","available":false,"reason":"no OpenGL backend is available in this build/platform"},
+    {"backend":"cgl","available":false,"reason":"no OpenGL backend is available in this build/platform"}
+  ]
+}

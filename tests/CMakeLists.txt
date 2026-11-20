@@ -5,6 +5,26 @@ target_link_libraries(test_abi PRIVATE Tessera::tessera)
 tessera_apply_options(test_abi)
 add_test(NAME abi COMMAND test_abi)
 
+# docs/abi-policy.md made executable: the header against docs/abi/baseline.json, and the library's exports against the header.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME abi_check_selftest COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/abi-check.py --self-test)
+    if(TESSERA_BUILD_SHARED)
+        add_test(NAME abi_check COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/abi-check.py
+                 --lib $<TARGET_FILE:tessera>)
+    else()
+        add_test(NAME abi_check COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/abi-check.py)
+    endif()
+    add_test(NAME release_check_selftest COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/release-check.py --self-test)
+    add_test(NAME release_check COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/release-check.py)
+    # The compatibility-table generator runs on two real tessera-diag outputs (a stored sample per file).
+    file(GLOB TESSERA_DIAG_SAMPLES ${PROJECT_SOURCE_DIR}/docs/compat-samples/*.json)
+    add_test(NAME compat_generator COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/compat-from-diag.py
+             ${TESSERA_DIAG_SAMPLES})
+else()
+    message(STATUS "Python 3 not found: the ABI baseline and compat generator checks are not registered")
+endif()
+
 # The public header must stay valid C99 (compiled as C, not C++).
 add_executable(test_header_c header_c.c)
 target_link_libraries(test_header_c PRIVATE Tessera::tessera)

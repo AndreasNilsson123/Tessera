@@ -21,10 +21,11 @@ license Apache-2.0, copyright "Tessera contributors". Pre-1.0: the ABI may chang
 
 1. Bump `TESSERA_VERSION_*` in `include/tessera/tessera.h` (the Maven version, jar manifest, CMake package and Conan recipe all
    read it) and `packaging/vcpkg/ports/tessera/vcpkg.json`; update `ROADMAP.md` and notes.
-2. `git tag v<version> && git push --tags`. The `Release` workflow checks the tag against the header, builds every platform,
+2. `python scripts/release-check.py --rc` (versions agree, ABI baseline current, clean tree, `compat.md` current; the whole checklist and the 1.0 freeze are in `freeze.md`). `scripts/release-check.py --set-version X.Y.Z` writes the version into the header and the vcpkg manifest.
+3. `git tag v<version> && git push --tags`. The `Release` workflow checks the tag against the header, builds every platform,
    assembles the artifacts and creates a **draft** GitHub release. Review it, then publish by hand.
-3. A dry run without a tag: *Actions -> Release -> Run workflow* (builds and assembles, no release).
-4. Local assembly (what the workflow runs), given each platform's `tessera.jar` and native library:
+4. A dry run without a tag: *Actions -> Release -> Run workflow* (builds and assembles, no release).
+5. Local assembly (what the workflow runs), given each platform's `tessera.jar` and native library:
 
    ```
    python scripts/assemble-release.py --base-jar linux/tessera.jar --native linux-x86_64=linux/libtessera.so \

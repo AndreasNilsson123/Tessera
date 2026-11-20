@@ -9,3 +9,4 @@ The public interface is the C header `include/tessera/tessera.h`. Java (Panama/J
 - **Errors:** every function returns `TesseraResult` (or has a documented no-fail contract). Details via thread-local `tesseraGetLastErrorMessage`.
 - **Forbidden across the boundary:** exceptions, `abort`/`exit`, stdout/stderr output, ownership transfer of CRT-allocated memory (the library allocates and frees its own).
 - **Symbols:** hidden by default; only `TESSERA_API` functions are exported. `tests/test_abi.cpp` pins struct sizes.
+- **Enforcement:** `scripts/abi-check.py` (ctest `abi_check`) compares the header with `docs/abi/baseline.json`: a removed or changed function, field or `#define`, a shrunk struct, or an export the header does not declare fails the build; additions pass and are recorded with `--update`. The procedure for 1.0 and for every release is `freeze.md`.

@@ -1,0 +1,612 @@
+{
+ "functions": {
+  "tesseraCreateContext": {
+   "params": "const TesseraContextConfig* config, TesseraContext* outContext",
+   "return": "TesseraResult"
+  },
+  "tesseraCreateContextForNativeWindow": {
+   "params": "const TesseraContextConfig* config, const TesseraNativeWindow* window, uint32_t flags, TesseraContext* outContext",
+   "return": "TesseraResult"
+  },
+  "tesseraCreateContextForWindow": {
+   "params": "const TesseraContextConfig* config, uint64_t nativeWindow, uint32_t flags, TesseraContext* outContext",
+   "return": "TesseraResult"
+  },
+  "tesseraDestroyContext": {
+   "params": "TesseraContext context",
+   "return": "TesseraResult"
+  },
+  "tesseraGetAbiVersion": {
+   "params": "void",
+   "return": "int32_t"
+  },
+  "tesseraGetContextInfo": {
+   "params": "TesseraContext context, TesseraContextInfo* outInfo",
+   "return": "TesseraResult"
+  },
+  "tesseraGetCurrentContext": {
+   "params": "void",
+   "return": "TesseraContext"
+  },
+  "tesseraGetLastErrorMessage": {
+   "params": "void",
+   "return": "const char*"
+  },
+  "tesseraGetNativeHandles": {
+   "params": "TesseraContext context, TesseraNativeHandles* outHandles",
+   "return": "TesseraResult"
+  },
+  "tesseraGetPooledCount": {
+   "params": "const TesseraContextConfig* config, int32_t* outCount",
+   "return": "TesseraResult"
+  },
+  "tesseraGetProcAddress": {
+   "params": "const char* name",
+   "return": "void*"
+  },
+  "tesseraGetResetStatus": {
+   "params": "TesseraContext context, int32_t* outStatus",
+   "return": "TesseraResult"
+  },
+  "tesseraGetSwapControl": {
+   "params": "TesseraContext context, TesseraSwapControl* outInfo",
+   "return": "TesseraResult"
+  },
+  "tesseraGetVersion": {
+   "params": "int32_t* major, int32_t* minor, int32_t* patch",
+   "return": "void"
+  },
+  "tesseraInit": {
+   "params": "void",
+   "return": "TesseraResult"
+  },
+  "tesseraIsContextLost": {
+   "params": "TesseraContext context, int32_t* outLost, int32_t* outStatus",
+   "return": "TesseraResult"
+  },
+  "tesseraMakeCurrent": {
+   "params": "TesseraContext context",
+   "return": "TesseraResult"
+  },
+  "tesseraPoolClear": {
+   "params": "void",
+   "return": "int32_t"
+  },
+  "tesseraPoolTopUp": {
+   "params": "const TesseraContextConfig* config, int32_t target, int32_t* outCreated",
+   "return": "TesseraResult"
+  },
+  "tesseraPooledContextCount": {
+   "params": "void",
+   "return": "int32_t"
+  },
+  "tesseraPrewarmContexts": {
+   "params": "const TesseraContextConfig* config, int32_t count",
+   "return": "TesseraResult"
+  },
+  "tesseraProbe": {
+   "params": "const TesseraContextConfig* config, TesseraProbeReport* outReport",
+   "return": "TesseraResult"
+  },
+  "tesseraRecreateContext": {
+   "params": "TesseraContext context, TesseraContext* outNew, uint32_t* outFlags",
+   "return": "TesseraResult"
+  },
+  "tesseraResizeWindow": {
+   "params": "TesseraContext context, int32_t width, int32_t height",
+   "return": "TesseraResult"
+  },
+  "tesseraResultString": {
+   "params": "TesseraResult result",
+   "return": "const char*"
+  },
+  "tesseraSetContextLostCallback": {
+   "params": "TesseraContextLostCallback callback, void* userData",
+   "return": "void"
+  },
+  "tesseraSetLogCallback": {
+   "params": "TesseraLogCallback callback, void* userData",
+   "return": "void"
+  },
+  "tesseraSetSwapInterval": {
+   "params": "TesseraContext context, int32_t interval",
+   "return": "TesseraResult"
+  },
+  "tesseraSwapBuffers": {
+   "params": "TesseraContext context",
+   "return": "TesseraResult"
+  },
+  "tesseraTerminate": {
+   "params": "void",
+   "return": "TesseraResult"
+  }
+ },
+ "macros": {
+  "TESSERA_API_OPENGL": "0x0001u",
+  "TESSERA_API_OPENGL_ES": "0x0002u",
+  "TESSERA_ATTACH_ALLOW_PIXEL_FORMAT": "0x1u",
+  "TESSERA_ERROR_CONTEXT_LOST": "(-10)",
+  "TESSERA_ERROR_INVALID_ARGUMENT": "(-2)",
+  "TESSERA_ERROR_INVALID_HANDLE": "(-3)",
+  "TESSERA_ERROR_NOT_INITIALIZED": "(-4)",
+  "TESSERA_ERROR_NO_MATCHING_CONFIG": "(-7)",
+  "TESSERA_ERROR_OUT_OF_MEMORY": "(-5)",
+  "TESSERA_ERROR_PLATFORM": "(-8)",
+  "TESSERA_ERROR_UNKNOWN": "(-1)",
+  "TESSERA_ERROR_UNSUPPORTED": "(-6)",
+  "TESSERA_ERROR_WRONG_THREAD": "(-9)",
+  "TESSERA_FALLBACK_BEST_EFFORT": "0x0001u",
+  "TESSERA_FALLBACK_STRICT": "0x0000u",
+  "TESSERA_FLAG_DEBUG": "0x0001u",
+  "TESSERA_FLAG_DOUBLE_BUFFER": "0x0080u",
+  "TESSERA_FLAG_FLOAT_COLOR": "0x0040u",
+  "TESSERA_FLAG_FORWARD_COMPATIBLE": "0x0002u",
+  "TESSERA_FLAG_NO_ERROR": "0x0010u",
+  "TESSERA_FLAG_RELEASE_FLUSH": "0x0200u",
+  "TESSERA_FLAG_RESET_NOTIFICATION": "0x0008u",
+  "TESSERA_FLAG_ROBUST_ACCESS": "0x0004u",
+  "TESSERA_FLAG_SRGB": "0x0020u",
+  "TESSERA_FLAG_STEREO": "0x0100u",
+  "TESSERA_GPU_DEFAULT": "0x0000u",
+  "TESSERA_GPU_HIGH_PERFORMANCE": "0x0001u",
+  "TESSERA_GPU_LOW_POWER": "0x0002u",
+  "TESSERA_LOG_DEBUG": "4",
+  "TESSERA_LOG_ERROR": "1",
+  "TESSERA_LOG_INFO": "3",
+  "TESSERA_LOG_WARN": "2",
+  "TESSERA_NATIVE_CGL": "4u",
+  "TESSERA_NATIVE_EGL": "3u",
+  "TESSERA_NATIVE_GLX": "2u",
+  "TESSERA_NATIVE_NONE": "0u",
+  "TESSERA_NATIVE_WGL": "1u",
+  "TESSERA_NULL_HANDLE": "((TesseraHandle)0)",
+  "TESSERA_PRIORITY_DEFAULT": "0u",
+  "TESSERA_PRIORITY_HIGH": "3u",
+  "TESSERA_PRIORITY_LOW": "1u",
+  "TESSERA_PRIORITY_MEDIUM": "2u",
+  "TESSERA_PROFILE_ANY": "0x0000u",
+  "TESSERA_PROFILE_COMPATIBILITY": "0x0002u",
+  "TESSERA_PROFILE_CORE": "0x0001u",
+  "TESSERA_RECREATE_SHARE_PRESERVED": "0x1u",
+  "TESSERA_RESET_GUILTY": "1",
+  "TESSERA_RESET_INNOCENT": "2",
+  "TESSERA_RESET_NONE": "0",
+  "TESSERA_RESET_UNKNOWN": "3",
+  "TESSERA_SUCCESS": "0",
+  "TESSERA_SURFACE_DEFAULT": "0x0000u",
+  "TESSERA_SURFACE_HIDDEN_WINDOW": "0x0001u",
+  "TESSERA_SURFACE_NONE": "0x0003u",
+  "TESSERA_SURFACE_PBUFFER": "0x0002u",
+  "TESSERA_SURFACE_WINDOW": "0x0004u",
+  "TESSERA_SWAP_CAP_ADAPTIVE": "0x2u",
+  "TESSERA_SWAP_CAP_CONTROL": "0x1u",
+  "TESSERA_SWAP_CAP_READBACK": "0x4u",
+  "TESSERA_SWAP_UNKNOWN": "((int32_t)(-2147483647 - 1))",
+  "TESSERA_WINDOW_COCOA": "4u",
+  "TESSERA_WINDOW_WAYLAND": "3u",
+  "TESSERA_WINDOW_WIN32": "1u",
+  "TESSERA_WINDOW_X11": "2u"
+ },
+ "structs": {
+  "TesseraContextConfig": {
+   "align": 8,
+   "fields": [
+    {
+     "name": "structSize",
+     "offset": 0,
+     "size": 4,
+     "type": "uint32_t"
+    },
+    {
+     "name": "api",
+     "offset": 4,
+     "size": 4,
+     "type": "TesseraEnum"
+    },
+    {
+     "name": "versionMajor",
+     "offset": 8,
+     "size": 4,
+     "type": "int32_t"
+    },
+    {
+     "name": "versionMinor",
+     "offset": 12,
+     "size": 4,
+     "type": "int32_t"
+    },
+    {
+     "name": "profile",
+     "offset": 16,
+     "size": 4,
+     "type": "TesseraEnum"
+    },
+    {
+     "name": "flags",
+     "offset": 20,
+     "size": 4,
+     "type": "uint32_t"
+    },
+    {
+     "name": "surface",
+     "offset": 24,
+     "size": 4,
+     "type": "TesseraEnum"
+    },
+    {
+     "name": "fallback",
+     "offset": 28,
+     "size": 4,
+     "type": "TesseraEnum"
+    },
+    {
+     "name": "redBits",
+     "offset": 32,
+     "size": 4,
+     "type": "int32_t"
+    },
+    {
+     "name": "greenBits",
+     "offset": 36,
+     "size": 4,
+     "type": "int32_t"
+    },
+    {
+     "name": "blueBits",
+     "offset": 40,
+     "size": 4,
+     "type": "int32_t"
+    },
+    {
+     "name": "alphaBits",
+     "offset": 44,
+     "size": 4,
+     "type": "int32_t"
+    },
+    {
+     "name": "depthBits",
+     "offset": 48,
+     "size": 4,
+     "type": "int32_t"
+    },
+    {
+     "name": "stencilBits",
+     "offset": 52,
+     "size": 4,
+     "type": "int32_t"
+    },
+    {
+     "name": "samples",
+     "offset": 56,
+     "size": 4,
+     "type": "int32_t"
+    },
+    {
+     "name": "shareWith",
+     "offset": 64,
+     "size": 8,
+     "type": "TesseraContext"
+    },
+    {
+     "name": "adapterLuid",
+     "offset": 72,
+     "size": 8,
+     "type": "uint64_t"
+    },
+    {
+     "name": "gpuPreference",
+     "offset": 80,
+     "size": 4,
+     "type": "uint32_t"
+    },
+    {
+     "name": "priority",
+     "offset": 84,
+     "size": 4,
+     "type": "uint32_t"
+    },
+    {
+     "name": "reserved",
+     "offset": 88,
+     "size": 48,
+     "type": "uint64_t[6]"
+    }
+   ],
+   "size": 136
+  },
+  "TesseraContextInfo": {
+   "align": 8,
+   "fields": [
+    {
+     "name": "structSize",
+     "offset": 0,
+     "size": 4,
+     "type": "uint32_t"
+    },
+    {
+     "name": "api",
+     "offset": 4,
+     "size": 4,
+     "type": "TesseraEnum"
+    },
+    {
+     "name": "versionMajor",
+     "offset": 8,
+     "size": 4,
+     "type": "int32_t"
+    },
+    {
+     "name": "versionMinor",
+     "offset": 12,
+     "size": 4,
+     "type": "int32_t"
+    },
+    {
+     "name": "profile",
+     "offset": 16,
+     "size": 4,
+     "type": "TesseraEnum"
+    },
+    {
+     "name": "flags",
+     "offset": 20,
+     "size": 4,
+     "type": "uint32_t"
+    },
+    {
+     "name": "surface",
+     "offset": 24,
+     "size": 4,
+     "type": "TesseraEnum"
+    },
+    {
+     "name": "samples",
+     "offset": 28,
+     "size": 4,
+     "type": "int32_t"
+    },
+    {
+     "name": "redBits",
+     "offset": 32,
+     "size": 4,
+     "type": "int32_t"
+    },
+    {
+     "name": "greenBits",
+     "offset": 36,
+     "size": 4,
+     "type": "int32_t"
+    },
+    {
+     "name": "blueBits",
+     "offset": 40,
+     "size": 4,
+     "type": "int32_t"
+    },
+    {
+     "name": "alphaBits",
+     "offset": 44,
+     "size": 4,
+     "type": "int32_t"
+    },
+    {
+     "name": "depthBits",
+     "offset": 48,
+     "size": 4,
+     "type": "int32_t"
+    },
+    {
+     "name": "stencilBits",
+     "offset": 52,
+     "size": 4,
+     "type": "int32_t"
+    },
+    {
+     "name": "vendor",
+     "offset": 56,
+     "size": 128,
+     "type": "char[128]"
+    },
+    {
+     "name": "renderer",
+     "offset": 184,
+     "size": 128,
+     "type": "char[128]"
+    },
+    {
+     "name": "version",
+     "offset": 312,
+     "size": 128,
+     "type": "char[128]"
+    },
+    {
+     "name": "priority",
+     "offset": 440,
+     "size": 4,
+     "type": "uint32_t"
+    },
+    {
+     "name": "reserved32",
+     "offset": 444,
+     "size": 4,
+     "type": "uint32_t"
+    },
+    {
+     "name": "reserved",
+     "offset": 448,
+     "size": 56,
+     "type": "uint64_t[7]"
+    }
+   ],
+   "size": 504
+  },
+  "TesseraNativeHandles": {
+   "align": 8,
+   "fields": [
+    {
+     "name": "structSize",
+     "offset": 0,
+     "size": 4,
+     "type": "uint32_t"
+    },
+    {
+     "name": "kind",
+     "offset": 4,
+     "size": 4,
+     "type": "uint32_t"
+    },
+    {
+     "name": "handles",
+     "offset": 8,
+     "size": 48,
+     "type": "uint64_t[6]"
+    },
+    {
+     "name": "reserved",
+     "offset": 56,
+     "size": 32,
+     "type": "uint64_t[4]"
+    }
+   ],
+   "size": 88
+  },
+  "TesseraNativeWindow": {
+   "align": 8,
+   "fields": [
+    {
+     "name": "structSize",
+     "offset": 0,
+     "size": 4,
+     "type": "uint32_t"
+    },
+    {
+     "name": "kind",
+     "offset": 4,
+     "size": 4,
+     "type": "uint32_t"
+    },
+    {
+     "name": "window",
+     "offset": 8,
+     "size": 8,
+     "type": "uint64_t"
+    },
+    {
+     "name": "display",
+     "offset": 16,
+     "size": 8,
+     "type": "uint64_t"
+    },
+    {
+     "name": "width",
+     "offset": 24,
+     "size": 4,
+     "type": "int32_t"
+    },
+    {
+     "name": "height",
+     "offset": 28,
+     "size": 4,
+     "type": "int32_t"
+    },
+    {
+     "name": "reserved",
+     "offset": 32,
+     "size": 32,
+     "type": "uint64_t[4]"
+    }
+   ],
+   "size": 64
+  },
+  "TesseraProbeReport": {
+   "align": 8,
+   "fields": [
+    {
+     "name": "structSize",
+     "offset": 0,
+     "size": 4,
+     "type": "uint32_t"
+    },
+    {
+     "name": "result",
+     "offset": 4,
+     "size": 4,
+     "type": "TesseraResult"
+    },
+    {
+     "name": "info",
+     "offset": 8,
+     "size": 504,
+     "type": "TesseraContextInfo"
+    },
+    {
+     "name": "backend",
+     "offset": 512,
+     "size": 32,
+     "type": "char[32]"
+    },
+    {
+     "name": "message",
+     "offset": 544,
+     "size": 256,
+     "type": "char[256]"
+    },
+    {
+     "name": "reserved",
+     "offset": 800,
+     "size": 32,
+     "type": "uint64_t[4]"
+    }
+   ],
+   "size": 832
+  },
+  "TesseraSwapControl": {
+   "align": 8,
+   "fields": [
+    {
+     "name": "structSize",
+     "offset": 0,
+     "size": 4,
+     "type": "uint32_t"
+    },
+    {
+     "name": "caps",
+     "offset": 4,
+     "size": 4,
+     "type": "uint32_t"
+    },
+    {
+     "name": "requested",
+     "offset": 8,
+     "size": 4,
+     "type": "int32_t"
+    },
+    {
+     "name": "applied",
+     "offset": 12,
+     "size": 4,
+     "type": "int32_t"
+    },
+    {
+     "name": "maxInterval",
+     "offset": 16,
+     "size": 4,
+     "type": "int32_t"
+    },
+    {
+     "name": "reserved32",
+     "offset": 20,
+     "size": 4,
+     "type": "uint32_t"
+    },
+    {
+     "name": "reserved",
+     "offset": 24,
+     "size": 32,
+     "type": "uint64_t[4]"
+    }
+   ],
+   "size": 56
+  }
+ }
+}
