@@ -32,6 +32,9 @@ class Runtime {
     /* Backends are consulted in registration order. Builtin platform backends are registered by init();
      * all backends are dropped when the last reference is released. */
     void registerBackend(std::shared_ptr<Backend> backend);
+    /* The CPU backend used by the ALLOW_SOFTWARE recreate policy; set by registerBuiltinBackends, and by
+     * tests. */
+    void setSoftwareBackendForTesting(std::shared_ptr<Backend> backend);
 
     TesseraResult createContext(const TesseraContextConfig& config, TesseraContext& out);
     TesseraResult destroyContext(TesseraContext handle);
@@ -42,6 +45,11 @@ class Runtime {
     TesseraResult setSwapInterval(TesseraContext handle, int32_t interval);
     TesseraResult getSwapControl(TesseraContext handle, TesseraSwapControl& out);
     TesseraResult enumerateAdapters(TesseraAdapterInfo* out, int32_t capacity, int32_t* outCount);
+    TesseraResult lossCause(TesseraContext handle, int32_t& outCause);
+    TesseraResult recreateContextWithPolicy(TesseraContext handle, uint32_t policy, TesseraContext& out,
+                                            uint32_t& outFlags);
+    TesseraResult canShare(const TesseraContextConfig& config, TesseraContext parent, int32_t& outReason);
+    TesseraResult shareGroupInfo(TesseraContext handle, TesseraShareGroupInfo& out);
     void* getProcAddress(const char* name);
     TesseraResult getResetStatus(TesseraContext handle, int32_t& outStatus);
     TesseraResult isContextLost(TesseraContext handle, int32_t& outLost, int32_t& outStatus);
@@ -92,7 +100,7 @@ class Runtime {
                              TesseraContext& out);
     TesseraResult createNative(const TesseraContextConfig& config,
                                const std::shared_ptr<ContextObject>& share, const Attempt& attempt,
-                               std::shared_ptr<ContextObject>& created);
+                               std::shared_ptr<ContextObject>& created, bool softwareOnly = false);
     TesseraResult registerContext(const TesseraContextConfig& config,
                                   const std::shared_ptr<ContextObject>& share,
                                   const std::shared_ptr<ContextObject>& created, TesseraContext& out);
@@ -100,7 +108,10 @@ class Runtime {
 
     void joinGroup(uint64_t group, TesseraHandle handle);
     void leaveGroup(uint64_t group, TesseraHandle handle);
-    void markLost(TesseraContext handle, ContextObject& object, int32_t status);
+    void markLost(TesseraContext handle, ContextObject& object, int32_t status, int32_t cause);
+    /* Opportunistic polling (ADR 0018): asks a robust context, current on this thread, whether the driver
+     * reset it. True = it was lost (and has been marked). */
+    bool pollReset(TesseraContext handle, ContextObject& object);
 
     static constexpr uint8_t kContextTag = 0x43; // 'C'
     static constexpr uint32_t kMaxContexts = 1u << 20;
@@ -108,6 +119,7 @@ class Runtime {
     mutable std::mutex lifecycle_;
     int refCount_ = 0;
     std::vector<std::shared_ptr<Backend>> backends_; // guarded by lifecycle_
+    std::shared_ptr<Backend> softwareBackend_;       // the CPU backend, by name only; guarded by lifecycle_
     HandleTable<ContextObject> contexts_;
 
     std::mutex groupsMutex_; // never held while calling into contexts_ other than get()
@@ -131,6 +143,7 @@ class Runtime {
 };
 
 /* Implemented in src/platform/builtin.cpp: registers whichever backends this build contains. */
-void registerBuiltinBackends(std::vector<std::shared_ptr<Backend>>& out);
+void registerBuiltinBackends(std::vector<std::shared_ptr<Backend>>& out,
+                             std::shared_ptr<Backend>* software = nullptr);
 
 } // namespace tessera

@@ -748,6 +748,9 @@ static void testAdapterIds() {
         EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
     }
 }
+static void testSharingExplained() {
+    interop::sharingExplained(glxHooks());
+}
 static void testProbe() {
     ForeignContext foreign; // a context from "another library" must survive every probe
     robust::Hooks h = glxHooks();
@@ -966,7 +969,14 @@ static void testWindowAttach() {
             g_x.XSync(doomed.dpy, 0);
             doomed.win = 0;
             const TesseraResult swap = tesseraSwapBuffers(c);
-            CHECK(swap == TESSERA_ERROR_PLATFORM || swap == TESSERA_ERROR_WRONG_THREAD);
+            std::printf("  swap after the window was destroyed: %s (%s)\n", tesseraResultString(swap),
+                        tesseraGetLastErrorMessage());
+            CHECK(swap == TESSERA_ERROR_WINDOW_GONE || swap == TESSERA_ERROR_WRONG_THREAD);
+            if (swap == TESSERA_ERROR_WINDOW_GONE) {
+                int32_t cause = -1;
+                EXPECT(tesseraGetLossCause(c, &cause), TESSERA_SUCCESS);
+                CHECK(cause == TESSERA_LOSS_WINDOW_GONE);
+            }
             tesseraMakeCurrent(TESSERA_NULL_HANDLE);
             EXPECT(tesseraDestroyContext(c), TESSERA_SUCCESS);
         }
@@ -1099,6 +1109,7 @@ int main(int argc, char** argv) {
         {"probe", testProbe},
         {"GPU requests are refused", testAdapterRequests},
         {"adapter ids", testAdapterIds},
+        {"sharing explained", testSharingExplained},
         {"native handles", testNativeHandles},
         {"window attach", testWindowAttach},
         {"swap control", testSwapControl},

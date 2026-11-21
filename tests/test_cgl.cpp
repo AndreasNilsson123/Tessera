@@ -232,6 +232,45 @@ static void testAdapters() {
     EXPECT(tesseraCreateContext(&none, &ctx), TESSERA_ERROR_NO_MATCHING_CONFIG);
 }
 
+// Sharing explained (ABI 0.15.0): a core context and a legacy one cannot share objects on macOS; the
+// preflight says so first, and agrees with what the create then does.
+static void testShareVerdicts() {
+    TesseraContextConfig legacy = baseConfig(), core = baseConfig();
+    core.profile = TESSERA_PROFILE_CORE;
+    TesseraContext lp = 0, cp = 0;
+    EXPECT(tesseraCreateContext(&legacy, &lp), TESSERA_SUCCESS);
+    EXPECT(tesseraCreateContext(&core, &cp), TESSERA_SUCCESS);
+    if (!lp || !cp)
+        return;
+    struct Case {
+        const TesseraContextConfig* want;
+        TesseraContext parent;
+        int32_t expected;
+    };
+    const Case cases[] = {{&legacy, lp, TESSERA_SHARE_OK},
+                          {&core, cp, TESSERA_SHARE_OK},
+                          {&core, lp, TESSERA_SHARE_PROFILE_MISMATCH},
+                          {&legacy, cp, TESSERA_SHARE_PROFILE_MISMATCH}};
+    for (const Case& c : cases) {
+        int32_t why = -1;
+        EXPECT(tesseraCanShare(c.want, c.parent, &why), TESSERA_SUCCESS);
+        CHECK(why == c.expected);
+        TesseraContextConfig share = *c.want;
+        share.shareWith = c.parent;
+        TesseraContext made = 0;
+        const TesseraResult r = tesseraCreateContext(&share, &made);
+        CHECK((why == TESSERA_SHARE_OK) ==
+              (r == TESSERA_SUCCESS)); // the verdict is what the create then does
+        if (made)
+            EXPECT(tesseraDestroyContext(made), TESSERA_SUCCESS);
+    }
+    TesseraShareGroupInfo g = tesseraDefaultShareGroupInfo();
+    EXPECT(tesseraGetShareGroup(lp, &g), TESSERA_SUCCESS);
+    CHECK(g.members == 1 && g.alive == 1);
+    EXPECT(tesseraDestroyContext(lp), TESSERA_SUCCESS);
+    EXPECT(tesseraDestroyContext(cp), TESSERA_SUCCESS);
+}
+
 int main() {
     if (!loadRaw()) {
         std::fprintf(stderr, "test_cgl: OpenGL.framework not available, skipping\n");
@@ -263,6 +302,7 @@ int main() {
         {"foreign context untouched / current / procs", testForeignUntouchedAndCurrent},
         {"sharing and threads", testSharingAndThreads},
         {"adapters (inventory, selection, report)", testAdapters},
+        {"sharing verdicts", testShareVerdicts},
     };
     for (const Section& sec : sections) {
         std::puts(sec.name);

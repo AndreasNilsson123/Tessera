@@ -31,7 +31,7 @@ extern "C" {
 /* ---------------------------------------------------------------- version */
 
 #define TESSERA_VERSION_MAJOR 0
-#define TESSERA_VERSION_MINOR 14
+#define TESSERA_VERSION_MINOR 15
 #define TESSERA_VERSION_PATCH 0
 
 /** Incremented on every incompatible change to the C ABI, independent of the semantic version. */
@@ -58,6 +58,9 @@ typedef int32_t TesseraResult;
 #define TESSERA_ERROR_PLATFORM (-8)     /**< native API failure; see tesseraGetLastErrorMessage */
 #define TESSERA_ERROR_WRONG_THREAD (-9) /**< object used from a thread it is not valid on */
 #define TESSERA_ERROR_CONTEXT_LOST (-10)
+/** The window a context renders into no longer exists (0.15.0). The context is marked lost (cause
+ * TESSERA_LOSS_WINDOW_GONE). */
+#define TESSERA_ERROR_WINDOW_GONE (-11)
 
 /** Static, NUL-terminated, never NULL, valid for the process lifetime. */
 TESSERA_API const char* TESSERA_CALL tesseraResultString(TesseraResult result);
@@ -136,6 +139,11 @@ typedef uint32_t TesseraEnum;
  * (Mesa does for core profiles; NVIDIA and Apple do not): TesseraContextInfo says what was granted, and the
  * requested version remains a minimum either way. */
 #define TESSERA_FLAG_EXACT_VERSION 0x0400u
+/** Do not poll the reset status inside tesseraMakeCurrent and tesseraSwapBuffers (0.15.0). Without this flag
+ * a context created with TESSERA_FLAG_RESET_NOTIFICATION is checked there (one cheap query, on the right
+ * thread, context current), so the context-lost callback fires without the application polling. No effect on
+ * contexts without reset notification. */
+#define TESSERA_FLAG_NO_RESET_POLL 0x0800u
 
 /** TesseraContextConfig::surface - what the context will be able to render to */
 #define TESSERA_SURFACE_DEFAULT 0x0000u /**< backend picks the safest available */
@@ -502,9 +510,35 @@ TESSERA_API TesseraResult TESSERA_CALL tesseraIsContextLost(TesseraContext conte
  */
 TESSERA_API TesseraResult TESSERA_CALL tesseraGetResetStatus(TesseraContext context, int32_t* outStatus);
 
+/**
+ * Why a context was lost (0.15.0), since the right response differs: after a GPU reset re-upload your
+ * resources; after the device went away recreate (maybe on another adapter,
+ * tesseraRecreateContextWithPolicy); when the window is gone do not recreate onto it.
+ */
+#define TESSERA_LOSS_NONE 0
+#define TESSERA_LOSS_GPU_RESET                                                                               \
+    1 /**< the driver reported a reset through the robustness query (status GUILTY/INNOCENT/UNKNOWN) */
+#define TESSERA_LOSS_DEVICE                                                                                  \
+    2 /**< the backend reported "context lost" natively (display, driver or power event): no reset status */
+#define TESSERA_LOSS_WINDOW_GONE 3 /**< the window the context rendered into was destroyed */
+
+/** The cause of a lost context; TESSERA_LOSS_NONE while it is healthy. Any thread; the context need not be
+ * current. */
+TESSERA_API TesseraResult TESSERA_CALL tesseraGetLossCause(TesseraContext context, int32_t* outCause);
+
 /** tesseraRecreateContext flags */
 #define TESSERA_RECREATE_SHARE_PRESERVED                                                                     \
     0x1u /**< the new context joined a surviving member of the old share group */
+/** tesseraRecreateContextWithPolicy: what may change (0.15.0). The default policy is what
+ * tesseraRecreateContext does. */
+#define TESSERA_RECREATE_SAME_ADAPTER 0u /**< the same request, including any adapter named in it */
+#define TESSERA_RECREATE_ANY_HARDWARE 1u /**< drop the adapter request; any GPU, but never a CPU renderer */
+#define TESSERA_RECREATE_ALLOW_SOFTWARE                                                                      \
+    2u /**< drop the adapter request; fall back to the software backend if no GPU can serve */
+/** Extra outFlags of tesseraRecreateContextWithPolicy. */
+#define TESSERA_RECREATE_ADAPTER_CHANGED                                                                     \
+    0x2u /**< the new context runs on a different adapter than the old one (where both are known) */
+#define TESSERA_RECREATE_SOFTWARE 0x4u /**< the new context is a CPU renderer */
 
 /**
  * Creates a new context from the same request as `context` (normally a lost one; the old handle stays valid
@@ -515,6 +549,66 @@ TESSERA_API TesseraResult TESSERA_CALL tesseraGetResetStatus(TesseraContext cont
  */
 TESSERA_API TesseraResult TESSERA_CALL tesseraRecreateContext(TesseraContext context, TesseraContext* outNew,
                                                               uint32_t* outFlags);
+
+/**
+ * tesseraRecreateContext with a policy for what may change when the old adapter is gone (TESSERA_RECREATE_*),
+ * and the outcome reported in `outFlags` (SHARE_PRESERVED, ADAPTER_CHANGED, SOFTWARE; the new context's own
+ * info says which adapter). The share-group rule is the same; when the adapter changes the new context may
+ * not be able to join the surviving group (another device cannot share objects), in which case it starts an
+ * empty one and SHARE_PRESERVED is not set.
+ */
+TESSERA_API TesseraResult TESSERA_CALL tesseraRecreateContextWithPolicy(TesseraContext context,
+                                                                        uint32_t policy,
+                                                                        TesseraContext* outNew,
+                                                                        uint32_t* outFlags);
+
+/**
+ * Sharing, explained (0.15.0). tesseraCanShare answers BEFORE a create whether `config` could share objects
+ * with the live context `parent` (what tesseraCreateContext would do with config.shareWith = parent), and
+ * says why not. It creates nothing and touches no driver. `outReason` receives TESSERA_SHARE_OK or one of the
+ * reasons; the call itself succeeds (INVALID_HANDLE for a dead parent, INVALID_ARGUMENT for a bad config). A
+ * "yes" is the library's best knowledge, not a promise: the driver has the last word.
+ */
+#define TESSERA_SHARE_OK 0
+#define TESSERA_SHARE_PARENT_LOST 1 /**< the parent is lost: share with a surviving member of its group */
+#define TESSERA_SHARE_API_MISMATCH                                                                           \
+    2 /**< this backend does not share between OpenGL and OpenGL ES contexts (EGL; WGL and GLX drivers       \
+         accepted it) */
+#define TESSERA_SHARE_PROFILE_MISMATCH 3 /**< e.g. a core context and a legacy/compatibility one (CGL) */
+#define TESSERA_SHARE_DIFFERENT_BACKEND                                                                      \
+    4 /**< the request would be served by another backend than the parent's */
+#define TESSERA_SHARE_DIFFERENT_ADAPTER                                                                      \
+    5 /**< the request names a GPU other than the one the parent runs on */
+#define TESSERA_SHARE_DIFFERENT_DISPLAY                                                                      \
+    6 /**< the parent lives on another display/connection (a window of another server, another EGL device)   \
+       */
+#define TESSERA_SHARE_FORMAT_MISMATCH                                                                        \
+    7 /**< the request needs a framebuffer format the parent's cannot share with (WGL/NVIDIA: a deeper depth \
+         buffer than the parent's) */
+TESSERA_API TesseraResult TESSERA_CALL tesseraCanShare(const TesseraContextConfig* config,
+                                                       TesseraContext parent, int32_t* outReason);
+
+/** A share group, from tesseraGetShareGroup: contexts created with `shareWith` (directly or through a chain)
+ * form one group. */
+typedef struct TesseraShareGroupInfo {
+    uint32_t structSize; /**< in: sizeof(TesseraShareGroupInfo) */
+    uint32_t reserved32;
+    uint64_t groupId; /**< opaque; equal for contexts of one group, never reused within a process */
+    int32_t members;  /**< live handles in the group, lost ones included (they still have to be destroyed) */
+    int32_t alive;    /**< of those, not lost: what survives a loss and can be shared with */
+    uint64_t reserved[4];
+} TesseraShareGroupInfo;
+
+static inline TesseraShareGroupInfo tesseraDefaultShareGroupInfo(void) {
+    TesseraShareGroupInfo g;
+    memset(&g, 0, sizeof g);
+    g.structSize = (uint32_t)sizeof g;
+    return g;
+}
+
+/** The share group of `context`: its id and how many members are there and alive. Any thread. */
+TESSERA_API TesseraResult TESSERA_CALL tesseraGetShareGroup(TesseraContext context,
+                                                            TesseraShareGroupInfo* outInfo);
 
 /**
  * Thread rules (enforced, not just documented):

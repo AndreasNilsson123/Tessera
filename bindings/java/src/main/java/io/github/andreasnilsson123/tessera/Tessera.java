@@ -178,6 +178,19 @@ public final class Tessera {
     }
 
     /**
+     * Would a context made from {@code config} be able to share objects with {@code parent}, and if not why? Answers before any create
+     * and touches no driver; a "yes" is the library's best knowledge, the driver has the last word (ABI 0.15.0).
+     */
+    public static ShareVerdict canShare(ContextConfig config, Context parent) {
+        Objects.requireNonNull(config, "config");
+        Objects.requireNonNull(parent, "parent");
+        final NativeApi api = apiInitialized();
+        final int[] out = new int[1];
+        check(api, api.canShare(config.toNative(), parent.handle(), out));
+        return ShareVerdict.of(out[0]);
+    }
+
+    /**
      * The GPUs the backends of this build can use, backend by backend in the order they are tried (ABI 0.14.0). An id goes to
      * {@link ContextConfig.Builder#adapter(String)}. GLX cannot list; an empty list is not an error.
      */

@@ -7,6 +7,7 @@
 ContextConfig config = ContextConfig.builder()
         .profile(ContextConfig.Profile.CORE).version(3, 3)      // minimums; the real result is in ctx.info()
         // which GPU: Tessera.enumerateAdapters() lists ids; .adapter(id) asks for one, ctx.info().adapter() says who served
+        // after a loss: ctx.lossCause(), ctx.recreate(RecreatePolicy.ANY_HARDWARE); sharing: Tessera.canShare(cfg, parent), ctx.shareGroup()
         .depthBits(24)
         .build();
 

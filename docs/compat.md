@@ -2,7 +2,7 @@
 
 Only what was actually run is marked as verified. "Not run" means there is no evidence either way, not that it is broken.
 This project has been developed on one machine plus GitHub's hosted runners, so most vendor/OS rows are still empty; filling them
-is the point of this file. Last updated at ABI 0.14.0.
+is the point of this file. Last updated at ABI 0.15.0.
 
 ## Verified
 
@@ -49,6 +49,22 @@ drop it with a log line). Nothing here is assumed from a spec: each cell is a co
 Not covered by a cell: a driver that **grants** a context priority, a device UUID that is **reported**, and swap control through a
 GLX server that advertises the extensions: those code paths are tested by unit tests over their decision logic and over fakes
 (`test_core`), not against a real driver.
+
+## Sharing between contexts, measured (ABI 0.15.0)
+
+`tests/interop_common.hpp: sharingExplained` creates a parent, then a context with `shareWith` for each difference below, and prints
+what happened next to `tesseraCanShare`'s verdict (the two must agree). "ok" = the create succeeded and the objects are shared.
+
+| Difference from the parent | WGL, NVIDIA 546.30 | GLX, Mesa 23.2 D3D12 | EGL, Mesa 23.2 D3D12 and llvmpipe |
+|---|---|---|---|
+| Same request; stencil 8; 4x MSAA; sRGB; alpha 8; debug context; core 3.3 against a compatibility parent | ok | ok | ok |
+| Float colour buffer | ok | not creatable here at all | ok |
+| Depth buffer 16 bits against the parent's 24 | **fails if the child makes its own format** (`wglShareLists` / `wglCreateContextAttribsARB` error); ok now: the library reuses the parent's format | ok | ok |
+| Depth buffer 32 bits against the parent's 24 | **fails** (`NO_MATCHING_CONFIG`, verdict `FORMAT_MISMATCH`) | ok | ok |
+| OpenGL ES child of an OpenGL parent | ok (accepted by the driver) | ok | refused by Tessera (verdict `API_MISMATCH`) |
+
+Not measured: AMD and Intel drivers, macOS beyond the hosted VM (there a core and a legacy context cannot share: verdict
+`PROFILE_MISMATCH`, tested on the fake and the real framework).
 
 ## Frame pacing, measured
 

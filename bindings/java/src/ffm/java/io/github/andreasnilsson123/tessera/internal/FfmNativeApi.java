@@ -37,6 +37,8 @@ final class FfmNativeApi implements NativeApi {
             INFO_SURFACE = 24, INFO_SAMPLES = 28, INFO_RED = 32, INFO_GREEN = 36, INFO_BLUE = 40, INFO_ALPHA = 44, INFO_DEPTH = 48,
             INFO_STENCIL = 52, INFO_VENDOR = 56, INFO_RENDERER = 184, INFO_VERSION = 312, INFO_PRIORITY = 440,
             INFO_ADAPTER_CLASS = 444, INFO_ADAPTER = 448;
+    // TesseraShareGroupInfo (56 bytes)
+    private static final long SG_SIZE = 56, SG_ID = 8, SG_MEMBERS = 16, SG_ALIVE = 20;
     // TesseraAdapterInfo (248 bytes)
     private static final long AD_SIZE = 248;
     private static final long AD_FLAGS = 4, AD_VENDOR = 8, AD_DEVICE = 12, AD_LUID = 16, AD_BACKEND = 24, AD_ID = 40, AD_NAME = 88;
@@ -54,7 +56,7 @@ final class FfmNativeApi implements NativeApi {
     private static volatile LostSink lostSink;
 
     private final MethodHandle hInit, hTerminate, hAbi, hVersion, hCreate, hDestroy, hInfo, hMakeCurrent, hCurrent, hProc, hSwap,
-            hSwapInterval, hReset, hRecreate, hLastError, hResultString, hSetLog, hNativeHandles, hPrewarm, hPooled, hCreateForWindow, hProbe, hPoolTopUp, hPooledCountFor, hPoolClear, hIsLost, hSetLost, hSwapControl, hCreateForNativeWindow, hResizeWindow, hAdapters;
+            hSwapInterval, hReset, hRecreate, hLastError, hResultString, hSetLog, hNativeHandles, hPrewarm, hPooled, hCreateForWindow, hProbe, hPoolTopUp, hPooledCountFor, hPoolClear, hIsLost, hSetLost, hSwapControl, hCreateForNativeWindow, hResizeWindow, hAdapters, hRecreatePolicy, hLossCause, hCanShare, hShareGroup;
     private final MemorySegment logStub, lostStub;
 
     public FfmNativeApi(Path library) {
@@ -89,6 +91,10 @@ final class FfmNativeApi implements NativeApi {
         hCreateForNativeWindow = down(linker, lookup, "tesseraCreateContextForNativeWindow",
                 FunctionDescriptor.of(INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS, INT, ValueLayout.ADDRESS));
         hResizeWindow = down(linker, lookup, "tesseraResizeWindow", FunctionDescriptor.of(INT, LONG, INT, INT));
+        hRecreatePolicy = down(linker, lookup, "tesseraRecreateContextWithPolicy", FunctionDescriptor.of(INT, LONG, INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+        hLossCause = down(linker, lookup, "tesseraGetLossCause", FunctionDescriptor.of(INT, LONG, ValueLayout.ADDRESS));
+        hCanShare = down(linker, lookup, "tesseraCanShare", FunctionDescriptor.of(INT, ValueLayout.ADDRESS, LONG, ValueLayout.ADDRESS));
+        hShareGroup = down(linker, lookup, "tesseraGetShareGroup", FunctionDescriptor.of(INT, LONG, ValueLayout.ADDRESS));
         hAdapters = down(linker, lookup, "tesseraEnumerateAdapters", FunctionDescriptor.of(INT, ValueLayout.ADDRESS, INT, ValueLayout.ADDRESS));
         hSwapControl = down(linker, lookup, "tesseraGetSwapControl", FunctionDescriptor.of(INT, LONG, ValueLayout.ADDRESS));
         hIsLost = down(linker, lookup, "tesseraIsContextLost", FunctionDescriptor.of(INT, LONG, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
@@ -509,6 +515,61 @@ final class FfmNativeApi implements NativeApi {
             out4[1] = sc.get(INT, SC_REQUESTED);
             out4[2] = sc.get(INT, SC_APPLIED);
             out4[3] = sc.get(INT, SC_MAX);
+            return r;
+        } catch (Throwable t) {
+            throw failed(t);
+        }
+    }
+
+    @Override
+    public int recreateWithPolicy(long handle, int policy, long[] outHandle, int[] outFlags) {
+        try (Arena arena = Arena.ofConfined()) {
+            final MemorySegment h = arena.allocate(8, 8);
+            final MemorySegment f = arena.allocate(4, 4);
+            final int r = (int) hRecreatePolicy.invokeExact(handle, policy, h, f);
+            outHandle[0] = h.get(LONG, 0);
+            outFlags[0] = f.get(INT, 0);
+            return r;
+        } catch (Throwable t) {
+            throw failed(t);
+        }
+    }
+
+    @Override
+    public int lossCause(long handle, int[] out1) {
+        try (Arena arena = Arena.ofConfined()) {
+            final MemorySegment c = arena.allocate(4, 4);
+            final int r = (int) hLossCause.invokeExact(handle, c);
+            out1[0] = c.get(INT, 0);
+            return r;
+        } catch (Throwable t) {
+            throw failed(t);
+        }
+    }
+
+    @Override
+    public int canShare(int[] cfg, long parent, int[] out1) {
+        try (Arena arena = Arena.ofConfined()) {
+            final MemorySegment why = arena.allocate(4, 4);
+            final int r = (int) hCanShare.invokeExact(config(arena, cfg, 0L), parent, why);
+            out1[0] = why.get(INT, 0);
+            return r;
+        } catch (Throwable t) {
+            throw failed(t);
+        }
+    }
+
+    @Override
+    public int shareGroup(long handle, long[] ids1, int[] counts2) {
+        try (Arena arena = Arena.ofConfined()) {
+            final MemorySegment g = arena.allocate(SG_SIZE, 8);
+            g.set(INT, 0, (int) SG_SIZE);
+            final int r = (int) hShareGroup.invokeExact(handle, g);
+            if (r == 0) {
+                ids1[0] = g.get(LONG, SG_ID);
+                counts2[0] = g.get(INT, SG_MEMBERS);
+                counts2[1] = g.get(INT, SG_ALIVE);
+            }
             return r;
         } catch (Throwable t) {
             throw failed(t);

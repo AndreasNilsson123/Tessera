@@ -284,30 +284,29 @@ vendor-name `if` remains in backend code outside the table.
   adapter lists. **Not verified on a real hybrid machine** (this one has a single GPU plus WARP), so no claim that the advice appears
   where it should on one.
 
-### 12.6 Loss and reset beyond polling
+### 12.6 Loss and reset beyond polling - DONE except the real reset (chunk 10, ABI 0.15.0, ADR 0018)
 
-- [ ] **Opportunistic polling.** For contexts created with reset notification, check `glGetGraphicsResetStatus`
-  inside `tesseraSwapBuffers` / `tesseraMakeCurrent` (cheap, already on the right thread, context current) so the
-  lost callback fires without the application having to remember a poll. Opt-out flag; still no Tessera threads.
-- [ ] **Recreate onto a different adapter.** After device removal the same adapter may be gone. Let
-  `tesseraRecreateContext` take a policy (same adapter / any hardware / allow software) and report which was used;
-  share-group preservation rules unchanged. **ABI**
-- [ ] **Real reset test** (10.1): a deliberately hanging workload on a robust context on real hardware to produce
-  a genuine `GUILTY`/`INNOCENT`, then recreate with shared objects re-uploaded. Until run, claims stay "fake
-  backend only".
-- [ ] **Distinguish loss causes.** Separate "GPU reset" from "display/driver removed" from "window gone" in the
-  lost callback's status, since the right response differs (re-upload, switch adapter, give up).
+- [x] **Opportunistic polling**: a robust context with reset notification is checked inside `tesseraMakeCurrent` and `tesseraSwapBuffers`;
+  the lost callback fires without the application polling; opt-out `TESSERA_FLAG_NO_RESET_POLL`; still no Tessera threads. Tested on the
+  fake backend (swap, make-current after a reset while away, the opt-out, contexts without reset notification) and, through the real
+  upcalls, in Java.
+- [x] **Recreate onto a different adapter**: `tesseraRecreateContextWithPolicy` (same adapter / any hardware / allow software) with
+  `ADAPTER_CHANGED` and `SOFTWARE` reported; the share-group rule unchanged (an empty group when the new device cannot share). Tested on a
+  fake backend with two GPUs and a CPU device (removal, fallback, refusal); the Java SelfTest runs all three policies on the real driver.
+- [ ] **Real reset test** (10.1): **not done, waiting for the owner's go-ahead** (it can blank the screen). Claims stay "fake backend only".
+- [x] **Distinguish loss causes**: `tesseraGetLossCause` (`GPU_RESET`, `DEVICE`, `WINDOW_GONE`) and `TESSERA_ERROR_WINDOW_GONE`. WGL and GLX
+  window-gone are verified on real windows; the EGL case is implemented but Mesa's X11 platform does not report it (the swap passes).
 
-### 12.7 Sharing, explained
+### 12.7 Sharing, explained - DONE (chunk 10, ABI 0.15.0, ADR 0018)
 
-- [ ] **Preflight.** `tesseraCanShare(a, b)` (or a config + context form) returns *why not* before a failed
-  create: API mismatch, profile mismatch (CGL legacy vs core), different backend, different display, lost parent.
-  Today these are discovered as failures of the create call. **ABI**
-- [ ] **Introspection.** Share-group id and member count for a context, so a host can reason about what survives a
-  loss without keeping its own bookkeeping. **ABI**
-- [ ] **Cross-format sharing on WGL/GLX.** Establish by test which pixel-format/FBConfig differences break sharing
-  on each real driver and record them; make `tesseraCanShare` and the ranking in 12.1 prefer the parent's format
-  when a share parent is given.
+- [x] **Preflight**: `tesseraCanShare` with reasons (parent lost, API, profile, backend, adapter, display, format); on every real backend
+  the verdict is compared with the real create for ten request variants (`sharingExplained`), on the CGL fake and fake backends for the
+  rest. **Not verified:** CGL on a real Mac beyond the hosted VM, and a "yes" is never a promise.
+- [x] **Introspection**: `tesseraGetShareGroup` (group id, members, alive); Java `Context.shareGroup()`.
+- [x] **Cross-format sharing on WGL/GLX**: measured on NVIDIA/WGL (a different depth-buffer size breaks it, nothing else tried does), Mesa
+  GLX D3D12 and EGL D3D12/llvmpipe (nothing breaks it); the library now reuses the parent's pixel format on WGL when it serves the
+  request, and refuses a deeper one with a reason. The "ranking in 12.1" part waits for 12.1 itself. **Not measured:** AMD, Intel, a
+  non-GLVND Linux driver.
 
 ### 12.8 Explaining a failed selection
 
@@ -389,6 +388,8 @@ Needs: the owner for the decisions; the tooling needs nothing.
 ### Chunk 8 - Version negotiation (12.2) - DONE (this is Phase 12.2; the four items are listed there)
 
 ### Chunk 9 - Hosts and GPUs (12.4 and 12.5) - DONE except real targeting on Windows (see the two sections above)
+
+### Chunk 10 - Loss and sharing (12.6 and 12.7) - DONE except the real reset test (see the two sections above)
 
 ### Chunk 7 - Software/headless fallback and ANGLE/Mesa - DONE on the recommendation of `docs/decisions-1.0.md` item 3 (system only for 1.0; the owner has not recorded the decision)
 Needs: the 10.5 decision "do we ship Mesa/ANGLE?" (**started on the owner's go-ahead; it assumes "no bundled binaries in the release", the reversible choice**), an ANGLE build to test against.

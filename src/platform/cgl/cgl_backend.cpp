@@ -326,6 +326,15 @@ class CglBackend final : public Backend {
 
     /* A renderer id ("cgl:0x00024600") is honoured through the pixel format; LUIDs, preferences and other
      * backends' ids are not ours. */
+    /* A core context and a legacy (2.1) one cannot share objects on macOS. */
+    int32_t shareProblem(const TesseraContextConfig& c, const ContextObject& parent) const noexcept override {
+        TesseraContextInfo info = tesseraDefaultContextInfo();
+        parent.describe(info);
+        const bool parentCore = info.profile == TESSERA_PROFILE_CORE;
+        const bool wantCore = c.profile == TESSERA_PROFILE_CORE || c.versionMajor >= 3; // as planCgl decides
+        return parentCore != wantCore ? TESSERA_SHARE_PROFILE_MISMATCH : TESSERA_SHARE_OK;
+    }
+
     bool supportsAdapterSelection(const TesseraContextConfig& c) const noexcept override {
         int32_t id = 0;
         return c.adapterLuid == 0 && c.gpuPreference == TESSERA_GPU_DEFAULT && parseRendererId(c.adapter, id);
@@ -373,7 +382,7 @@ class CglBackend final : public Backend {
         if (shareWith) {
             parent = std::dynamic_pointer_cast<CglContext>(shareWith);
             if (!parent)
-                return fail(TESSERA_ERROR_INVALID_ARGUMENT,
+                return fail(TESSERA_ERROR_UNSUPPORTED,
                             "cannot share objects with a context from another backend");
         }
 

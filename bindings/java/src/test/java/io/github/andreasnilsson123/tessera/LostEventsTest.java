@@ -67,6 +67,7 @@ public final class LostEventsTest {
             check(events.size() == 1 && events.get(0).equals("GUILTY"), "one GUILTY event: " + events);
             check(threads.size() == 1 && threads.get(0) == Thread.currentThread(), "the event arrives on the detecting thread");
             check(ctx.isLost() && ctx.lostStatus() == ResetStatus.GUILTY, "isLost / lostStatus agree: " + ctx.lostStatus());
+            check(ctx.lossCause() == LossCause.GPU_RESET, "the cause is a GPU reset: " + ctx.lossCause());
             try {
                 ctx.swapBuffers();
             } catch (ContextLostException expected) {

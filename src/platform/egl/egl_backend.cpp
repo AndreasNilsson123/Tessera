@@ -527,6 +527,9 @@ class EglContext final : public ContextObject {
         out = info;
         return TESSERA_SUCCESS;
     }
+    const EglShared* sharedState() const noexcept {
+        return shared_.get();
+    }
 
     TesseraResult bindCurrent() noexcept override {
         const EglFns& f = shared_->api->fn;
@@ -559,6 +562,10 @@ class EglContext final : public ContextObject {
         const EglFns& f = shared_->api->fn;
         if (!f.eglSwapBuffers(shared_->dpy, surface)) {
             const EGLint err = f.eglGetError();
+            // BAD_NATIVE_WINDOW (0x300B) / BAD_SURFACE (0x300D): the window the surface was made for is gone
+            if (err == 0x300B || err == 0x300D)
+                return fail(TESSERA_ERROR_WINDOW_GONE,
+                            eglErrorText("eglSwapBuffers failed: the window is gone", err));
             return fail(err == kContextLost ? TESSERA_ERROR_CONTEXT_LOST : TESSERA_ERROR_PLATFORM,
                         eglErrorText("eglSwapBuffers failed (is the window gone?)", err));
         }
@@ -1009,6 +1016,26 @@ class EglBackend final : public Backend {
 
     /* EGL can name its devices (uuid, render node, index); LUIDs and GPU preferences are Windows' and refused
      * here. The CPU backend chooses its own device. */
+    /* Objects can only be shared on one EGLDisplay: the parent's display against the one this request would
+     * use, where that display is already open (otherwise the adapter ids, compared by the core, are all there
+     * is to go on). */
+    int32_t shareProblem(const TesseraContextConfig& c, const ContextObject& parent) const noexcept override {
+        const auto* p = dynamic_cast<const EglContext*>(&parent);
+        if (!p)
+            return TESSERA_SHARE_DIFFERENT_BACKEND;
+        std::string selector;
+        std::lock_guard<std::mutex> lock(mutex_);
+        const EglShared* wanted = nullptr;
+        if (c.adapter[0] == '\0') {
+            wanted = shared_.get();
+        } else if (eglSelectorFromAdapterId(c.adapter, selector)) {
+            const auto it = adapterShared_.find(selector);
+            if (it != adapterShared_.end())
+                wanted = it->second.get();
+        }
+        return wanted && p->sharedState() != wanted ? TESSERA_SHARE_DIFFERENT_DISPLAY : TESSERA_SHARE_OK;
+    }
+
     bool supportsAdapterSelection(const TesseraContextConfig& c) const noexcept override {
         std::string selector;
         return !software_ && c.adapterLuid == 0 && c.gpuPreference == TESSERA_GPU_DEFAULT &&
@@ -1158,7 +1185,7 @@ class EglBackend final : public Backend {
         if (shareWith) {
             parent = std::dynamic_pointer_cast<EglContext>(shareWith);
             if (!parent)
-                return fail(TESSERA_ERROR_INVALID_ARGUMENT,
+                return fail(TESSERA_ERROR_UNSUPPORTED,
                             "cannot share objects with a context from another backend");
             if (parent->apiEnum != apiEnum)
                 return fail(TESSERA_ERROR_INVALID_ARGUMENT,
@@ -1315,7 +1342,7 @@ class EglBackend final : public Backend {
     }
 
     const bool software_;
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
     std::shared_ptr<EglShared> shared_;
     std::map<std::string, std::shared_ptr<EglShared>>
         adapterShared_; // by device selector (TesseraContextConfig::adapter)

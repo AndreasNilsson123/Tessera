@@ -91,6 +91,7 @@ public final class SelfTest {
             check(e2.result() == Result.NO_MATCHING_CONFIG, "core refused only as NO_MATCHING_CONFIG: " + e2);
         }
         adapters();
+        sharingExplained();
         // EXACT_VERSION is a flag the library knows (ABI 0.13.0): it is accepted and the minimum still holds.
         try (Context exact = Context.create(ContextConfig.builder().profile(ContextConfig.Profile.CORE).version(3, 3)
                 .flags(ContextConfig.Flags.EXACT_VERSION).build())) {
@@ -519,6 +520,47 @@ public final class SelfTest {
         });
         expect(TesseraException.class, "target beyond the cap", () -> Tessera.topUpPool(cfg, 65));
         check(Tessera.clearPool() >= 1 && Tessera.pooledContextCount(cfg) == 0, "cleared");
+    }
+
+    /** Sharing explained, loss causes and recreate policies (ABI 0.15.0). */
+    static void sharingExplained() {
+        try (Context a = Context.create(plain())) {
+            try (Context b = Context.create(ContextConfig.builder().fallback(ContextConfig.Fallback.BEST_EFFORT).shareWith(a).build());
+                    Context c = Context.create(plain())) {
+                final ShareGroup ga = a.shareGroup();
+                check(ga.id() == b.shareGroup().id() && ga.id() != c.shareGroup().id(), "group ids: " + ga);
+                check(ga.members() == 2 && ga.alive() == 2 && c.shareGroup().members() == 1, "group counts: " + ga);
+            }
+            check(a.shareGroup().members() == 1, "the group shrinks when a member closes");
+            check(a.lossCause() == LossCause.NONE, "a healthy context has no loss cause");
+            // The verdict agrees with what a create would do.
+            final ShareVerdict same = Tessera.canShare(plain(), a);
+            check(same == ShareVerdict.OK && same.canShare(), "the same request can share: " + same);
+            final ContextConfig es = ContextConfig.builder().api(ContextConfig.Api.OPENGL_ES).fallback(ContextConfig.Fallback.BEST_EFFORT)
+                    .shareWith(a).build();
+            final ShareVerdict esVerdict = Tessera.canShare(es, a);
+            boolean created;
+            try (Context e = Context.create(es)) {
+                created = !e.isLost();
+            } catch (TesseraException e) {
+                created = false;
+            }
+            // a "no" must fail the create; a "yes" may still fail on the request itself (ES is not available everywhere)
+            check(!(created && !esVerdict.canShare()), "a context that was created had been predicted impossible: " + esVerdict);
+
+            // Recreate policies on a healthy context: the same adapter always works; the others work or say why.
+            try (Context same2 = a.recreate(RecreatePolicy.SAME_ADAPTER).context()) {
+                check(!same2.info().renderer().isEmpty(), "recreated on the same adapter");
+            }
+            try (Context sw = a.recreate(RecreatePolicy.ALLOW_SOFTWARE).context()) {
+                check(!sw.info().renderer().isEmpty(), "recreated, software allowed");
+            }
+            try (Context hw = a.recreate(RecreatePolicy.ANY_HARDWARE).context()) {
+                check((hw.info().adapterClass() & AdapterInfo.SOFTWARE) == 0, "any-hardware never returns a CPU renderer");
+            } catch (TesseraException e) {
+                check(e.result() == Result.NO_MATCHING_CONFIG, "only a CPU renderer is left: " + e);
+            }
+        }
     }
 
     static void sharing() {

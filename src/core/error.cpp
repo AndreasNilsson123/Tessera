@@ -60,6 +60,8 @@ TESSERA_API const char* TESSERA_CALL tesseraResultString(TesseraResult result) {
         return "object used on the wrong thread";
     case TESSERA_ERROR_CONTEXT_LOST:
         return "context lost";
+    case TESSERA_ERROR_WINDOW_GONE:
+        return "window gone";
     default:
         return "unrecognized result code";
     }

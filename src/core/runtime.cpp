@@ -99,13 +99,15 @@ void Runtime::setContextLostCallback(TesseraContextLostCallback callback, void* 
     lostCallbackUserData_ = userData;
 }
 
-void Runtime::markLost(TesseraContext handle, ContextObject& object, int32_t status) {
+void Runtime::markLost(TesseraContext handle, ContextObject& object, int32_t status, int32_t cause) {
     bool expected = false;
     if (!object.lost.compare_exchange_strong(expected, true))
         return; // somebody already reported this loss: the callback runs once per context
     object.lostStatus.store(status);
-    logf(TESSERA_LOG_WARN, "a context was lost (reset status %d); recreate it with tesseraRecreateContext",
-         status);
+    object.lossCause.store(cause);
+    logf(TESSERA_LOG_WARN,
+         "a context was lost (reset status %d, cause %d); recreate it with tesseraRecreateContext", status,
+         cause);
     TesseraContextLostCallback callback;
     void* userData;
     {
@@ -115,6 +117,29 @@ void Runtime::markLost(TesseraContext handle, ContextObject& object, int32_t sta
     }
     if (callback)
         callback(handle, status, userData); // no lock held, so it may recreate or destroy contexts
+}
+
+bool Runtime::pollReset(TesseraContext handle, ContextObject& object) {
+    constexpr uint32_t kPolled = TESSERA_FLAG_ROBUST_ACCESS | TESSERA_FLAG_RESET_NOTIFICATION;
+    if ((object.request.flags & kPolled) != kPolled || (object.request.flags & TESSERA_FLAG_NO_RESET_POLL))
+        return false;
+    int32_t status = TESSERA_RESET_NONE;
+    if (object.queryResetStatus(status) != TESSERA_SUCCESS || status == TESSERA_RESET_NONE)
+        return false; // a driver without the query, or healthy: nothing to report
+    markLost(handle, object, status, TESSERA_LOSS_GPU_RESET);
+    return true;
+}
+
+TesseraResult Runtime::lossCause(TesseraContext handle, int32_t& outCause) {
+    outCause = TESSERA_LOSS_NONE;
+    auto object = contexts_.get(handle);
+    if (!object)
+        return fail(TESSERA_ERROR_INVALID_HANDLE, "not a live context handle");
+    if (object->lost.load()) {
+        const int32_t cause = object->lossCause.load();
+        outCause = cause != TESSERA_LOSS_NONE ? cause : TESSERA_LOSS_DEVICE;
+    }
+    return TESSERA_SUCCESS;
 }
 
 TesseraResult Runtime::isContextLost(TesseraContext handle, int32_t& outLost, int32_t& outStatus) {
@@ -152,7 +177,7 @@ TesseraResult Runtime::init() {
     if (refCount_ == 0) {
         std::vector<std::shared_ptr<Backend>> builtin;
         if (!g_builtinDisabled.load())
-            registerBuiltinBackends(builtin); // may throw; nothing changed yet
+            registerBuiltinBackends(builtin, &softwareBackend_); // may throw; nothing changed yet
         backends_ = std::move(builtin);
         contexts_.open();
         warnAt_.store(64);
@@ -206,6 +231,7 @@ TesseraResult Runtime::terminate() {
             return TESSERA_SUCCESS;
         leftover = contexts_.closeAndDrain();
         backends.swap(backends_);
+        softwareBackend_.reset();
     }
     VersionMemory::instance()
         .clear(); // what worked on a driver is a fact about that run, not about the next one (ADR 0016)
@@ -251,6 +277,11 @@ TesseraResult Runtime::terminate() {
     return TESSERA_SUCCESS;
 }
 
+void Runtime::setSoftwareBackendForTesting(std::shared_ptr<Backend> backend) {
+    std::lock_guard<std::mutex> lock(lifecycle_);
+    softwareBackend_ = std::move(backend);
+}
+
 void Runtime::registerBackend(std::shared_ptr<Backend> backend) {
     std::lock_guard<std::mutex> lock(lifecycle_);
     backends_.push_back(std::move(backend));
@@ -260,11 +291,16 @@ void Runtime::registerBackend(std::shared_ptr<Backend> backend) {
 
 TesseraResult Runtime::createNative(const TesseraContextConfig& config,
                                     const std::shared_ptr<ContextObject>& share, const Attempt& attempt,
-                                    std::shared_ptr<ContextObject>& created) {
+                                    std::shared_ptr<ContextObject>& created, bool softwareOnly) {
     std::vector<std::shared_ptr<Backend>> backends;
     {
         std::lock_guard<std::mutex> lock(lifecycle_);
-        backends = backends_;
+        if (softwareOnly) {
+            if (softwareBackend_)
+                backends.push_back(softwareBackend_);
+        } else {
+            backends = backends_;
+        }
     }
 
     TesseraResult result = TESSERA_ERROR_UNSUPPORTED;
@@ -274,14 +310,16 @@ TesseraResult Runtime::createNative(const TesseraContextConfig& config,
         if (adapter && !backend->supportsAdapterSelection(config))
             continue; // never serve a GPU request from a backend that cannot honour it
         result = attempt(*backend, share, created);
+        if (result == TESSERA_SUCCESS && created)
+            created->backendName = backend->name(); // a literal: lives as long as the program
         if (result != TESSERA_ERROR_UNSUPPORTED)
             break;
     }
     if (adapter && result == TESSERA_ERROR_UNSUPPORTED && !created)
         return fail(
             TESSERA_ERROR_UNSUPPORTED,
-            "choosing a GPU through the configuration is only implemented for WGL (Windows); on EGL use "
-            "TESSERA_EGL_DEVICE");
+            "no backend can honour this GPU request (WGL: luid or a preference, EGL: uuid/node/index, CGL: "
+            "a renderer id; GLX cannot name a GPU)");
     if (result == TESSERA_ERROR_UNSUPPORTED && backends.empty())
         return fail(TESSERA_ERROR_UNSUPPORTED, "no OpenGL backend is available in this build/platform");
     if (result != TESSERA_SUCCESS)
@@ -611,8 +649,14 @@ TesseraResult Runtime::makeCurrent(TesseraContext handle) {
         if (wasNew)
             object->affinity.release(me);
         if (r == TESSERA_ERROR_CONTEXT_LOST)
-            markLost(handle, *object, TESSERA_RESET_UNKNOWN);
+            markLost(handle, *object, TESSERA_RESET_UNKNOWN, TESSERA_LOSS_DEVICE);
         return r;
+    }
+    if (pollReset(handle, *object)) { // opportunistic polling: the driver reset it while it was away
+        object->unbindCurrent();
+        if (wasNew)
+            object->affinity.release(me);
+        return fail(TESSERA_ERROR_CONTEXT_LOST, "the driver reported a reset of this context");
     }
 
     // Switching away from another of our contexts: WGL/GLX replace it at the driver, but EGL keeps one
@@ -662,13 +706,18 @@ TesseraResult Runtime::swapBuffers(TesseraContext handle) {
     // lost context at the next swap, so context-lost events can be followed through the real JNI and FFM
     // upcalls without a GPU reset.
     if (std::string lose; readEnv("TESSERA_TEST_LOSE_ON_SWAP", lose) && lose == "1") {
-        markLost(handle, *object, TESSERA_RESET_GUILTY);
+        markLost(handle, *object, TESSERA_RESET_GUILTY, TESSERA_LOSS_GPU_RESET);
         return fail(TESSERA_ERROR_CONTEXT_LOST, "test hook: the context was lost at swap");
     }
 #endif
     const TesseraResult r = object->swapBuffers();
     if (r == TESSERA_ERROR_CONTEXT_LOST)
-        markLost(handle, *object, TESSERA_RESET_UNKNOWN);
+        markLost(handle, *object, TESSERA_RESET_UNKNOWN, TESSERA_LOSS_DEVICE);
+    else if (r == TESSERA_ERROR_WINDOW_GONE)
+        markLost(handle, *object, TESSERA_RESET_UNKNOWN,
+                 TESSERA_LOSS_WINDOW_GONE); // not a GPU problem: do not recreate onto it
+    else if (r == TESSERA_SUCCESS && pollReset(handle, *object))
+        return fail(TESSERA_ERROR_CONTEXT_LOST, "the driver reported a reset of this context at the swap");
     return r;
 }
 
@@ -742,7 +791,7 @@ TesseraResult Runtime::getSwapControl(TesseraContext handle, TesseraSwapControl&
     out = tesseraDefaultSwapControl();
     const TesseraResult r = object->getSwapControl(out);
     if (r == TESSERA_ERROR_CONTEXT_LOST)
-        markLost(handle, *object, TESSERA_RESET_UNKNOWN);
+        markLost(handle, *object, TESSERA_RESET_UNKNOWN, TESSERA_LOSS_DEVICE);
     if (r != TESSERA_SUCCESS)
         return r;
     out.requested = object->requestedInterval.load();
@@ -783,20 +832,37 @@ TesseraResult Runtime::getResetStatus(TesseraContext handle, int32_t& outStatus)
     if (TesseraResult r = object->queryResetStatus(status); r != TESSERA_SUCCESS)
         return r;
     if (status != TESSERA_RESET_NONE)
-        markLost(handle, *object, status);
+        markLost(handle, *object, status, TESSERA_LOSS_GPU_RESET);
     outStatus = status;
     return TESSERA_SUCCESS;
 }
 
 TesseraResult Runtime::recreateContext(TesseraContext handle, TesseraContext& out, uint32_t& outFlags) {
+    const TesseraResult r = recreateContextWithPolicy(handle, TESSERA_RECREATE_SAME_ADAPTER, out, outFlags);
+    outFlags &= TESSERA_RECREATE_SHARE_PRESERVED; // this call has only ever reported that one; the others are
+                                                  // the policy form's
+    return r;
+}
+
+TesseraResult Runtime::recreateContextWithPolicy(TesseraContext handle, uint32_t policy, TesseraContext& out,
+                                                 uint32_t& outFlags) {
     out = TESSERA_NULL_HANDLE;
     outFlags = 0;
+    if (policy > TESSERA_RECREATE_ALLOW_SOFTWARE)
+        return fail(TESSERA_ERROR_INVALID_ARGUMENT, "unknown recreate policy");
     auto object = contexts_.get(handle);
     if (!object)
         return fail(TESSERA_ERROR_INVALID_HANDLE, "not a live context handle");
+    TesseraContextInfo oldInfo = tesseraDefaultContextInfo();
+    object->describe(oldInfo);
 
     TesseraContextConfig config = object->request;
     config.shareWith = TESSERA_NULL_HANDLE;
+    if (policy != TESSERA_RECREATE_SAME_ADAPTER) { // the old adapter may be gone: do not ask for it again
+        config.adapterLuid = 0;
+        config.gpuPreference = TESSERA_GPU_DEFAULT;
+        std::memset(config.adapter, 0, sizeof config.adapter);
+    }
 
     // Find a surviving member of the old share group to join, so the group's objects are still there.
     TesseraHandle survivor = TESSERA_NULL_HANDLE;
@@ -820,10 +886,120 @@ TesseraResult Runtime::recreateContext(TesseraContext handle, TesseraContext& ou
     }
     config.shareWith = survivor;
 
-    if (TesseraResult r = createContext(config, out); r != TESSERA_SUCCESS)
+    TesseraResult r = createContext(config, out);
+    if (r != TESSERA_SUCCESS && survivor != TESSERA_NULL_HANDLE && policy != TESSERA_RECREATE_SAME_ADAPTER) {
+        // Another device cannot share objects with the survivors: start an empty group rather than give up.
+        survivor = TESSERA_NULL_HANDLE;
+        config.shareWith = TESSERA_NULL_HANDLE;
+        r = createContext(config, out);
+    }
+    if (r != TESSERA_SUCCESS && policy == TESSERA_RECREATE_ALLOW_SOFTWARE) {
+        // No GPU can serve any more: the CPU renderer, by name (it is never in the default order).
+        survivor = TESSERA_NULL_HANDLE;
+        config.shareWith = TESSERA_NULL_HANDLE;
+        std::shared_ptr<ContextObject> created;
+        const auto attempt = [&](Backend& backend, const std::shared_ptr<ContextObject>& share,
+                                 std::shared_ptr<ContextObject>& c) {
+            return backend.createContext(config, share, c);
+        };
+        const TesseraResult sw = createNative(config, nullptr, attempt, created, true);
+        if (sw == TESSERA_SUCCESS)
+            r = registerContext(config, nullptr, created, out);
+    }
+    if (r != TESSERA_SUCCESS)
         return r;
+
+    TesseraContextInfo newInfo = tesseraDefaultContextInfo();
+    if (auto fresh = contexts_.get(out))
+        fresh->describe(newInfo);
+    const bool software = (newInfo.adapterClass & TESSERA_ADAPTER_SOFTWARE) != 0;
+    if (policy == TESSERA_RECREATE_ANY_HARDWARE && software) {
+        destroyContext(out);
+        out = TESSERA_NULL_HANDLE;
+        return fail(TESSERA_ERROR_NO_MATCHING_CONFIG,
+                    "only a CPU renderer is left (use the ALLOW_SOFTWARE policy to accept it)");
+    }
     if (survivor != TESSERA_NULL_HANDLE)
         outFlags |= TESSERA_RECREATE_SHARE_PRESERVED;
+    const bool wasSoftware = (oldInfo.adapterClass & TESSERA_ADAPTER_SOFTWARE) != 0;
+    if ((oldInfo.adapter[0] && newInfo.adapter[0] && std::strcmp(oldInfo.adapter, newInfo.adapter) != 0) ||
+        wasSoftware != software)
+        outFlags |= TESSERA_RECREATE_ADAPTER_CHANGED;
+    if (software)
+        outFlags |= TESSERA_RECREATE_SOFTWARE;
+    return TESSERA_SUCCESS;
+}
+
+// ---- sharing, explained -------------------------------------------------------------------------------
+
+TesseraResult Runtime::canShare(const TesseraContextConfig& config, TesseraContext parentHandle,
+                                int32_t& outReason) {
+    outReason = TESSERA_SHARE_OK;
+    auto parent = contexts_.get(parentHandle);
+    if (!parent)
+        return fail(TESSERA_ERROR_INVALID_HANDLE, "parent is not a live context handle");
+    TesseraContextInfo info = tesseraDefaultContextInfo();
+    parent->describe(info);
+
+    auto reason = [&](int32_t why, const char* text) {
+        outReason = why;
+        setLastError(text);
+        return TESSERA_SUCCESS;
+    };
+    if (parent->lost.load())
+        return reason(TESSERA_SHARE_PARENT_LOST,
+                      "the parent is lost: share with a surviving member of its group");
+    if (config.adapter[0] != '\0' && info.adapter[0] != '\0' &&
+        std::strcmp(config.adapter, info.adapter) != 0)
+        return reason(TESSERA_SHARE_DIFFERENT_ADAPTER,
+                      "the request names a GPU other than the one the parent runs on");
+
+    // A parent can only be shared with by the backend that made it (every backend answers UNSUPPORTED for
+    // another backend's parent, so the creation falls through to the right one). That backend must be able to
+    // serve what the request names.
+    std::shared_ptr<Backend> candidate;
+    {
+        std::vector<std::shared_ptr<Backend>> backends;
+        {
+            std::lock_guard<std::mutex> lock(lifecycle_);
+            backends = backends_;
+        }
+        for (const auto& b : backends)
+            if (std::strcmp(b->name(), parent->backendName) == 0)
+                candidate = b;
+    }
+    if (!candidate)
+        return reason(TESSERA_SHARE_DIFFERENT_BACKEND, "the parent's backend is not available any more");
+    if (config.api != info.api && !candidate->sharesAcrossApis())
+        return reason(TESSERA_SHARE_API_MISMATCH,
+                      "this backend does not share objects between OpenGL and OpenGL ES contexts");
+    if (namesAGpu(config) && !candidate->supportsAdapterSelection(config))
+        return reason(TESSERA_SHARE_DIFFERENT_BACKEND,
+                      "the GPU the request names is not one the parent's backend can serve");
+    if (const int32_t why = candidate->shareProblem(config, *parent); why != TESSERA_SHARE_OK)
+        return reason(why, "this backend cannot share objects between these two contexts");
+    return TESSERA_SUCCESS;
+}
+
+TesseraResult Runtime::shareGroupInfo(TesseraContext handle, TesseraShareGroupInfo& out) {
+    auto object = contexts_.get(handle);
+    if (!object)
+        return fail(TESSERA_ERROR_INVALID_HANDLE, "not a live context handle");
+    std::vector<TesseraHandle> members;
+    {
+        std::lock_guard<std::mutex> lock(groupsMutex_);
+        const auto it = groups_.find(object->shareGroup);
+        if (it != groups_.end())
+            members.assign(it->second.begin(), it->second.end());
+    }
+    out.groupId = object->shareGroup;
+    out.members = static_cast<int32_t>(members.size());
+    out.alive = 0;
+    for (TesseraHandle member : members) {
+        const auto other = contexts_.get(member);
+        if (other && !other->lost.load())
+            ++out.alive;
+    }
     return TESSERA_SUCCESS;
 }
 

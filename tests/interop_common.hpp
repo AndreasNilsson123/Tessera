@@ -268,7 +268,7 @@ inline void adapterRequestsRefused(const robust::Hooks& h) {
     TesseraContext ctx = 0;
     EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_ERROR_UNSUPPORTED);
     CHECK(ctx == TESSERA_NULL_HANDLE);
-    CHECK(std::strstr(tesseraGetLastErrorMessage(), "only implemented for WGL") != nullptr);
+    CHECK(std::strstr(tesseraGetLastErrorMessage(), "no backend can honour") != nullptr);
     cfg.gpuPreference = TESSERA_GPU_DEFAULT;
     cfg.adapterLuid = 0x1234;
     EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_ERROR_UNSUPPORTED);
@@ -351,6 +351,118 @@ inline void topUp(const robust::Hooks& h) {
     const int32_t waiting = tesseraPooledContextCount();
     CHECK(tesseraPoolClear() == waiting && tesseraPooledContextCount() == 0);
     CHECK(tesseraPoolClear() == 0);
+}
+
+// ---------------------------------------------------------------- sharing, explained (ABI 0.15.0)
+
+// Share-group introspection, and which differences in the request break object sharing on THIS driver. The
+// table is printed (it is what docs/compat.md records) and tesseraCanShare must agree with it: a "no" is a
+// failed create; a "yes" is a successful one.
+inline void sharingExplained(const robust::Hooks& h) {
+    TesseraContextConfig base = h.base;
+    base.fallback = TESSERA_FALLBACK_BEST_EFFORT;
+    TesseraContext parent = 0, sibling = 0, other = 0;
+    EXPECT(tesseraCreateContext(&base, &parent), TESSERA_SUCCESS);
+    if (!parent)
+        return;
+    TesseraContextConfig withParent = base;
+    withParent.shareWith = parent;
+    EXPECT(tesseraCreateContext(&withParent, &sibling), TESSERA_SUCCESS);
+    EXPECT(tesseraCreateContext(&base, &other), TESSERA_SUCCESS);
+
+    // Introspection: the group of parent and sibling, and the one of `other`.
+    TesseraShareGroupInfo gp = tesseraDefaultShareGroupInfo(), gs = gp, go = gp;
+    EXPECT(tesseraGetShareGroup(parent, &gp), TESSERA_SUCCESS);
+    EXPECT(tesseraGetShareGroup(sibling, &gs), TESSERA_SUCCESS);
+    EXPECT(tesseraGetShareGroup(other, &go), TESSERA_SUCCESS);
+    CHECK(gp.groupId == gs.groupId && gp.groupId != go.groupId);
+    CHECK(gp.members == 2 && gp.alive == 2 && go.members == 1);
+
+    struct Variant {
+        const char* what;
+        void (*tweak)(TesseraContextConfig&);
+    };
+    static const Variant variants[] = {
+        {"same request", [](TesseraContextConfig&) {}},
+        {"depth 16 instead of the default", [](TesseraContextConfig& c) { c.depthBits = 16; }},
+        {"stencil 8", [](TesseraContextConfig& c) { c.stencilBits = 8; }},
+        {"4x MSAA", [](TesseraContextConfig& c) { c.samples = 4; }},
+        {"sRGB framebuffer", [](TesseraContextConfig& c) { c.flags |= TESSERA_FLAG_SRGB; }},
+        {"float colour buffer", [](TesseraContextConfig& c) { c.flags |= TESSERA_FLAG_FLOAT_COLOR; }},
+        {"alpha 8", [](TesseraContextConfig& c) { c.alphaBits = 8; }},
+        {"debug context", [](TesseraContextConfig& c) { c.flags |= TESSERA_FLAG_DEBUG; }},
+        {"depth 16 + core 3.3 (ARB creation)",
+         [](TesseraContextConfig& c) {
+             c.depthBits = 16;
+             c.profile = TESSERA_PROFILE_CORE;
+             c.versionMajor = 3;
+             c.versionMinor = 3;
+         }},
+        {"depth 16 + debug (ARB creation)",
+         [](TesseraContextConfig& c) {
+             c.depthBits = 16;
+             c.flags |= TESSERA_FLAG_DEBUG;
+         }},
+        {"depth 32", [](TesseraContextConfig& c) { c.depthBits = 32; }},
+        {"no depth, no stencil",
+         [](TesseraContextConfig& c) {
+             c.depthBits = 0;
+             c.stencilBits = 0;
+             c.flags |= TESSERA_FLAG_DEBUG;
+         }},
+        {"core 3.3 profile",
+         [](TesseraContextConfig& c) {
+             c.profile = TESSERA_PROFILE_CORE;
+             c.versionMajor = 3;
+             c.versionMinor = 3;
+         }},
+        {"OpenGL ES", [](TesseraContextConfig& c) { c.api = TESSERA_API_OPENGL_ES; }},
+    };
+    std::printf(
+        "  what changes between a parent and a context that shares with it (backend verdict | create):\n");
+    for (const Variant& v : variants) {
+        TesseraContextConfig want = base;
+        v.tweak(want);
+        int32_t verdict = -1;
+        const TesseraResult asked = tesseraCanShare(&want, parent, &verdict);
+        CHECK(asked == TESSERA_SUCCESS);
+        // Can the request be made at all here (a float framebuffer, say, is not on every driver)? Then
+        // sharing is not the question.
+        TesseraContext alone = 0;
+        const TesseraResult standalone = tesseraCreateContext(&want, &alone);
+        if (alone)
+            EXPECT(tesseraDestroyContext(alone), TESSERA_SUCCESS);
+        if (standalone != TESSERA_SUCCESS) {
+            std::printf("    %-34s verdict %d | (cannot be created here at all: %s)\n", v.what, verdict,
+                        tesseraResultString(standalone));
+            continue;
+        }
+        TesseraContextConfig share = want;
+        share.shareWith = parent;
+        TesseraContext made = 0;
+        const TesseraResult r = tesseraCreateContext(&share, &made);
+        std::printf("    %-34s verdict %d | %s%s%s\n", v.what, verdict, tesseraResultString(r),
+                    r == TESSERA_SUCCESS ? "" : ": ",
+                    r == TESSERA_SUCCESS ? "" : tesseraGetLastErrorMessage());
+        // Agreement: the library says "no" only for things that really fail, and "yes" only where the create
+        // worked, EXCEPT where the request itself cannot be made here at all (then both are "no" or the
+        // verdict is a statement about sharing alone).
+        if (verdict != TESSERA_SHARE_OK)
+            CHECK(r != TESSERA_SUCCESS);
+        if (r == TESSERA_SUCCESS) {
+            CHECK(verdict == TESSERA_SHARE_OK);
+            TesseraShareGroupInfo g = tesseraDefaultShareGroupInfo();
+            EXPECT(tesseraGetShareGroup(made, &g), TESSERA_SUCCESS);
+            CHECK(g.groupId == gp.groupId && g.members == 3);
+            EXPECT(tesseraDestroyContext(made), TESSERA_SUCCESS);
+        }
+    }
+    // A dead parent is an error, not a verdict.
+    int32_t why = -1;
+    EXPECT(tesseraCanShare(&base, TESSERA_NULL_HANDLE, &why), TESSERA_ERROR_INVALID_HANDLE);
+
+    for (TesseraContext c : {parent, sibling, other})
+        EXPECT(tesseraDestroyContext(c), TESSERA_SUCCESS);
 }
 
 } // namespace interop

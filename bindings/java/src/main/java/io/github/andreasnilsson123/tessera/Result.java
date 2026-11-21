@@ -14,7 +14,9 @@ public enum Result {
     NO_MATCHING_CONFIG(-7),
     PLATFORM(-8),
     WRONG_THREAD(-9),
-    CONTEXT_LOST(-10);
+    CONTEXT_LOST(-10),
+    /** The window the context rendered into is gone (ABI 0.15.0); the context is lost, with cause {@link LossCause#WINDOW_GONE}. */
+    WINDOW_GONE(-11);
 
     private final int code;
 

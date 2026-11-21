@@ -357,6 +357,9 @@ class FakeBackend : public Backend {
         ++calls;
         if (c.api != api_)
             return TESSERA_ERROR_UNSUPPORTED;
+        if (share && std::strcmp(share->backendName, name_) != 0)
+            return TESSERA_ERROR_UNSUPPORTED; // like the real backends: a parent of another backend is that
+                                              // backend's to serve
         if (c.samples > 8)
             return TESSERA_ERROR_NO_MATCHING_CONFIG;
         if (c.samples == 5)
@@ -629,6 +632,7 @@ static std::atomic<int32_t> g_swapMax{0};
 static std::atomic<TesseraResult> g_swapResult{TESSERA_SUCCESS};
 static std::atomic<int> g_resetToReport{0};
 static std::atomic<bool> g_bindReportsLost{false};
+static std::atomic<TesseraResult> g_robustSwapResult{TESSERA_SUCCESS};
 static std::mutex g_destroyMutex;
 static std::thread::id g_lastDestroyThread;
 
@@ -661,7 +665,7 @@ class RobustFakeContext : public ContextObject {
         bound = false;
     }
     TesseraResult swapBuffers() noexcept override {
-        return TESSERA_SUCCESS;
+        return g_robustSwapResult;
     }
     TesseraResult setSwapInterval(int32_t) noexcept override {
         return TESSERA_SUCCESS;
@@ -1074,6 +1078,420 @@ static void testWindowsAdapterIds() {
     CHECK(hybridAdvisory(hybrid, "Acme", "Mystery").empty()); // unknown driver: no guess
 }
 #endif
+
+// ---- loss, beyond polling (ROADMAP 12.6, ADR 0018)
+// -----------------------------------------------------------------------
+
+struct LossLog {
+    std::atomic<int> calls{0};
+    std::atomic<int32_t> status{-1};
+    std::atomic<TesseraContext> context{0};
+};
+static LossLog g_lossLog;
+static void onLossForCause(TesseraContext c, int32_t status, void*) {
+    g_lossLog.context = c;
+    g_lossLog.status = status;
+    ++g_lossLog.calls;
+}
+
+static TesseraContextConfig robustPolledConfig(uint32_t extraFlags = 0) {
+    TesseraContextConfig c = tesseraDefaultContextConfig();
+    c.api = TESSERA_API_OPENGL;
+    c.flags = TESSERA_FLAG_ROBUST_ACCESS | TESSERA_FLAG_RESET_NOTIFICATION | extraFlags;
+    return c;
+}
+
+// A runtime with only the robust fake, for the tests that run after the shared one has been shut down.
+static void startRobustRuntime() {
+    tesseraTerminate(); // (an error when nothing is running)
+    tessera::Runtime::disableBuiltinBackendsForTesting();
+    CHECK(tesseraInit() == TESSERA_SUCCESS);
+    tessera::Runtime::instance().registerBackend(std::make_shared<RobustFakeBackend>());
+    g_resetToReport = TESSERA_RESET_NONE;
+    g_bindReportsLost = false;
+    g_robustSwapResult = TESSERA_SUCCESS;
+}
+
+static void testOpportunisticPolling() {
+    startRobustRuntime();
+    tesseraSetContextLostCallback(onLossForCause, nullptr);
+    g_lossLog.calls = 0;
+    g_resetToReport = TESSERA_RESET_NONE;
+    int32_t cause = 99, lost = 0, status = 0;
+
+    // A healthy robust context: nothing happens, no callback, however often it is made current and swapped.
+    TesseraContext ctx = makeRobust(robustPolledConfig());
+    EXPECT(tesseraMakeCurrent(ctx), TESSERA_SUCCESS);
+    EXPECT(tesseraSwapBuffers(ctx), TESSERA_SUCCESS);
+    CHECK(g_lossLog.calls == 0);
+    EXPECT(tesseraGetLossCause(ctx, &cause), TESSERA_SUCCESS);
+    CHECK(cause == TESSERA_LOSS_NONE);
+
+    // The driver resets the GPU between two frames: the swap notices, without the application polling.
+    g_resetToReport = TESSERA_RESET_INNOCENT;
+    EXPECT(tesseraSwapBuffers(ctx), TESSERA_ERROR_CONTEXT_LOST);
+    CHECK(g_lossLog.calls == 1 && g_lossLog.status == TESSERA_RESET_INNOCENT && g_lossLog.context == ctx);
+    EXPECT(tesseraIsContextLost(ctx, &lost, &status), TESSERA_SUCCESS);
+    CHECK(lost == 1 && status == TESSERA_RESET_INNOCENT);
+    EXPECT(tesseraGetLossCause(ctx, &cause), TESSERA_SUCCESS);
+    CHECK(cause == TESSERA_LOSS_GPU_RESET);
+    EXPECT(tesseraSwapBuffers(ctx), TESSERA_ERROR_CONTEXT_LOST); // stays lost
+    CHECK(g_lossLog.calls == 1);                                 // once per context
+    g_resetToReport = TESSERA_RESET_NONE;
+    EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS);
+    EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
+
+    // A context that was reset while it was not current: making it current notices, and leaves nothing
+    // current.
+    g_lossLog.calls = 0;
+    TesseraContext away = makeRobust(robustPolledConfig());
+    g_resetToReport = TESSERA_RESET_GUILTY;
+    EXPECT(tesseraMakeCurrent(away), TESSERA_ERROR_CONTEXT_LOST);
+    CHECK(g_lossLog.calls == 1 && g_lossLog.status == TESSERA_RESET_GUILTY);
+    CHECK(tesseraGetCurrentContext() == TESSERA_NULL_HANDLE);
+    EXPECT(tesseraGetLossCause(away, &cause), TESSERA_SUCCESS);
+    CHECK(cause == TESSERA_LOSS_GPU_RESET);
+    g_resetToReport = TESSERA_RESET_NONE;
+    EXPECT(tesseraDestroyContext(away), TESSERA_SUCCESS);
+
+    // The opt-out: the same reset goes unnoticed until the application asks.
+    g_lossLog.calls = 0;
+    TesseraContext quiet = makeRobust(robustPolledConfig(TESSERA_FLAG_NO_RESET_POLL));
+    EXPECT(tesseraMakeCurrent(quiet), TESSERA_SUCCESS);
+    g_resetToReport = TESSERA_RESET_GUILTY;
+    EXPECT(tesseraSwapBuffers(quiet), TESSERA_SUCCESS);
+    CHECK(g_lossLog.calls == 0);
+    EXPECT(tesseraGetResetStatus(quiet, &status), TESSERA_SUCCESS); // explicit polling still works
+    CHECK(status == TESSERA_RESET_GUILTY && g_lossLog.calls == 1);
+    g_resetToReport = TESSERA_RESET_NONE;
+    EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS);
+    EXPECT(tesseraDestroyContext(quiet), TESSERA_SUCCESS);
+
+    // Without reset notification there is nothing to poll: a "reset" the fake would report is never looked
+    // at.
+    g_lossLog.calls = 0;
+    TesseraContextConfig plain = tesseraDefaultContextConfig();
+    plain.api = TESSERA_API_OPENGL;
+    TesseraContext p = makeRobust(plain);
+    EXPECT(tesseraMakeCurrent(p), TESSERA_SUCCESS);
+    g_resetToReport = TESSERA_RESET_GUILTY;
+    EXPECT(tesseraSwapBuffers(p), TESSERA_SUCCESS);
+    CHECK(g_lossLog.calls == 0);
+    g_resetToReport = TESSERA_RESET_NONE;
+    EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS);
+    EXPECT(tesseraDestroyContext(p), TESSERA_SUCCESS);
+    tesseraSetContextLostCallback(nullptr, nullptr);
+    tesseraTerminate();
+}
+
+static void testLossCauses() {
+    startRobustRuntime();
+    tesseraSetContextLostCallback(onLossForCause, nullptr);
+    int32_t cause = 99;
+    EXPECT(tesseraGetLossCause(TESSERA_NULL_HANDLE, &cause), TESSERA_ERROR_INVALID_HANDLE);
+    EXPECT(tesseraGetLossCause(1, nullptr), TESSERA_ERROR_INVALID_ARGUMENT);
+
+    // The backend says "context lost" itself (display, driver, power event): no reset status, cause DEVICE.
+    TesseraContextConfig cfg = tesseraDefaultContextConfig();
+    cfg.api = TESSERA_API_OPENGL;
+    TesseraContext a = makeRobust(cfg);
+    g_bindReportsLost = true;
+    EXPECT(tesseraMakeCurrent(a), TESSERA_ERROR_CONTEXT_LOST);
+    g_bindReportsLost = false;
+    EXPECT(tesseraGetLossCause(a, &cause), TESSERA_SUCCESS);
+    CHECK(cause == TESSERA_LOSS_DEVICE);
+    int32_t lost = 0, status = 0;
+    EXPECT(tesseraIsContextLost(a, &lost, &status), TESSERA_SUCCESS);
+    CHECK(lost == 1 && status == TESSERA_RESET_UNKNOWN);
+    EXPECT(tesseraDestroyContext(a), TESSERA_SUCCESS);
+
+    // The window is gone: not a GPU problem, and the response differs (do not recreate onto it).
+    g_lossLog.calls = 0;
+    TesseraContext w = makeRobust(cfg);
+    EXPECT(tesseraMakeCurrent(w), TESSERA_SUCCESS);
+    g_robustSwapResult = TESSERA_ERROR_WINDOW_GONE;
+    EXPECT(tesseraSwapBuffers(w), TESSERA_ERROR_WINDOW_GONE);
+    g_robustSwapResult = TESSERA_SUCCESS;
+    CHECK(g_lossLog.calls == 1);
+    EXPECT(tesseraGetLossCause(w, &cause), TESSERA_SUCCESS);
+    CHECK(cause == TESSERA_LOSS_WINDOW_GONE);
+    EXPECT(tesseraSwapBuffers(w), TESSERA_ERROR_CONTEXT_LOST); // lost from now on
+    EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS);
+    EXPECT(tesseraDestroyContext(w), TESSERA_SUCCESS);
+
+    // An explicit poll that finds a reset: GPU_RESET. The first cause wins (a second report changes nothing).
+    TesseraContext r = makeRobust(cfg);
+    EXPECT(tesseraMakeCurrent(r), TESSERA_SUCCESS);
+    g_resetToReport = TESSERA_RESET_GUILTY;
+    int32_t got = 0;
+    EXPECT(tesseraGetResetStatus(r, &got), TESSERA_SUCCESS);
+    g_resetToReport = TESSERA_RESET_NONE;
+    g_robustSwapResult = TESSERA_ERROR_WINDOW_GONE;
+    EXPECT(tesseraSwapBuffers(r), TESSERA_ERROR_CONTEXT_LOST); // already lost: the swap is not even tried
+    g_robustSwapResult = TESSERA_SUCCESS;
+    EXPECT(tesseraGetLossCause(r, &cause), TESSERA_SUCCESS);
+    CHECK(cause == TESSERA_LOSS_GPU_RESET);
+    EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS);
+    EXPECT(tesseraDestroyContext(r), TESSERA_SUCCESS);
+    tesseraSetContextLostCallback(nullptr, nullptr);
+    CHECK(std::strcmp(tesseraResultString(TESSERA_ERROR_WINDOW_GONE), "window gone") == 0);
+    tesseraTerminate();
+}
+
+// A backend with two GPUs, a software fallback and the ability to lose one of them, to follow recreate
+// policies.
+static std::atomic<bool> g_gpuAGone{false};
+static std::atomic<bool> g_gpuBPresent{true};
+static std::atomic<bool> g_acceptsSharing{true};
+
+class PolicyContext : public ContextObject {
+  public:
+    PolicyContext(const char* id, uint32_t cls) {
+        std::snprintf(adapter, sizeof adapter, "%s", id);
+        adapterClass = cls;
+    }
+    TesseraResult describe(TesseraContextInfo& out) const noexcept override {
+        out.api = TESSERA_API_OPENGL;
+        std::snprintf(out.adapter, sizeof out.adapter, "%s", adapter);
+        out.adapterClass = adapterClass;
+        return TESSERA_SUCCESS;
+    }
+    char adapter[48] = {};
+    uint32_t adapterClass = 0;
+};
+
+class PolicyBackend : public Backend {
+  public:
+    explicit PolicyBackend(bool software) : software_(software) {}
+    const char* name() const noexcept override {
+        return software_ ? "policy-software" : "policy";
+    }
+    bool supportsAdapterSelection(const TesseraContextConfig& c) const noexcept override {
+        return !software_ && std::strncmp(c.adapter, "fake:", 5) == 0;
+    }
+    int32_t shareProblem(const TesseraContextConfig&, const ContextObject&) const noexcept override {
+        return g_acceptsSharing ? TESSERA_SHARE_OK : TESSERA_SHARE_DIFFERENT_DISPLAY;
+    }
+    TesseraResult createContext(const TesseraContextConfig& c, const std::shared_ptr<ContextObject>& share,
+                                std::shared_ptr<ContextObject>& out) override {
+        if (software_) {
+            out = std::make_shared<PolicyContext>("fake:cpu", TESSERA_ADAPTER_SOFTWARE);
+            return TESSERA_SUCCESS;
+        }
+        const bool wantsA = std::strcmp(c.adapter, "fake:A") == 0;
+        const bool wantsB = std::strcmp(c.adapter, "fake:B") == 0;
+        if (share && !g_acceptsSharing)
+            return fail(TESSERA_ERROR_INVALID_ARGUMENT, "cannot share objects across these devices");
+        if (wantsA || (c.adapter[0] == '\0' && !g_gpuAGone)) {
+            if (g_gpuAGone)
+                return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, "the device was removed");
+            out = std::make_shared<PolicyContext>("fake:A", TESSERA_ADAPTER_DISCRETE);
+            return TESSERA_SUCCESS;
+        }
+        if ((wantsB || c.adapter[0] == '\0') && g_gpuBPresent) {
+            out = std::make_shared<PolicyContext>("fake:B", TESSERA_ADAPTER_INTEGRATED);
+            return TESSERA_SUCCESS;
+        }
+        return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, "no GPU left");
+    }
+
+  private:
+    bool software_;
+};
+
+static void testRecreatePolicies() {
+    // A fresh runtime with only the policy backends.
+    tesseraTerminate();
+    tessera::Runtime::disableBuiltinBackendsForTesting();
+    tesseraInit();
+    tessera::Runtime::instance().registerBackend(std::make_shared<PolicyBackend>(false));
+    tessera::Runtime::instance().setSoftwareBackendForTesting(std::make_shared<PolicyBackend>(true));
+    g_gpuAGone = false;
+    g_gpuBPresent = true;
+    g_acceptsSharing = true;
+
+    TesseraContextConfig cfg = tesseraDefaultContextConfig();
+    cfg.api = TESSERA_API_OPENGL;
+    std::snprintf(cfg.adapter, sizeof cfg.adapter, "fake:A");
+    TesseraContext a = 0;
+    EXPECT(tesseraCreateContext(&cfg, &a), TESSERA_SUCCESS);
+    TesseraContextConfig shared = cfg;
+    shared.shareWith = a;
+    TesseraContext a2 = 0;
+    EXPECT(tesseraCreateContext(&shared, &a2), TESSERA_SUCCESS);
+
+    uint32_t flags = 0;
+    TesseraContext n = 0;
+    EXPECT(tesseraRecreateContextWithPolicy(a, 99, &n, &flags), TESSERA_ERROR_INVALID_ARGUMENT);
+    EXPECT(tesseraRecreateContextWithPolicy(a, TESSERA_RECREATE_SAME_ADAPTER, nullptr, &flags),
+           TESSERA_ERROR_INVALID_ARGUMENT);
+
+    // The GPU is still there: the same adapter, the share group preserved, nothing changed.
+    EXPECT(tesseraRecreateContextWithPolicy(a, TESSERA_RECREATE_SAME_ADAPTER, &n, &flags), TESSERA_SUCCESS);
+    CHECK(flags == TESSERA_RECREATE_SHARE_PRESERVED);
+    TesseraContextInfo info = tesseraDefaultContextInfo();
+    EXPECT(tesseraGetContextInfo(n, &info), TESSERA_SUCCESS);
+    CHECK(std::strcmp(info.adapter, "fake:A") == 0);
+    EXPECT(tesseraDestroyContext(n), TESSERA_SUCCESS);
+
+    // Device removal: the same adapter is gone.
+    g_gpuAGone = true;
+    EXPECT(tesseraRecreateContextWithPolicy(a, TESSERA_RECREATE_SAME_ADAPTER, &n, &flags),
+           TESSERA_ERROR_NO_MATCHING_CONFIG);
+    EXPECT(tesseraRecreateContext(a, &n, &flags),
+           TESSERA_ERROR_NO_MATCHING_CONFIG); // the old call is the same policy
+    // Any hardware: GPU B serves; the new device cannot share with the survivors, so it starts an empty
+    // group.
+    g_acceptsSharing = false;
+    EXPECT(tesseraRecreateContextWithPolicy(a, TESSERA_RECREATE_ANY_HARDWARE, &n, &flags), TESSERA_SUCCESS);
+    CHECK((flags & TESSERA_RECREATE_ADAPTER_CHANGED) && !(flags & TESSERA_RECREATE_SHARE_PRESERVED) &&
+          !(flags & TESSERA_RECREATE_SOFTWARE));
+    info = tesseraDefaultContextInfo();
+    EXPECT(tesseraGetContextInfo(n, &info), TESSERA_SUCCESS);
+    CHECK(std::strcmp(info.adapter, "fake:B") == 0);
+    EXPECT(tesseraDestroyContext(n), TESSERA_SUCCESS);
+    // ... and where sharing is possible, the group is preserved too.
+    g_acceptsSharing = true;
+    EXPECT(tesseraRecreateContextWithPolicy(a, TESSERA_RECREATE_ANY_HARDWARE, &n, &flags), TESSERA_SUCCESS);
+    CHECK((flags & TESSERA_RECREATE_ADAPTER_CHANGED) && (flags & TESSERA_RECREATE_SHARE_PRESERVED));
+    EXPECT(tesseraDestroyContext(n), TESSERA_SUCCESS);
+
+    // No GPU left at all: ANY_HARDWARE fails, ALLOW_SOFTWARE reports that it fell back to the CPU.
+    g_gpuBPresent = false;
+    EXPECT(tesseraRecreateContextWithPolicy(a, TESSERA_RECREATE_ANY_HARDWARE, &n, &flags),
+           TESSERA_ERROR_NO_MATCHING_CONFIG);
+    CHECK(n == TESSERA_NULL_HANDLE);
+    EXPECT(tesseraRecreateContextWithPolicy(a, TESSERA_RECREATE_ALLOW_SOFTWARE, &n, &flags), TESSERA_SUCCESS);
+    CHECK((flags & TESSERA_RECREATE_SOFTWARE) && (flags & TESSERA_RECREATE_ADAPTER_CHANGED) &&
+          !(flags & TESSERA_RECREATE_SHARE_PRESERVED));
+    info = tesseraDefaultContextInfo();
+    EXPECT(tesseraGetContextInfo(n, &info), TESSERA_SUCCESS);
+    CHECK(std::strcmp(info.adapter, "fake:cpu") == 0 && (info.adapterClass & TESSERA_ADAPTER_SOFTWARE));
+    EXPECT(tesseraDestroyContext(n), TESSERA_SUCCESS);
+
+    // The software result is refused where the caller wants hardware, even when the default backend itself
+    // answered with a CPU device.
+    EXPECT(tesseraDestroyContext(a2), TESSERA_SUCCESS);
+    EXPECT(tesseraDestroyContext(a), TESSERA_SUCCESS);
+    tesseraTerminate();
+}
+
+static void testShareGroupAndPreflight() {
+    tesseraTerminate();
+    tessera::Runtime::disableBuiltinBackendsForTesting();
+    tesseraInit();
+    auto desktop = std::make_shared<FakeBackend>("fake-desktop", TESSERA_API_OPENGL);
+    auto es = std::make_shared<FakeBackend>("fake-es", TESSERA_API_OPENGL_ES);
+    tessera::Runtime::instance().registerBackend(desktop);
+    tessera::Runtime::instance().registerBackend(es);
+    g_acceptsSharing = true;
+
+    TesseraContextConfig gl = tesseraDefaultContextConfig();
+    gl.api = TESSERA_API_OPENGL;
+    TesseraContextConfig gles = gl;
+    gles.api = TESSERA_API_OPENGL_ES;
+    TesseraContext a = 0, b = 0, c = 0, e = 0;
+    EXPECT(tesseraCreateContext(&gl, &a), TESSERA_SUCCESS);
+    TesseraContextConfig withA = gl;
+    withA.shareWith = a;
+    EXPECT(tesseraCreateContext(&withA, &b), TESSERA_SUCCESS);
+    EXPECT(tesseraCreateContext(&gl, &c), TESSERA_SUCCESS);
+    EXPECT(tesseraCreateContext(&gles, &e), TESSERA_SUCCESS);
+
+    // Introspection: a and b are one group, c another, ids opaque but equal within a group.
+    TesseraShareGroupInfo ga = tesseraDefaultShareGroupInfo(), gb = ga, gc = ga;
+    EXPECT(tesseraGetShareGroup(a, &ga), TESSERA_SUCCESS);
+    EXPECT(tesseraGetShareGroup(b, &gb), TESSERA_SUCCESS);
+    EXPECT(tesseraGetShareGroup(c, &gc), TESSERA_SUCCESS);
+    CHECK(ga.groupId == gb.groupId && ga.groupId != gc.groupId);
+    CHECK(ga.members == 2 && ga.alive == 2 && gc.members == 1 && gc.alive == 1);
+    EXPECT(tesseraGetShareGroup(TESSERA_NULL_HANDLE, &ga), TESSERA_ERROR_INVALID_HANDLE);
+    EXPECT(tesseraGetShareGroup(a, nullptr), TESSERA_ERROR_INVALID_ARGUMENT);
+    TesseraShareGroupInfo unsized = tesseraDefaultShareGroupInfo();
+    unsized.structSize = 0;
+    EXPECT(tesseraGetShareGroup(a, &unsized), TESSERA_ERROR_INVALID_ARGUMENT);
+    TesseraShareGroupInfo tiny = tesseraDefaultShareGroupInfo(); // an older caller that knows only the first
+                                                                 // 8 bytes: nothing past them is written
+    unsigned char canary[64];
+    std::memset(canary, 0xAB, sizeof canary);
+    struct Padded {
+        TesseraShareGroupInfo g;
+        unsigned char c[64];
+    } padded;
+    std::memcpy(padded.c, canary, sizeof canary);
+    padded.g = tiny;
+    padded.g.structSize = 8;
+    EXPECT(tesseraGetShareGroup(a, &padded.g), TESSERA_SUCCESS);
+    CHECK(std::memcmp(padded.c, canary, sizeof canary) == 0);
+
+    // Preflight: the verdict, before any create.
+    int32_t why = -1;
+    EXPECT(tesseraCanShare(&gl, a, &why), TESSERA_SUCCESS);
+    CHECK(why == TESSERA_SHARE_OK);
+    EXPECT(tesseraCanShare(&gles, a, &why), TESSERA_SUCCESS);
+    CHECK(why == TESSERA_SHARE_API_MISMATCH);
+    EXPECT(tesseraCanShare(&gl, e, &why), TESSERA_SUCCESS);
+    CHECK(why == TESSERA_SHARE_API_MISMATCH);
+    EXPECT(tesseraCanShare(&gl, TESSERA_NULL_HANDLE, &why), TESSERA_ERROR_INVALID_HANDLE);
+    EXPECT(tesseraCanShare(nullptr, a, &why), TESSERA_ERROR_INVALID_ARGUMENT);
+    EXPECT(tesseraCanShare(&gl, a, nullptr), TESSERA_ERROR_INVALID_ARGUMENT);
+    TesseraContextConfig bad = gl;
+    bad.api = 99;
+    EXPECT(tesseraCanShare(&bad, a, &why), TESSERA_ERROR_INVALID_ARGUMENT);
+    TesseraContextConfig named = gl;
+    std::snprintf(named.adapter, sizeof named.adapter, "luid:00000000-00000001");
+    EXPECT(tesseraCanShare(&named, a, &why), TESSERA_SUCCESS);
+    CHECK(why == TESSERA_SHARE_DIFFERENT_BACKEND); // a request for a GPU that no registered backend can name
+
+    // The verdict agrees with the create: a "no" is a failed create, a "yes" a successful one.
+    for (const TesseraContextConfig* want : {&gl, &gles}) {
+        for (TesseraContext parent : {a, e}) {
+            int32_t verdict = -1;
+            EXPECT(tesseraCanShare(want, parent, &verdict), TESSERA_SUCCESS);
+            TesseraContextConfig share = *want;
+            share.shareWith = parent;
+            TesseraContext made = 0;
+            const TesseraResult r = tesseraCreateContext(&share, &made);
+            CHECK((verdict == TESSERA_SHARE_OK) == (r == TESSERA_SUCCESS));
+            if (made)
+                tesseraDestroyContext(made);
+        }
+    }
+
+    // Leaving the group: the count drops.
+    EXPECT(tesseraDestroyContext(b), TESSERA_SUCCESS);
+    EXPECT(tesseraGetShareGroup(a, &ga), TESSERA_SUCCESS);
+    CHECK(ga.members == 1 && ga.alive == 1);
+    for (TesseraContext h : {a, c, e})
+        EXPECT(tesseraDestroyContext(h), TESSERA_SUCCESS);
+    tesseraTerminate();
+}
+
+static void testShareVerdictOnLostAndDisplay() {
+    startRobustRuntime();
+    TesseraContextConfig cfg = tesseraDefaultContextConfig();
+    cfg.api = TESSERA_API_OPENGL;
+    TesseraContext a = makeRobust(cfg);
+    TesseraContext b = makeRobust(cfg, a);
+    int32_t why = -1;
+    EXPECT(tesseraCanShare(&cfg, a, &why), TESSERA_SUCCESS);
+    CHECK(why == TESSERA_SHARE_OK);
+    loseContext(a, TESSERA_RESET_GUILTY);
+    EXPECT(tesseraCanShare(&cfg, a, &why), TESSERA_SUCCESS);
+    CHECK(why == TESSERA_SHARE_PARENT_LOST);
+    cfg.shareWith = a;
+    TesseraContext none = 0;
+    EXPECT(tesseraCreateContext(&cfg, &none), TESSERA_ERROR_CONTEXT_LOST); // what the preflight predicted
+    TesseraShareGroupInfo g = tesseraDefaultShareGroupInfo();
+    EXPECT(tesseraGetShareGroup(b, &g), TESSERA_SUCCESS);
+    CHECK(g.members == 2 && g.alive == 1); // a host can see what survives without its own bookkeeping
+    cfg.shareWith = 0;
+    EXPECT(tesseraCanShare(&cfg, b, &why), TESSERA_SUCCESS);
+    CHECK(why == TESSERA_SHARE_OK);
+    EXPECT(tesseraDestroyContext(a), TESSERA_SUCCESS);
+    EXPECT(tesseraDestroyContext(b), TESSERA_SUCCESS);
+    tesseraTerminate();
+}
 
 // ---- version negotiation (ROADMAP 12.2, ADR 0016)
 // ------------------------------------------------------------------
@@ -2069,6 +2487,13 @@ static void testLifecycleRobustness() {
     testNoGrowthWithManyContexts();
 #endif
     CHECK(tesseraTerminate() == TESSERA_SUCCESS);
+
+    // The 0.15.0 tests start and stop their own runtimes with their own fake backends.
+    testOpportunisticPolling();
+    testLossCauses();
+    testRecreatePolicies();
+    testShareGroupAndPreflight();
+    testShareVerdictOnLostAndDisplay();
 }
 
 int main() {

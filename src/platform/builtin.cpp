@@ -61,7 +61,7 @@ void applyBackendSelection(std::vector<std::shared_ptr<Backend>>& backends,
 } // namespace
 
 // Platform backends are added here as they land (WGL: Phase 2, GLX: 3, EGL: 4, CGL: 5).
-void registerBuiltinBackends(std::vector<std::shared_ptr<Backend>>& out) {
+void registerBuiltinBackends(std::vector<std::shared_ptr<Backend>>& out, std::shared_ptr<Backend>* software) {
     std::vector<std::shared_ptr<Backend>> byNameOnly;
 #if defined(_WIN32)
     out.push_back(win32::makeWglBackend());
@@ -76,6 +76,12 @@ void registerBuiltinBackends(std::vector<std::shared_ptr<Backend>>& out) {
 #elif defined(__APPLE__)
     out.push_back(cgl::makeCglBackend());
 #endif
+    if (software) { // the CPU backend is also the last resort of
+                    // tesseraRecreateContextWithPolicy(ALLOW_SOFTWARE)
+        for (const auto& b : byNameOnly)
+            if (std::string(b->name()) == "software")
+                *software = b;
+    }
     applyBackendSelection(out, byNameOnly);
 }
 

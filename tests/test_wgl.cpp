@@ -849,10 +849,15 @@ static void testWindowAttach() {
     if (ctx) {
         EXPECT(tesseraMakeCurrent(ctx), TESSERA_SUCCESS);
         DestroyWindow(doomed);
-        EXPECT(tesseraSwapBuffers(ctx), TESSERA_ERROR_PLATFORM);
+        EXPECT(tesseraSwapBuffers(ctx),
+               TESSERA_ERROR_WINDOW_GONE); // a distinct result, and a distinct loss cause (0.15.0)
         CHECK(std::strstr(tesseraGetLastErrorMessage(), "no longer exists") != nullptr);
+        int32_t cause = -1;
+        EXPECT(tesseraGetLossCause(ctx, &cause), TESSERA_SUCCESS);
+        CHECK(cause == TESSERA_LOSS_WINDOW_GONE);
         EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS);
-        EXPECT(tesseraMakeCurrent(ctx), TESSERA_ERROR_PLATFORM);
+        EXPECT(tesseraMakeCurrent(ctx),
+               TESSERA_ERROR_CONTEXT_LOST); // lost from now on: it cannot be made current again
         EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
     }
 
@@ -1122,6 +1127,9 @@ static void testAdapterIds() {
     EXPECT(tesseraCreateContext(&both, &c), TESSERA_ERROR_INVALID_ARGUMENT);
 }
 
+static void testSharingExplained() {
+    interop::sharingExplained(wglHooks());
+}
 static void testContextPriority() {
     TesseraContextConfig cfg = baseConfig();
     cfg.priority = TESSERA_PRIORITY_HIGH;
@@ -1185,6 +1193,7 @@ int main() {
         {"window attach", testWindowAttach},
         {"swap control and frame pacing", testSwapControlAndPacing},
         {"adapter ids", testAdapterIds},
+        {"sharing explained", testSharingExplained},
         {"context priority", testContextPriority},
         {"GPU selection", testAdapterSelection},
         {"terminate / re-init", testTerminateAndReinit},

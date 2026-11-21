@@ -153,7 +153,7 @@ public final class NativeFuzz {
 
     private void step() {
         calls++;
-        final int op = rnd.nextInt(26);
+        final int op = rnd.nextInt(27);
         if (!ONLY.isEmpty() && !ONLY.contains(op) && op != 0 && op != 24) { // creation and release always run: later ops need handles
             return;
         }
@@ -265,6 +265,16 @@ public final class NativeFuzz {
                 api.adapterCount();
                 api.adapter(rnd.nextInt(4) == 0 ? anyInt() : rnd.nextInt(3), ints(rnd.nextInt(3) == 0 ? rnd.nextInt(8) : 5),
                         strings(rnd.nextInt(3) == 0 ? rnd.nextInt(5) : 3));
+                break;
+            }
+            case 26: { // loss cause, share group, sharing preflight and recreate policies (ABI 0.15.0), hostile arrays and handles
+                api.lossCause(anyHandle(), ints(rnd.nextInt(3) == 0 ? rnd.nextInt(3) : 1));
+                api.shareGroup(anyHandle(), longs(rnd.nextInt(3) == 0 ? rnd.nextInt(3) : 1), ints(rnd.nextInt(3) == 0 ? rnd.nextInt(4) : 2));
+                api.canShare(config(), anyHandle(), ints(rnd.nextInt(3) == 0 ? rnd.nextInt(3) : 1));
+                final long[] out = longs(1);
+                if (api.recreateWithPolicy(anyHandle(), rnd.nextInt(3) == 0 ? anyInt() : rnd.nextInt(3), out, ints(1)) == 0) {
+                    adopt(out);
+                }
                 break;
             }
             default: // 24

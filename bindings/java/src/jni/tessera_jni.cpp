@@ -464,6 +464,59 @@ TESSERA_JNI(jint, nRecreate)(JNIEnv* env, jclass, jlong ctx, jlongArray outHandl
     return r;
 }
 
+TESSERA_JNI(jint, nRecreateWithPolicy)
+(JNIEnv* env, jclass, jlong ctx, jint policy, jlongArray outHandle, jintArray outFlags) {
+    if (!outHandle || !outFlags || env->GetArrayLength(outHandle) < 1 || env->GetArrayLength(outFlags) < 1 ||
+        policy < 0)
+        return TESSERA_ERROR_INVALID_ARGUMENT;
+    TesseraContext created = TESSERA_NULL_HANDLE;
+    uint32_t flags = 0;
+    const TesseraResult r = tesseraRecreateContextWithPolicy(static_cast<TesseraContext>(ctx),
+                                                             static_cast<uint32_t>(policy), &created, &flags);
+    const jlong h = static_cast<jlong>(created);
+    const jint f = static_cast<jint>(flags);
+    env->SetLongArrayRegion(outHandle, 0, 1, &h);
+    env->SetIntArrayRegion(outFlags, 0, 1, &f);
+    return r;
+}
+
+TESSERA_JNI(jint, nLossCause)(JNIEnv* env, jclass, jlong ctx, jintArray out) {
+    if (!out || env->GetArrayLength(out) < 1)
+        return TESSERA_ERROR_INVALID_ARGUMENT;
+    int32_t cause = TESSERA_LOSS_NONE;
+    const TesseraResult r = tesseraGetLossCause(static_cast<TesseraContext>(ctx), &cause);
+    const jint v = static_cast<jint>(cause);
+    env->SetIntArrayRegion(out, 0, 1, &v);
+    return r;
+}
+
+TESSERA_JNI(jint, nCanShare)(JNIEnv* env, jclass, jintArray cfg, jlong parent, jintArray out) {
+    if (!cfg || !out || env->GetArrayLength(cfg) < kConfigInts || env->GetArrayLength(out) < 1)
+        return TESSERA_ERROR_INVALID_ARGUMENT;
+    jint v[kConfigInts];
+    env->GetIntArrayRegion(cfg, 0, kConfigInts, v);
+    const TesseraContextConfig c = configFrom(v, TESSERA_NULL_HANDLE);
+    int32_t reason = TESSERA_SHARE_OK;
+    const TesseraResult r = tesseraCanShare(&c, static_cast<TesseraContext>(parent), &reason);
+    const jint rv = static_cast<jint>(reason);
+    env->SetIntArrayRegion(out, 0, 1, &rv);
+    return r;
+}
+
+TESSERA_JNI(jint, nShareGroup)(JNIEnv* env, jclass, jlong ctx, jlongArray ids, jintArray counts) {
+    if (!ids || !counts || env->GetArrayLength(ids) < 1 || env->GetArrayLength(counts) < 2)
+        return TESSERA_ERROR_INVALID_ARGUMENT;
+    TesseraShareGroupInfo g = tesseraDefaultShareGroupInfo();
+    const TesseraResult r = tesseraGetShareGroup(static_cast<TesseraContext>(ctx), &g);
+    if (r != TESSERA_SUCCESS)
+        return r;
+    const jlong id = static_cast<jlong>(g.groupId);
+    const jint c[2] = {g.members, g.alive};
+    env->SetLongArrayRegion(ids, 0, 1, &id);
+    env->SetIntArrayRegion(counts, 0, 2, c);
+    return TESSERA_SUCCESS;
+}
+
 TESSERA_JNI(jint, nIsContextLost)(JNIEnv* env, jclass, jlong ctx, jintArray out) {
     if (!out || env->GetArrayLength(out) < 2)
         return TESSERA_ERROR_INVALID_ARGUMENT;

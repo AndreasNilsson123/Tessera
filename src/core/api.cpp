@@ -168,6 +168,64 @@ TESSERA_API TesseraResult TESSERA_CALL tesseraRecreateContext(TesseraContext con
     });
 }
 
+TESSERA_API TesseraResult TESSERA_CALL tesseraRecreateContextWithPolicy(TesseraContext context,
+                                                                        uint32_t policy,
+                                                                        TesseraContext* outNew,
+                                                                        uint32_t* outFlags) {
+    return guarded([&]() -> TesseraResult {
+        if (!outNew)
+            return fail(TESSERA_ERROR_INVALID_ARGUMENT, "outNew is NULL");
+        *outNew = TESSERA_NULL_HANDLE;
+        if (outFlags)
+            *outFlags = 0;
+        uint32_t flags = 0;
+        const TesseraResult r =
+            Runtime::instance().recreateContextWithPolicy(context, policy, *outNew, flags);
+        if (outFlags)
+            *outFlags = flags;
+        return r;
+    });
+}
+
+TESSERA_API TesseraResult TESSERA_CALL tesseraGetLossCause(TesseraContext context, int32_t* outCause) {
+    return guarded([&]() -> TesseraResult {
+        if (!outCause)
+            return fail(TESSERA_ERROR_INVALID_ARGUMENT, "outCause is NULL");
+        return Runtime::instance().lossCause(context, *outCause);
+    });
+}
+
+TESSERA_API TesseraResult TESSERA_CALL tesseraCanShare(const TesseraContextConfig* config,
+                                                       TesseraContext parent, int32_t* outReason) {
+    return guarded([&]() -> TesseraResult {
+        if (!outReason)
+            return fail(TESSERA_ERROR_INVALID_ARGUMENT, "outReason is NULL");
+        *outReason = TESSERA_SHARE_OK;
+        TesseraContextConfig normalized;
+        if (TesseraResult r = normalizeConfig(config, normalized); r != TESSERA_SUCCESS)
+            return r;
+        return Runtime::instance().canShare(normalized, parent, *outReason);
+    });
+}
+
+TESSERA_API TesseraResult TESSERA_CALL tesseraGetShareGroup(TesseraContext context,
+                                                            TesseraShareGroupInfo* outInfo) {
+    return guarded([&]() -> TesseraResult {
+        if (!outInfo)
+            return fail(TESSERA_ERROR_INVALID_ARGUMENT, "outInfo is NULL");
+        const uint32_t callerSize = outInfo->structSize;
+        if (callerSize < sizeof(uint32_t) * 2)
+            return fail(TESSERA_ERROR_INVALID_ARGUMENT, "outInfo->structSize not set");
+        TesseraShareGroupInfo full = tesseraDefaultShareGroupInfo();
+        if (TesseraResult r = Runtime::instance().shareGroupInfo(context, full); r != TESSERA_SUCCESS)
+            return r;
+        const uint32_t n = callerSize < sizeof full ? callerSize : static_cast<uint32_t>(sizeof full);
+        full.structSize = callerSize;
+        std::memcpy(outInfo, &full, n);
+        return TESSERA_SUCCESS;
+    });
+}
+
 TESSERA_API TesseraResult TESSERA_CALL tesseraGetNativeHandles(TesseraContext context,
                                                                TesseraNativeHandles* outHandles) {
     return guarded([&]() -> TesseraResult {

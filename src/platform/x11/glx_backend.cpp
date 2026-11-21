@@ -185,6 +185,9 @@ class GlxContext final : public ContextObject {
         out = info;
         return TESSERA_SUCCESS;
     }
+    const GlxShared* sharedState() const noexcept {
+        return shared_.get();
+    }
 
     TesseraResult bindCurrent() noexcept override {
         const LinuxApi& api = *shared_->api;
@@ -227,9 +230,13 @@ class GlxContext final : public ContextObject {
         XErrorScope scope(*shared_->api, shared_->dpy);
         shared_->api->glx.glXSwapBuffers(shared_->dpy, drawable);
         const int e = scope.sync();
-        if (e != 0)
-            return fail(TESSERA_ERROR_PLATFORM,
+        if (e != 0) {
+            // BadWindow (3), BadDrawable (9) and GLX's own GLXBadDrawable/GLXBadWindow (error base + 2, + 7):
+            // the window is gone
+            const bool gone = e == 3 || e == 9 || e == shared_->errorBase + 2 || e == shared_->errorBase + 7;
+            return fail(foreignWindow != 0 && gone ? TESSERA_ERROR_WINDOW_GONE : TESSERA_ERROR_PLATFORM,
                         "glXSwapBuffers raised an X error " + std::to_string(e) + " (is the window gone?)");
+        }
         return TESSERA_SUCCESS;
     }
 
@@ -487,7 +494,7 @@ class GlxBackend final : public Backend {
         if (shareWith) {
             parent = std::dynamic_pointer_cast<GlxContext>(shareWith);
             if (!parent)
-                return fail(TESSERA_ERROR_INVALID_ARGUMENT,
+                return fail(TESSERA_ERROR_UNSUPPORTED,
                             "cannot share objects with a context from another backend");
         }
 
@@ -552,6 +559,21 @@ class GlxBackend final : public Backend {
         return TESSERA_WINDOW_X11;
     }
 
+    bool sharesAcrossApis() const noexcept override {
+        return true; // Mesa accepted a desktop GL / ES2-profile pair in testing (docs/compat.md)
+    }
+
+    /* A context made for a window of another X server has its own connection: objects cannot be shared across
+     * servers. */
+    int32_t shareProblem(const TesseraContextConfig&, const ContextObject& parent) const noexcept override {
+        const auto* p = dynamic_cast<const GlxContext*>(&parent);
+        if (!p)
+            return TESSERA_SHARE_DIFFERENT_BACKEND;
+        std::lock_guard<std::mutex> lock(mutex_);
+        return shared_ && p->sharedState() != shared_.get() ? TESSERA_SHARE_DIFFERENT_DISPLAY
+                                                            : TESSERA_SHARE_OK;
+    }
+
     TesseraResult createContextForWindow(const TesseraContextConfig& c, uint64_t nativeWindow,
                                          uint32_t /*flags*/, const std::shared_ptr<ContextObject>& shareWith,
                                          std::shared_ptr<ContextObject>& out) override {
@@ -596,7 +618,7 @@ class GlxBackend final : public Backend {
         if (shareWith) {
             parent = std::dynamic_pointer_cast<GlxContext>(shareWith);
             if (!parent)
-                return fail(TESSERA_ERROR_INVALID_ARGUMENT,
+                return fail(TESSERA_ERROR_UNSUPPORTED,
                             "cannot share objects with a context from another backend");
         }
         crossapi::GlxGuard guard;
@@ -824,7 +846,7 @@ class GlxBackend final : public Backend {
         return shared_;
     }
 
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
     std::shared_ptr<GlxShared> shared_;
     std::map<std::string, std::shared_ptr<GlxShared>>
         namedShared_; // by X server name (a host window's Display*)

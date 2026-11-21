@@ -62,6 +62,18 @@ public interface NativeApi {
 
     int recreate(long handle, long[] outHandle, int[] outFlags);
 
+    /** Recreate with a policy (0 same adapter, 1 any hardware, 2 allow software); outFlags[0] = SHARE_PRESERVED 1, ADAPTER_CHANGED 2, SOFTWARE 4. */
+    int recreateWithPolicy(long handle, int policy, long[] outHandle, int[] outFlags);
+
+    /** out1[0] = the loss cause (0 none, 1 GPU reset, 2 device, 3 window gone). */
+    int lossCause(long handle, int[] out1);
+
+    /** out1[0] = the reason (0 = yes). {@code cfg} as for createContext. */
+    int canShare(int[] cfg, long parent, int[] out1);
+
+    /** ids[0] = group id; counts: members, alive. */
+    int shareGroup(long handle, long[] ids1, int[] counts2);
+
     /** {@code out2[0]} = 1 if the context is known to be lost, {@code out2[1]} = the reset status. */
     int isContextLost(long handle, int[] out2);
 

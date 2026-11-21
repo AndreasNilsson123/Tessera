@@ -18,6 +18,7 @@
 #include "platform/common/create_errors.hpp"
 #include "platform/common/gl_debug.hpp"
 #include "platform/common/gl_query.hpp"
+#include "platform/common/share_format.hpp"
 #include "platform/common/swap_control.hpp"
 #include "platform/common/version_negotiation.hpp"
 #include "wgl_api.hpp"
@@ -217,9 +218,15 @@ class WglContext final : public ContextObject {
         if (pbuffer)
             return TESSERA_SUCCESS; // nothing to present
         if (foreignWindow && !IsWindow(foreignWindow))
-            return fail(TESSERA_ERROR_PLATFORM, "the window this context renders into no longer exists");
-        if (!SwapBuffers(dc))
-            return fail(TESSERA_ERROR_PLATFORM, describeWin32Error("SwapBuffers failed", GetLastError()));
+            return fail(TESSERA_ERROR_WINDOW_GONE, "the window this context renders into no longer exists");
+        if (!SwapBuffers(dc)) {
+            const DWORD e = GetLastError();
+            // 1400 ERROR_INVALID_WINDOW_HANDLE, 6 ERROR_INVALID_HANDLE, 1402 ERROR_INVALID_CURSOR_HANDLE
+            // excluded: the window or its DC went away under us
+            if (foreignWindow && (e == 1400 || e == 6))
+                return fail(TESSERA_ERROR_WINDOW_GONE, describeWin32Error("SwapBuffers failed", e));
+            return fail(TESSERA_ERROR_PLATFORM, describeWin32Error("SwapBuffers failed", e));
+        }
         return TESSERA_SUCCESS;
     }
 
@@ -558,6 +565,34 @@ class WglBackend final : public Backend {
                parseAdapterId(c.adapter, luid); // an id of another backend's kind is not ours
     }
 
+    bool sharesAcrossApis() const noexcept override {
+        return true; // NVIDIA's driver shared a desktop GL context with an ES one in testing (docs/compat.md)
+    }
+
+    /* Windows: the one thing only this backend can compare is a LUID against the adapter the parent was
+     * verified on. */
+    int32_t shareProblem(const TesseraContextConfig& c, const ContextObject& parent) const noexcept override {
+        {
+            TesseraContextInfo info = tesseraDefaultContextInfo();
+            parent.describe(info);
+            // A deeper depth buffer than the parent's cannot be shared with (measured, NVIDIA); a shallower
+            // or equal one reuses the parent's format, see create().
+            if (!formatServesRequest(c, info) && c.depthBits > info.depthBits)
+                return TESSERA_SHARE_FORMAT_MISMATCH;
+        }
+        uint64_t wanted = c.adapterLuid;
+        if (wanted == 0 && c.adapter[0] != '\0')
+            parseAdapterId(c.adapter, wanted);
+        if (wanted == 0)
+            return TESSERA_SHARE_OK;
+        TesseraContextInfo info = tesseraDefaultContextInfo();
+        parent.describe(info);
+        uint64_t have = 0;
+        if (parseAdapterId(info.adapter, have) && have != wanted)
+            return TESSERA_SHARE_DIFFERENT_ADAPTER;
+        return TESSERA_SHARE_OK;
+    }
+
     void enumerateAdapters(std::vector<TesseraAdapterInfo>& out) override {
         std::string error;
         for (const AdapterInfo& a : win32::enumerateAdapters(error)) {
@@ -579,7 +614,7 @@ class WglBackend final : public Backend {
         if (shareWith) {
             parent = std::dynamic_pointer_cast<WglContext>(shareWith);
             if (!parent)
-                return fail(TESSERA_ERROR_INVALID_ARGUMENT,
+                return fail(TESSERA_ERROR_UNSUPPORTED,
                             "cannot share objects with a context from another backend");
         }
 
@@ -599,9 +634,22 @@ class WglBackend final : public Backend {
             return fail(TESSERA_ERROR_PLATFORM, error);
         ctx->dc = ctx->window.dc;
 
-        if (TesseraResult r = negotiatePixelFormat(*sh, ctx->dc, c, wantPbuffer, ctx->pixelFormat);
-            r != TESSERA_SUCCESS)
-            return r;
+        // Sharing: a parent's pixel format that already serves the request is used as it is. Drivers (NVIDIA)
+        // refuse to share between formats with different depth buffers, and a format that serves the request
+        // is what was asked for anyway.
+        bool reusedParentFormat = false;
+        if (parent && !wantPbuffer && !parent->pbuffer && parent->pixelFormat > 0 &&
+            formatServesRequest(c, parent->info) && setPixelFormat(ctx->dc, parent->pixelFormat)) {
+            ctx->pixelFormat = parent->pixelFormat;
+            reusedParentFormat = true;
+            logf(TESSERA_LOG_DEBUG, "WGL: sharing with a parent, using its pixel format %d",
+                 ctx->pixelFormat);
+        }
+        if (!reusedParentFormat) {
+            if (TesseraResult r = negotiatePixelFormat(*sh, ctx->dc, c, wantPbuffer, ctx->pixelFormat);
+                r != TESSERA_SUCCESS)
+                return r;
+        }
 
         if (wantPbuffer) {
             ctx->pbuffer = sh->fn.createPbuffer(ctx->window.dc, ctx->pixelFormat, 1, 1, nullptr);
@@ -615,8 +663,15 @@ class WglBackend final : public Backend {
         }
 
         if (TesseraResult r = createNativeContext(*sh, ctx->dc, c, parent ? parent->rc : nullptr, ctx->rc);
-            r != TESSERA_SUCCESS)
+            r != TESSERA_SUCCESS) {
+            if (parent && !reusedParentFormat && c.depthBits > parent->info.depthBits)
+                return fail(TESSERA_ERROR_NO_MATCHING_CONFIG,
+                            "the driver cannot share objects between framebuffer formats with different "
+                            "depth buffers (the parent's has " +
+                                std::to_string(parent->info.depthBits) + " bits, the request needs " +
+                                std::to_string(c.depthBits) + ")");
             return r;
+        }
         ctx->parent = std::move(parent);
 
         return finishContext(*sh, ctx, c, wantPbuffer, false, out);
@@ -644,7 +699,7 @@ class WglBackend final : public Backend {
         if (shareWith) {
             parent = std::dynamic_pointer_cast<WglContext>(shareWith);
             if (!parent)
-                return fail(TESSERA_ERROR_INVALID_ARGUMENT,
+                return fail(TESSERA_ERROR_UNSUPPORTED,
                             "cannot share objects with a context from another backend");
         }
         HWND hwnd = reinterpret_cast<HWND>(static_cast<std::uintptr_t>(nativeWindow));

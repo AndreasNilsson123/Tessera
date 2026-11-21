@@ -69,6 +69,8 @@ class ContextObject {
     TesseraContextConfig request = {}; // what this context was created from, for tesseraRecreateContext
     uint64_t shareGroup = 0;           // contexts sharing objects have the same group id
     std::atomic<int32_t> requestedInterval{TESSERA_SWAP_UNKNOWN}; // last successful tesseraSetSwapInterval
+    std::atomic<int32_t> lossCause{TESSERA_LOSS_NONE};            // why it was lost (TESSERA_LOSS_*)
+    const char* backendName = ""; // the backend that created it (a literal), for share preflight
     std::atomic<bool> lost{false};
     std::atomic<int32_t> lostStatus{TESSERA_RESET_NONE};
 };
@@ -92,6 +94,19 @@ class Backend {
      * using whatever GPU the backend picks). Never called for a request that names no GPU. */
     virtual bool supportsAdapterSelection(const TesseraContextConfig& /*config*/) const noexcept {
         return false;
+    }
+    /* May an OpenGL and an OpenGL ES context of this backend share objects? (WGL's and GLX's drivers accepted
+     * it in testing; the EGL backend refuses, as the spec leaves it undefined.) Used by tesseraCanShare. */
+    virtual bool sharesAcrossApis() const noexcept {
+        return false;
+    }
+    /* Sharing preflight (tesseraCanShare): a reason this backend knows why `config` cannot share objects with
+     * `parent` (a context of THIS backend), or TESSERA_SHARE_OK. The generic checks (API, lost, adapter,
+     * backend) are the core's; this is for what only the backend knows (CGL: a core context cannot share with
+     * a legacy one). Must not touch the driver. */
+    virtual int32_t shareProblem(const TesseraContextConfig& /*config*/,
+                                 const ContextObject& /*parent*/) const noexcept {
+        return TESSERA_SHARE_OK;
     }
     /* Appends the GPUs this backend can use (tesseraEnumerateAdapters). `backend` is filled in by the caller.
      */

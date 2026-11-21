@@ -101,7 +101,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     setup();
     if (size == 0)
         return 0;
-    const uint8_t selector = data[0] % 13;
+    const uint8_t selector = data[0] % 15;
     ++data;
     --size;
     // Real handles are needed to reach the code behind the handle check: keep a few contexts alive.
@@ -226,6 +226,32 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         int32_t status = 0;
         tesseraGetResetStatus(h, &status);
         tesseraSetContextLostCallback(nullptr, nullptr);
+        break;
+    }
+    case 13: { // loss causes and the share group: hostile handles, any out structure size
+        const uint64_t h = take64(data, size);
+        int32_t cause = 0;
+        tesseraGetLossCause(h, (h & 1) ? &cause : nullptr);
+        tesseraGetLossCause(live[0], &cause);
+        TesseraShareGroupInfo g = tesseraDefaultShareGroupInfo();
+        g.structSize = static_cast<uint32_t>(h >> 32) % 80; // too small, exact and larger than ours
+        tesseraGetShareGroup((h & 2) ? live[1] : h, &g);
+        tesseraGetShareGroup(live[0], (h & 4) ? nullptr : &g);
+        break;
+    }
+    case 14: { // the sharing preflight and the recreate policies, from an arbitrary config image
+        const uint64_t h = take64(data, size);
+        const Exact e(data, size);
+        const auto* cfg = reinterpret_cast<const TesseraContextConfig*>(e.data.get());
+        if (size < sizeof(uint32_t))
+            return 0;
+        int32_t why = 0;
+        tesseraCanShare(cfg, (h & 1) ? live[0] : h, (h & 2) ? &why : nullptr);
+        TesseraContext made = 0;
+        uint32_t flags = 0;
+        if (tesseraRecreateContextWithPolicy((h & 4) ? live[1] : h, static_cast<uint32_t>(h >> 40) & 7, &made,
+                                             (h & 8) ? &flags : nullptr) == TESSERA_SUCCESS)
+            tesseraDestroyContext(made);
         break;
     }
     default: { // result strings and the last error text

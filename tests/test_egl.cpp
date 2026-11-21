@@ -931,6 +931,9 @@ static void testAdapterIds() {
     std::snprintf(mac.adapter, sizeof mac.adapter, "cgl:0x00024600");
     EXPECT(tesseraCreateContext(&mac, &ctx), TESSERA_ERROR_UNSUPPORTED);
 }
+static void testSharingExplained() {
+    interop::sharingExplained(eglHooks());
+}
 static void testProbe() {
     ForeignContext foreign; // a context from "another library" must survive every probe
     robust::Hooks h = eglHooks();
@@ -1061,6 +1064,7 @@ int main() {
         {"probe", testProbe},
         {"GPU requests are refused", testAdapterRequests},
         {"adapter ids", testAdapterIds},
+        {"sharing explained", testSharingExplained},
         {"native handles", testNativeHandles},
         {"context priority", testContextPriority},
         {"terminate leaves the shared display alive", testTerminateKeepsSharedDisplayAlive},

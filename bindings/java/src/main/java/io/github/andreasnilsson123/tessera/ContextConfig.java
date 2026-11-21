@@ -128,6 +128,12 @@ public final class ContextConfig {
          * compatible version (Mesa does for core profiles); {@link ContextInfo} says what was granted.
          */
         public static final int EXACT_VERSION = 0x400;
+        /**
+         * Do not check the reset status inside {@link Context#makeCurrent()} and {@link Context#swapBuffers()} (ABI 0.15.0).
+         * By default a context created with {@link #RESET_NOTIFICATION} is checked there (one cheap query), so the lost
+         * listener fires without the application polling. No effect without reset notification.
+         */
+        public static final int NO_RESET_POLL = 0x800;
 
         private Flags() {
         }

@@ -28,6 +28,10 @@ static_assert(offsetof(TesseraContextConfig, adapter) == 88 &&
 static_assert(offsetof(TesseraContextInfo, adapterClass) == 444 &&
                   offsetof(TesseraContextInfo, adapter) == 448,
               "adapter fields of the info (the Java FFM binding hard-codes the offsets)");
+static_assert(sizeof(TesseraShareGroupInfo) == 56 && offsetof(TesseraShareGroupInfo, groupId) == 8 &&
+                  offsetof(TesseraShareGroupInfo, members) == 16 &&
+                  offsetof(TesseraShareGroupInfo, alive) == 20,
+              "TesseraShareGroupInfo layout (the Java FFM binding hard-codes it)");
 static_assert(sizeof(TesseraAdapterInfo) == 248 && offsetof(TesseraAdapterInfo, luid) == 16 &&
                   offsetof(TesseraAdapterInfo, backend) == 24 && offsetof(TesseraAdapterInfo, id) == 40 &&
                   offsetof(TesseraAdapterInfo, name) == 88,

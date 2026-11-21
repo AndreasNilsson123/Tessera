@@ -153,6 +153,34 @@ int runX11() {
         if (ctx)
             EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
     }
+    // A window destroyed under a live context (0.15.0): where the EGL implementation notices at the swap it
+    // is WINDOW_GONE, with that loss cause; Mesa's X11 platform may also let the swap pass silently, which is
+    // its choice and not a failure.
+    {
+        const unsigned long doomed = create(dpy, root(dpy), 0, 0, 64, 64, 0, 0, 0);
+        map(dpy, doomed);
+        sync(dpy, 0);
+        TesseraNativeWindow wd = w;
+        wd.window = doomed;
+        TesseraContext c = 0;
+        EXPECT(tesseraCreateContextForNativeWindow(&cfg, &wd, 0, &c), TESSERA_SUCCESS);
+        if (c) {
+            EXPECT(tesseraMakeCurrent(c), TESSERA_SUCCESS);
+            destroy(dpy, doomed);
+            sync(dpy, 0);
+            const TesseraResult swap = tesseraSwapBuffers(c);
+            std::printf("  x11: swap after the window was destroyed: %s\n", tesseraResultString(swap));
+            CHECK(swap == TESSERA_SUCCESS || swap == TESSERA_ERROR_WINDOW_GONE ||
+                  swap == TESSERA_ERROR_PLATFORM);
+            if (swap == TESSERA_ERROR_WINDOW_GONE) {
+                int32_t cause = -1;
+                EXPECT(tesseraGetLossCause(c, &cause), TESSERA_SUCCESS);
+                CHECK(cause == TESSERA_LOSS_WINDOW_GONE);
+            }
+            tesseraMakeCurrent(TESSERA_NULL_HANDLE);
+            EXPECT(tesseraDestroyContext(c), TESSERA_SUCCESS);
+        }
+    }
     // With the host's own Display* (ABI 0.14.0): Tessera reads the server name from it and uses a connection
     // of its own, for a connection named explicitly as well as for the default one.
     {

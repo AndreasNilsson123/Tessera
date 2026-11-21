@@ -257,6 +257,27 @@ void fuzzHandlesAndOutputs() {
         if (!isReal)
             CHECK(rn != TESSERA_SUCCESS);
 
+        // Share group (sized like the others), loss cause and the sharing preflight: made-up handles are
+        // always rejected.
+        {
+            const std::size_t sgSize =
+                pick(4) ? sizeof(TesseraShareGroupInfo)
+                        : 4 + pick(static_cast<uint32_t>(sizeof(TesseraShareGroupInfo)) + 40);
+            Exact sg = exactBuffer(sgSize);
+            uint32_t claim = pick(6) == 0 ? pick(4) : static_cast<uint32_t>(sgSize);
+            std::memcpy(sg.data.get(), &claim, sizeof claim);
+            const TesseraResult rg =
+                tesseraGetShareGroup(h, reinterpret_cast<TesseraShareGroupInfo*>(sg.data.get()));
+            int32_t cause = 7, why = 7;
+            const TesseraResult rc = tesseraGetLossCause(h, pick(8) ? &cause : nullptr);
+            TesseraContextConfig want = tesseraDefaultContextConfig();
+            want.api = TESSERA_API_OPENGL;
+            const TesseraResult rw = tesseraCanShare(&want, h, pick(8) ? &why : nullptr);
+            if (!isReal) {
+                CHECK(rg != TESSERA_SUCCESS && rc != TESSERA_SUCCESS && rw != TESSERA_SUCCESS);
+            }
+        }
+
         int32_t status = 7;
         const TesseraResult rs = tesseraGetResetStatus(h, pick(8) ? &status : nullptr);
         if (!isReal)

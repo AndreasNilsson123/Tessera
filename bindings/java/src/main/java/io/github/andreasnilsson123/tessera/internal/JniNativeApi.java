@@ -56,6 +56,26 @@ public final class JniNativeApi implements NativeApi {
     }
 
     @Override
+    public int recreateWithPolicy(long handle, int policy, long[] outHandle, int[] outFlags) {
+        return nRecreateWithPolicy(handle, policy, outHandle, outFlags);
+    }
+
+    @Override
+    public int lossCause(long handle, int[] out1) {
+        return nLossCause(handle, out1);
+    }
+
+    @Override
+    public int canShare(int[] cfg, long parent, int[] out1) {
+        return nCanShare(cfg, parent, out1);
+    }
+
+    @Override
+    public int shareGroup(long handle, long[] ids1, int[] counts2) {
+        return nShareGroup(handle, ids1, counts2);
+    }
+
+    @Override
     public int adapterCount() {
         return nAdapterCount();
     }
@@ -243,6 +263,14 @@ public final class JniNativeApi implements NativeApi {
     private static native int nDestroyContext(long handle);
 
     private static native int nContextInfo(long handle, int[] ints, String[] strings);
+
+    private static native int nRecreateWithPolicy(long handle, int policy, long[] outHandle, int[] outFlags);
+
+    private static native int nLossCause(long handle, int[] out1);
+
+    private static native int nCanShare(int[] cfg, long parent, int[] out1);
+
+    private static native int nShareGroup(long handle, long[] ids1, int[] counts2);
 
     private static native int nAdapterCount();
 

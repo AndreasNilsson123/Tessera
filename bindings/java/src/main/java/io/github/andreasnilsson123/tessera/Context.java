@@ -179,6 +179,23 @@ public final class Context implements AutoCloseable {
         return out[0] == 0 ? ResetStatus.NONE : ResetStatus.of(out[1]);
     }
 
+    /** Why the context was lost ({@link LossCause#NONE} while it is healthy). The right response differs per cause. */
+    public LossCause lossCause() {
+        final NativeApi api = Tessera.api();
+        final int[] out = new int[1];
+        Tessera.check(api, api.lossCause(handle(), out));
+        return LossCause.of(out[0]);
+    }
+
+    /** The share group this context belongs to: its id and how many members are there and alive. */
+    public ShareGroup shareGroup() {
+        final NativeApi api = Tessera.api();
+        final long[] id = new long[1];
+        final int[] counts = new int[2];
+        Tessera.check(api, api.shareGroup(handle(), id, counts));
+        return new ShareGroup(id[0], counts[0], counts[1]);
+    }
+
     long handle() {
         if (state.closed.get()) {
             throw new IllegalStateException("the context is closed");
@@ -298,9 +315,28 @@ public final class Context implements AutoCloseable {
         private final Context context;
         private final boolean sharePreserved;
 
+        private final boolean adapterChanged;
+        private final boolean software;
+
         Recreation(Context context, boolean sharePreserved) {
+            this(context, sharePreserved, false, false);
+        }
+
+        Recreation(Context context, boolean sharePreserved, boolean adapterChanged, boolean software) {
             this.context = context;
             this.sharePreserved = sharePreserved;
+            this.adapterChanged = adapterChanged;
+            this.software = software;
+        }
+
+        /** True if the new context runs on a different adapter than the old one (where both are known). Only set by {@link #recreate(RecreatePolicy)}. */
+        public boolean adapterChanged() {
+            return adapterChanged;
+        }
+
+        /** True if the new context is a CPU renderer. Only set by {@link #recreate(RecreatePolicy)}. */
+        public boolean software() {
+            return software;
         }
 
         public Context context() {
@@ -324,6 +360,20 @@ public final class Context implements AutoCloseable {
         final int[] flags = new int[1];
         Tessera.check(api, api.recreate(handle(), handle, flags));
         return new Recreation(new Context(handle[0], config), (flags[0] & 1) != 0);
+    }
+
+    /**
+     * {@link #recreate()} with a policy for what may change when the old adapter is gone: the same one, any GPU, or the CPU renderer as
+     * a last resort. The outcome says what changed; the new context's {@link ContextInfo#adapter()} says where it runs.
+     */
+    public Recreation recreate(RecreatePolicy policy) {
+        java.util.Objects.requireNonNull(policy, "policy");
+        final NativeApi api = Tessera.api();
+        final long[] handle = new long[1];
+        final int[] flags = new int[1];
+        Tessera.check(api, api.recreateWithPolicy(handle(), policy.nativeValue, handle, flags));
+        // config() of the new context is the original request; where the policy dropped its adapter, info().adapter() says the truth
+        return new Recreation(new Context(handle[0], config), (flags[0] & 1) != 0, (flags[0] & 2) != 0, (flags[0] & 4) != 0);
     }
 
     /** Destroys the context. Idempotent, any thread (see the class comment for what happens if another thread holds it). */

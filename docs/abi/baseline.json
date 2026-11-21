@@ -1,5 +1,9 @@
 {
  "functions": {
+  "tesseraCanShare": {
+   "params": "const TesseraContextConfig* config, TesseraContext parent, int32_t* outReason",
+   "return": "TesseraResult"
+  },
   "tesseraCreateContext": {
    "params": "const TesseraContextConfig* config, TesseraContext* outContext",
    "return": "TesseraResult"
@@ -36,6 +40,10 @@
    "params": "void",
    "return": "const char*"
   },
+  "tesseraGetLossCause": {
+   "params": "TesseraContext context, int32_t* outCause",
+   "return": "TesseraResult"
+  },
   "tesseraGetNativeHandles": {
    "params": "TesseraContext context, TesseraNativeHandles* outHandles",
    "return": "TesseraResult"
@@ -50,6 +58,10 @@
   },
   "tesseraGetResetStatus": {
    "params": "TesseraContext context, int32_t* outStatus",
+   "return": "TesseraResult"
+  },
+  "tesseraGetShareGroup": {
+   "params": "TesseraContext context, TesseraShareGroupInfo* outInfo",
    "return": "TesseraResult"
   },
   "tesseraGetSwapControl": {
@@ -94,6 +106,10 @@
   },
   "tesseraRecreateContext": {
    "params": "TesseraContext context, TesseraContext* outNew, uint32_t* outFlags",
+   "return": "TesseraResult"
+  },
+  "tesseraRecreateContextWithPolicy": {
+   "params": "TesseraContext context, uint32_t policy, TesseraContext* outNew, uint32_t* outFlags",
    "return": "TesseraResult"
   },
   "tesseraResizeWindow": {
@@ -141,6 +157,7 @@
   "TESSERA_ERROR_PLATFORM": "(-8)",
   "TESSERA_ERROR_UNKNOWN": "(-1)",
   "TESSERA_ERROR_UNSUPPORTED": "(-6)",
+  "TESSERA_ERROR_WINDOW_GONE": "(-11)",
   "TESSERA_ERROR_WRONG_THREAD": "(-9)",
   "TESSERA_FALLBACK_BEST_EFFORT": "0x0001u",
   "TESSERA_FALLBACK_STRICT": "0x0000u",
@@ -150,6 +167,7 @@
   "TESSERA_FLAG_FLOAT_COLOR": "0x0040u",
   "TESSERA_FLAG_FORWARD_COMPATIBLE": "0x0002u",
   "TESSERA_FLAG_NO_ERROR": "0x0010u",
+  "TESSERA_FLAG_NO_RESET_POLL": "0x0800u",
   "TESSERA_FLAG_RELEASE_FLUSH": "0x0200u",
   "TESSERA_FLAG_RESET_NOTIFICATION": "0x0008u",
   "TESSERA_FLAG_ROBUST_ACCESS": "0x0004u",
@@ -162,6 +180,10 @@
   "TESSERA_LOG_ERROR": "1",
   "TESSERA_LOG_INFO": "3",
   "TESSERA_LOG_WARN": "2",
+  "TESSERA_LOSS_DEVICE": "2",
+  "TESSERA_LOSS_GPU_RESET": "1",
+  "TESSERA_LOSS_NONE": "0",
+  "TESSERA_LOSS_WINDOW_GONE": "3",
   "TESSERA_NATIVE_CGL": "4u",
   "TESSERA_NATIVE_EGL": "3u",
   "TESSERA_NATIVE_GLX": "2u",
@@ -175,11 +197,24 @@
   "TESSERA_PROFILE_ANY": "0x0000u",
   "TESSERA_PROFILE_COMPATIBILITY": "0x0002u",
   "TESSERA_PROFILE_CORE": "0x0001u",
+  "TESSERA_RECREATE_ADAPTER_CHANGED": "0x2u",
+  "TESSERA_RECREATE_ALLOW_SOFTWARE": "2u",
+  "TESSERA_RECREATE_ANY_HARDWARE": "1u",
+  "TESSERA_RECREATE_SAME_ADAPTER": "0u",
   "TESSERA_RECREATE_SHARE_PRESERVED": "0x1u",
+  "TESSERA_RECREATE_SOFTWARE": "0x4u",
   "TESSERA_RESET_GUILTY": "1",
   "TESSERA_RESET_INNOCENT": "2",
   "TESSERA_RESET_NONE": "0",
   "TESSERA_RESET_UNKNOWN": "3",
+  "TESSERA_SHARE_API_MISMATCH": "2",
+  "TESSERA_SHARE_DIFFERENT_ADAPTER": "5",
+  "TESSERA_SHARE_DIFFERENT_BACKEND": "4",
+  "TESSERA_SHARE_DIFFERENT_DISPLAY": "6",
+  "TESSERA_SHARE_FORMAT_MISMATCH": "7",
+  "TESSERA_SHARE_OK": "0",
+  "TESSERA_SHARE_PARENT_LOST": "1",
+  "TESSERA_SHARE_PROFILE_MISMATCH": "3",
   "TESSERA_SUCCESS": "0",
   "TESSERA_SURFACE_DEFAULT": "0x0000u",
   "TESSERA_SURFACE_HIDDEN_WINDOW": "0x0001u",
@@ -633,6 +668,48 @@
     }
    ],
    "size": 832
+  },
+  "TesseraShareGroupInfo": {
+   "align": 8,
+   "fields": [
+    {
+     "name": "structSize",
+     "offset": 0,
+     "size": 4,
+     "type": "uint32_t"
+    },
+    {
+     "name": "reserved32",
+     "offset": 4,
+     "size": 4,
+     "type": "uint32_t"
+    },
+    {
+     "name": "groupId",
+     "offset": 8,
+     "size": 8,
+     "type": "uint64_t"
+    },
+    {
+     "name": "members",
+     "offset": 16,
+     "size": 4,
+     "type": "int32_t"
+    },
+    {
+     "name": "alive",
+     "offset": 20,
+     "size": 4,
+     "type": "int32_t"
+    },
+    {
+     "name": "reserved",
+     "offset": 24,
+     "size": 32,
+     "type": "uint64_t[4]"
+    }
+   ],
+   "size": 56
   },
   "TesseraSwapControl": {
    "align": 8,

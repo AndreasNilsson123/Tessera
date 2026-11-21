@@ -11,11 +11,11 @@
 namespace tessera {
 namespace {
 
-constexpr uint32_t kKnownFlags = TESSERA_FLAG_DEBUG | TESSERA_FLAG_FORWARD_COMPATIBLE |
-                                 TESSERA_FLAG_ROBUST_ACCESS | TESSERA_FLAG_RESET_NOTIFICATION |
-                                 TESSERA_FLAG_NO_ERROR | TESSERA_FLAG_SRGB | TESSERA_FLAG_FLOAT_COLOR |
-                                 TESSERA_FLAG_DOUBLE_BUFFER | TESSERA_FLAG_STEREO |
-                                 TESSERA_FLAG_RELEASE_FLUSH | TESSERA_FLAG_EXACT_VERSION;
+constexpr uint32_t kKnownFlags =
+    TESSERA_FLAG_DEBUG | TESSERA_FLAG_FORWARD_COMPATIBLE | TESSERA_FLAG_ROBUST_ACCESS |
+    TESSERA_FLAG_RESET_NOTIFICATION | TESSERA_FLAG_NO_ERROR | TESSERA_FLAG_SRGB | TESSERA_FLAG_FLOAT_COLOR |
+    TESSERA_FLAG_DOUBLE_BUFFER | TESSERA_FLAG_STEREO | TESSERA_FLAG_RELEASE_FLUSH |
+    TESSERA_FLAG_EXACT_VERSION | TESSERA_FLAG_NO_RESET_POLL;
 
 // Minimum acceptable structSize: everything up to and including `fallback`.
 constexpr std::size_t kMinSize = offsetof(TesseraContextConfig, fallback) + sizeof(TesseraEnum);

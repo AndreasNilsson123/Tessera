@@ -1,6 +1,6 @@
 {
   "name": "tessera",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "description": "OpenGL / OpenGL ES context creation that coexists safely with other OpenGL users in the same process",
   "homepage": "https://github.com/AndreasNilsson123/Tessera",
   "license": "Apache-2.0",
