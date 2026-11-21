@@ -6,11 +6,13 @@
 
 namespace tessera {
 
-// What a driver's refusal to create a context means, for every backend, in one reviewed place (ROADMAP 12.2).
-// The backends call these instead of keeping their own `if (code == ...)` chains; test_core has a row per code.
-//   NO_MATCHING_CONFIG  the driver cannot provide this combination (version, profile, flags, format): the caller may relax
+// What a driver's refusal to create a context means, for every backend, in one reviewed place
+// (ROADMAP 12.2). The backends call these instead of keeping their own `if (code == ...)` chains;
+// test_core has a row per code.
+//   NO_MATCHING_CONFIG  the driver cannot provide this combination (version, profile, flags,
+//                       format): the caller may relax
 //   OUT_OF_MEMORY       resources, not the request
-//   PLATFORM            anything else (a native failure the caller cannot fix by changing the request)
+//   PLATFORM            anything else (a native failure changing the request cannot fix)
 
 /* WGL: GetLastError() after wglCreateContextAttribsARB. The ARB spec names ERROR_INVALID_VERSION_ARB (0x2095)
  * and ERROR_INVALID_PROFILE_ARB (0x2096), but drivers also answer a combination they dislike with plain Win32
