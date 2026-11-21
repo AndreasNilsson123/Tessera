@@ -44,8 +44,9 @@ class DynamicLibrary {
      * refused on Windows (it would search System32 only, which is what open() is for). */
     static DynamicLibrary openPath(const char* path) noexcept;
 
-    /* The operating system's error code of the last failed openPath on this thread (Windows: GetLastError, e.g. 126 = the
-     * file or one of ITS dependencies was not found, 193 = wrong architecture); 0 elsewhere. For log lines. */
+    /* The operating system's error code of the last failed openPath on this thread (Windows: GetLastError,
+     * e.g. 126 = the file or one of ITS dependencies was not found, 193 = wrong architecture); 0 elsewhere.
+     * For log lines. */
     static unsigned long lastOpenError() noexcept;
 
     /* Null if not found or the library is empty. */

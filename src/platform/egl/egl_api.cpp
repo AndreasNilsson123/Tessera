@@ -27,7 +27,8 @@ const EglApi* loadApi() noexcept {
             api->lib = DynamicLibrary::openPath(path.c_str());
             if (!api->lib)
                 logf(TESSERA_LOG_WARN,
-                     "TESSERA_EGL_LIBRARY=%s could not be loaded (system error %lu; Windows needs an absolute path "
+                     "TESSERA_EGL_LIBRARY=%s could not be loaded (system error %lu; Windows needs an "
+                     "absolute path "
                      "and the file's own dependencies beside it)",
                      path.c_str(), DynamicLibrary::lastOpenError());
         } else {
