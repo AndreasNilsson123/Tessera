@@ -18,6 +18,10 @@ namespace tessera {
 
 #if defined(_WIN32)
 
+namespace {
+thread_local unsigned long g_openError = 0;
+}
+
 DynamicLibrary DynamicLibrary::open(const char* name) noexcept {
     DynamicLibrary lib;
     if (!name)
@@ -42,7 +46,12 @@ DynamicLibrary DynamicLibrary::openPath(const char* path) noexcept {
     // DLLs reachable.
     lib.handle_ = reinterpret_cast<void*>(
         LoadLibraryExW(wide, nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32));
+    g_openError = lib.handle_ ? 0 : GetLastError();
     return lib;
+}
+
+unsigned long DynamicLibrary::lastOpenError() noexcept {
+    return g_openError;
 }
 
 bool isAbsolutePath(const char* path) noexcept {
@@ -79,6 +88,10 @@ DynamicLibrary DynamicLibrary::open(const char* name) noexcept {
 
 DynamicLibrary DynamicLibrary::openPath(const char* path) noexcept {
     return open(path);
+}
+
+unsigned long DynamicLibrary::lastOpenError() noexcept {
+    return 0;
 }
 
 bool isAbsolutePath(const char* path) noexcept {
