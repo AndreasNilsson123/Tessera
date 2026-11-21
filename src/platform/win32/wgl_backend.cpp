@@ -575,9 +575,13 @@ class WglBackend final : public Backend {
         {
             TesseraContextInfo info = tesseraDefaultContextInfo();
             parent.describe(info);
-            // A deeper depth buffer than the parent's cannot be shared with (measured, NVIDIA); a shallower
-            // or equal one reuses the parent's format, see create().
-            if (!formatServesRequest(c, info) && c.depthBits > info.depthBits)
+            // A deeper depth buffer than the parent's cannot be shared with on NVIDIA (measured,
+            // docs/compat.md); a shallower or equal one reuses the parent's format, see create(). Other
+            // drivers are not predicted: Microsoft's GDI renderer refuses ANY different format (measured on
+            // the hosted runner), but whether a request ends up with a different format is only known once
+            // one has been chosen, so the verdict stays "yes" there and the create explains.
+            if (std::strstr(info.vendor, "NVIDIA") != nullptr && !formatServesRequest(c, info) &&
+                c.depthBits > info.depthBits)
                 return TESSERA_SHARE_FORMAT_MISMATCH;
         }
         uint64_t wanted = c.adapterLuid;
@@ -664,12 +668,15 @@ class WglBackend final : public Backend {
 
         if (TesseraResult r = createNativeContext(*sh, ctx->dc, c, parent ? parent->rc : nullptr, ctx->rc);
             r != TESSERA_SUCCESS) {
-            if (parent && !reusedParentFormat && c.depthBits > parent->info.depthBits)
-                return fail(TESSERA_ERROR_NO_MATCHING_CONFIG,
-                            "the driver cannot share objects between framebuffer formats with different "
-                            "depth buffers (the parent's has " +
-                                std::to_string(parent->info.depthBits) + " bits, the request needs " +
-                                std::to_string(c.depthBits) + ")");
+            if (parent && !reusedParentFormat && !formatServesRequest(c, parent->info)) {
+                const std::string why = tesseraGetLastErrorMessage();
+                return fail(
+                    TESSERA_ERROR_NO_MATCHING_CONFIG,
+                    "the driver refused to share objects between the parent's framebuffer format (depth " +
+                        std::to_string(parent->info.depthBits) + ", alpha " +
+                        std::to_string(parent->info.alphaBits) + ", samples " +
+                        std::to_string(parent->info.samples) + ") and the one this request needs: " + why);
+            }
             return r;
         }
         ctx->parent = std::move(parent);

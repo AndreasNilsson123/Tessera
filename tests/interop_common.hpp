@@ -449,6 +449,10 @@ inline void sharingExplained(const robust::Hooks& h) {
         // verdict is a statement about sharing alone).
         if (verdict != TESSERA_SHARE_OK)
             CHECK(r != TESSERA_SUCCESS);
+        if (verdict == TESSERA_SHARE_OK && r != TESSERA_SUCCESS)
+            CHECK(r ==
+                  TESSERA_ERROR_NO_MATCHING_CONFIG); // a driver refusing two framebuffer formats (the hosted
+                                                     // GDI renderer): explained, not a PLATFORM error
         if (r == TESSERA_SUCCESS) {
             CHECK(verdict == TESSERA_SHARE_OK);
             TesseraShareGroupInfo g = tesseraDefaultShareGroupInfo();

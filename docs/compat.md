@@ -63,6 +63,11 @@ what happened next to `tesseraCanShare`'s verdict (the two must agree). "ok" = t
 | Depth buffer 32 bits against the parent's 24 | **fails** (`NO_MATCHING_CONFIG`, verdict `FORMAT_MISMATCH`) | ok | ok |
 | OpenGL ES child of an OpenGL parent | ok (accepted by the driver) | ok | refused by Tessera (verdict `API_MISMATCH`) |
 
+**Windows Server on the hosted runner (Microsoft GDI Generic, OpenGL 1.1):** it refuses to share between ANY two different pixel
+formats (an alpha channel against none: `wglShareLists` "the pixel format is invalid"), and that is reported as `NO_MATCHING_CONFIG` with
+the reason, not as a platform error; `tesseraCanShare` does not predict it (a "yes" is best knowledge), only NVIDIA's depth rule is
+predicted, because only that one was measured both ways.
+
 Not measured: AMD and Intel drivers, macOS beyond the hosted VM (there a core and a legacy context cannot share: verdict
 `PROFILE_MISMATCH`, tested on the fake and the real framework).
 
