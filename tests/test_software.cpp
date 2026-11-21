@@ -104,6 +104,12 @@ static HWND makeWindow(int w, int h) {
 }
 #endif
 
+static void logToStdout(int32_t level, const char* message, void*) {
+    if (level <= TESSERA_LOG_INFO)
+        std::printf("  [tessera %d] %s
+", level, message);
+}
+
 int main(int argc, char** argv) {
     std::setvbuf(stdout, nullptr, _IONBF, 0); // a driver that exits the process must not eat the output
     const std::string mode = argc > 1 ? argv[1] : "software";
@@ -111,6 +117,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "usage: test_software software|egl\n");
         return 2;
     }
+    tesseraSetLogCallback(logToStdout, nullptr);
     setEnv("TESSERA_BACKEND", mode.c_str());
     EXPECT(tesseraInit(), TESSERA_SUCCESS);
 
