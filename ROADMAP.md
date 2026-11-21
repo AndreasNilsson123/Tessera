@@ -274,6 +274,10 @@ vendor-name `if` remains in backend code outside the table.
 - [x] **Report who served the context**: `TesseraContextInfo::adapter` and `adapterClass` on every backend (GLX: class only).
 - [x] **CGL renderer selection**: `kCGLPFARendererID`, offline renderers allowed as the last attempt (cost documented in ADR 0017).
   Verified against the fake CGL (3 renderers, one offline, one software) and, in CI, the real framework on the macOS VM.
+  CI (21 Nov 2026): on the real macOS framework the hosted VM has one renderer, `cgl:0x01020400` (Apple Software Renderer, software),
+  which serves the default context and is selected by its own id; its id carries bits beyond the 0x20400 family (the family mask is
+  applied). The Windows runner has Hyper-V's adapter next to WARP (two adapters of one vendor, both "Microsoft"): an explicit,
+  verified id is reported as requested there, and a default context's adapter is unknown (ambiguous), as designed.
 - [ ] **Real targeting on Windows** (`WGL_NV_gpu_affinity`, `WGL_AMD_gpu_association`): not done; there is still no hardware here that
   exposes them. Windows stays verify-only.
 - [~] **Hybrid-laptop advisory**: implemented and logged once per process; the decision is a pure function covered by unit tests with fake

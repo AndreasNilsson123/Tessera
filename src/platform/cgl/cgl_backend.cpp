@@ -209,6 +209,13 @@ bool parseRendererId(const char* id, int32_t& out) {
     return true;
 }
 
+/* Apple's CPU renderers, by the renderer family bits (the real ids carry more: 0x01020400 on a hosted VM). */
+bool isAppleCpuRenderer(int32_t id) {
+    constexpr int32_t kMatchingMask = 0x00FE7F00; // kCGLRendererIDMatchingMask
+    const int32_t family = id & kMatchingMask;
+    return family == kRendererGeneric || family == kRendererGenericFloat || family == kRendererAppleSW;
+}
+
 std::string rendererIdText(int32_t id) {
     char buf[24];
     std::snprintf(buf, sizeof buf, "cgl:0x%08x", static_cast<unsigned>(id));
@@ -303,8 +310,7 @@ bool queryInfo(const CglApi& api, const PixelFormatInfo& p, TesseraContextInfo& 
     info.surface = TESSERA_SURFACE_NONE; // CGL contexts here never have a drawable
     if (p.rendererId != 0) {             // which renderer (GPU) the pixel format belongs to
         std::snprintf(info.adapter, sizeof info.adapter, "%s", rendererIdText(p.rendererId).c_str());
-        if (p.rendererId == kRendererGeneric || p.rendererId == kRendererGenericFloat ||
-            p.rendererId == kRendererAppleSW)
+        if (isAppleCpuRenderer(p.rendererId))
             info.adapterClass |= TESSERA_ADAPTER_SOFTWARE;
     }
     return true;
@@ -344,8 +350,7 @@ class CglBackend final : public Backend {
             TesseraAdapterInfo a = tesseraDefaultAdapterInfo();
             std::snprintf(a.id, sizeof a.id, "%s", rendererIdText(id).c_str());
             const bool accelerated = prop(kRPAccelerated) != 0;
-            if (!accelerated || id == kRendererGeneric || id == kRendererGenericFloat ||
-                id == kRendererAppleSW)
+            if (!accelerated || isAppleCpuRenderer(id))
                 a.flags |= TESSERA_ADAPTER_SOFTWARE;
             const int mb = prop(kRPVideoMemoryMB);
             std::snprintf(a.name, sizeof a.name, "CGL renderer 0x%08x (%s%s%s)", static_cast<unsigned>(id),
