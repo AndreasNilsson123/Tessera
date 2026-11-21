@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Tessera contributors
 #include "arb_context.hpp"
+#include "version_negotiation.hpp"
 
 #include "context_priority.hpp"
 
@@ -38,23 +39,10 @@ bool legacySuffices(const TesseraContextConfig& c) {
            (c.flags & kContextFlags) == 0 && c.priority == TESSERA_PRIORITY_DEFAULT;
 }
 
-std::vector<std::pair<int, int>> versionLadder(const TesseraContextConfig& c) {
-    if (c.api == TESSERA_API_OPENGL_ES) {
-        if (c.versionMajor == 0)
-            return {{2, 0}};
-        return {{c.versionMajor, c.versionMinor}};
-    }
-    if (c.versionMajor != 0)
-        return {{c.versionMajor, c.versionMinor}};
-    if (c.profile != TESSERA_PROFILE_ANY)
-        return {{4, 6}, {4, 5}, {4, 4}, {4, 3}, {4, 2}, {4, 1}, {4, 0}, {3, 3}, {3, 2}};
-    return {{0, 0}}; // no version attributes: whatever the driver considers its default
-}
-
 } // namespace
 
 std::vector<std::pair<int, int>> contextVersionLadder(const TesseraContextConfig& c) {
-    return versionLadder(c);
+    return versionLadder(c); // version_negotiation.hpp
 }
 
 std::vector<int> ArbContextPlan::attribs(std::pair<int, int> version) const {

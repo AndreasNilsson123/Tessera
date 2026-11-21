@@ -13,6 +13,7 @@
 #include "core/library.hpp"
 #include "core/log.hpp"
 #include "platform/common/arb_context.hpp"
+#include "platform/common/create_errors.hpp"
 #include "platform/common/gl_query.hpp"
 
 namespace tessera::cgl {
@@ -354,13 +355,16 @@ class CglBackend final : public Backend {
         api.fn.CGLReleasePixelFormat(pf); // the context keeps its own reference
         if (created != kNoError || !ctx->ctx) {
             ctx->ctx = nullptr;
-            if (created == kBadAlloc)
+            switch (classifyCglCreateError(created)) { // create_errors.hpp
+            case TESSERA_ERROR_OUT_OF_MEMORY:
                 return fail(TESSERA_ERROR_OUT_OF_MEMORY,
                             cglErrorText(api, "CGLCreateContext failed", created));
-            if (created == kBadMatch || created == kBadPixelFormat)
+            case TESSERA_ERROR_NO_MATCHING_CONFIG:
                 return fail(TESSERA_ERROR_NO_MATCHING_CONFIG,
                             cglErrorText(api, "CGLCreateContext rejected the pixel format", created));
-            return fail(TESSERA_ERROR_PLATFORM, cglErrorText(api, "CGLCreateContext failed", created));
+            default:
+                return fail(TESSERA_ERROR_PLATFORM, cglErrorText(api, "CGLCreateContext failed", created));
+            }
         }
         ctx->parent = std::move(parent);
 

@@ -209,23 +209,12 @@ choose a format, create its own window with it, and attach under STRICT with no 
 Today: a ladder (4.6 → 3.2) exists only for "core/compat with no version"; an explicit version is tried exactly
 once; ES is fixed to 2.0 when unspecified; every failed rung is a real driver call.
 
-- [ ] **ES ladder.** Unspecified ES walks 3.2 → 3.1 → 3.0 → 2.0 (EGL, plus WGL/GLX ES-profile paths), reported in
-  `info`.
-- [ ] **"Minimum" means minimum.** The header documents `versionMajor/Minor` as a *minimum*, but an explicit core
-  request is created at exactly that version. Decide (owner decision, with 10.5) between: try upwards from the
-  newest version down to the floor, or add an explicit `TESSERA_FLAG_EXACT_VERSION` and make the default a floor.
-  Whichever is chosen, document it next to the field and pin it with a test.
-- [ ] **Remember what worked.** Cache, per (backend, adapter/renderer identity, profile), the highest version that
-  created and the versions that failed, so the second context does not repeat up to nine failing driver calls
-  (each of which can emit driver-side error output and costs time in the pre-warm path). Invalidate on
-  `tesseraTerminate` and when the adapter changes. Never cache a success as a guarantee: a cached rung that now
-  fails falls back to the full ladder.
-- [ ] **Map driver refusal codes in one table.** The WGL error mapping (`0x2095`, `0x2096`, `ERROR_INVALID_DATA`,
-  `ERROR_INVALID_PARAMETER`) lives inside one backend; move "this error means unsupported combination" for all four
-  backends to one reviewed table with a test per row.
+- [x] **ES ladder** (ABI 0.13.0, ADR 0016): unspecified ES walks 3.2, 3.1, 3.0, 2.0 on every backend that creates by version (EGL, WGL, GLX ES profiles); verified on NVIDIA/WGL (3.2), Mesa D3D12 (3.1) and llvmpipe (3.2). **Not verified:** GLX/WGL ES profiles on a driver that has only `*_create_context_es2_profile` with 3.x.
+- [x] **"Minimum" means minimum**: the field is a floor (newest first, down to the request) and `TESSERA_FLAG_EXACT_VERSION` asks the driver for exactly it; the owner's decision (10.5) is still to be recorded, this is the recommendation of `docs/decisions-1.0.md`. Pinned by `test_core` (ladder shapes, every row) and `test_versions` (real drivers: floor = newest on WGL, GLX, EGL, software; exact = 3.3 on NVIDIA; Mesa may answer newer).
+- [x] **Remember what worked**: `VersionMemory`, counted on a driver stand-in (5 calls the first time, 1 the second, a changed driver falls back to the full ladder); dropped on the last `tesseraTerminate`. Not shared across processes (on purpose).
+- [x] **Map driver refusal codes in one table**: `create_errors.hpp` for WGL, GLX, EGL, CGL, a test per row.
 
-Exit: unspecified ES on a 3.x driver returns 3.x; the second identical create makes no failing driver calls
-(counted on the fake backend); the "minimum" semantics are decided, documented and tested.
+Exit (met, see above): unspecified ES on a 3.x driver returns 3.x; the second identical create makes no failing driver calls (counted on a driver stand-in); the "minimum" semantics are documented and tested; the owner's decision is the one open part.
 
 ### 12.3 Driver quirks, with evidence
 
@@ -396,6 +385,8 @@ Needs: the owner for the decisions; the tooling needs nothing.
 - [x] An ABI check in CI: `scripts/abi-check.py` compares the header (functions with signatures, struct layouts with offsets, `#define` values) with `docs/abi/baseline.json` and the exports of the built library (a pure-Python PE reader on Windows, `nm` elsewhere) with the header; registered as ctest `abi_check` and `abi_check_selftest`, so every CI job that has Python runs it. Verified: a mutated header fails (changed signature, field type, macro value); a stale library fails; run against the git history of the header it reports exactly one break between 0.2 and 0.12 (the removal of the `TESSERA_CONTEXT_*_INIT` macros in 0.3) and found a macro-parser bug in the process. The export listing passed through `nm` on WSL (Ubuntu 22.04) and on the hosted macOS runner (`nm -gU`), and through the PE reader on Windows; CI is green on 7b27439.
 - [x] A compatibility-matrix generator: `scripts/compat-from-diag.py` turns `tessera-diag --json` files into the "Verified" rows and the feature-by-driver table (ctest `compat_generator`, run on two stored real outputs in `docs/compat-samples/`); its Windows output equals the hand-written column of `docs/compat.md`. `docs/compat.md` itself was not regenerated, it has hand-made content the diag does not produce.
 - [x] A release-candidate checklist and the freeze procedure: `docs/freeze.md`, backed by `scripts/release-check.py` (`--rc`, `--freeze`, `--tag`, `--set-version`; ctest `release_check`). It found real drift on its first run (the vcpkg manifest said 0.9.0, the header 0.12.0; fixed) and `--freeze` lists every open ROADMAP 10.x item as a reason not to freeze (an accepted gap is marked `ACCEPTED-FOR-1.0`). Also fixed: the README still said 0.7 and "macOS never run".
+
+### Chunk 8 - Version negotiation (12.2) - DONE (this is Phase 12.2; the four items are listed there)
 
 ### Chunk 7 - Software/headless fallback and ANGLE/Mesa - DONE on the recommendation of `docs/decisions-1.0.md` item 3 (system only for 1.0; the owner has not recorded the decision)
 Needs: the 10.5 decision "do we ship Mesa/ANGLE?" (**started on the owner's go-ahead; it assumes "no bundled binaries in the release", the reversible choice**), an ANGLE build to test against.

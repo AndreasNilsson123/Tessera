@@ -122,6 +122,12 @@ public final class ContextConfig {
         public static final int DOUBLE_BUFFER = 0x080;
         public static final int STEREO = 0x100;
         public static final int RELEASE_FLUSH = 0x200;
+        /**
+         * Ask the driver for exactly {@link Builder#version}, with no search for a newer one (ABI 0.13.0). Without it the
+         * context is the newest the driver offers that is at least the requested version. A driver may still answer with a newer
+         * compatible version (Mesa does for core profiles); {@link ContextInfo} says what was granted.
+         */
+        public static final int EXACT_VERSION = 0x400;
 
         private Flags() {
         }
@@ -265,7 +271,10 @@ public final class ContextConfig {
             return this;
         }
 
-        /** Minimum version; {@code 0, 0} (the default) means any. */
+        /**
+         * Minimum version; {@code 0, 0} (the default) means any. The context is the newest version the driver offers that is at
+         * least this (OpenGL ES with no version tries 3.2, 3.1, 3.0, 2.0); add {@link Flags#EXACT_VERSION} to get exactly it.
+         */
         public Builder version(int major, int minor) {
             if (major < 0 || minor < 0) {
                 throw new IllegalArgumentException("version must not be negative");

@@ -90,6 +90,14 @@ public final class SelfTest {
         } catch (TesseraException e2) {
             check(e2.result() == Result.NO_MATCHING_CONFIG, "core refused only as NO_MATCHING_CONFIG: " + e2);
         }
+        // EXACT_VERSION is a flag the library knows (ABI 0.13.0): it is accepted and the minimum still holds.
+        try (Context exact = Context.create(ContextConfig.builder().profile(ContextConfig.Profile.CORE).version(3, 3)
+                .flags(ContextConfig.Flags.EXACT_VERSION).build())) {
+            final ContextInfo info = exact.info();
+            check(info.versionMajor() > 3 || (info.versionMajor() == 3 && info.versionMinor() >= 3), "exact core >= 3.3");
+        } catch (TesseraException e3) {
+            check(e3.result() == Result.NO_MATCHING_CONFIG, "exact core refused only as NO_MATCHING_CONFIG: " + e3);
+        }
     }
 
     static void threadRules() throws Exception {

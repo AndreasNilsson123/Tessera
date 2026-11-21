@@ -31,7 +31,7 @@ extern "C" {
 /* ---------------------------------------------------------------- version */
 
 #define TESSERA_VERSION_MAJOR 0
-#define TESSERA_VERSION_MINOR 12
+#define TESSERA_VERSION_MINOR 13
 #define TESSERA_VERSION_PATCH 0
 
 /** Incremented on every incompatible change to the C ABI, independent of the semantic version. */
@@ -130,6 +130,12 @@ typedef uint32_t TesseraEnum;
 #define TESSERA_FLAG_DOUBLE_BUFFER 0x0080u
 #define TESSERA_FLAG_STEREO 0x0100u
 #define TESSERA_FLAG_RELEASE_FLUSH 0x0200u /**< flush on release (vs. none) */
+/** Ask the driver for exactly versionMajor.versionMinor, not for the newest version at or above it (added in
+ * 0.13.0): the library makes that one request and no more. Without the flag it tries the newest version the
+ * driver has, down to the requested one. Drivers may still answer a request with a newer, compatible version
+ * (Mesa does for core profiles; NVIDIA and Apple do not): TesseraContextInfo says what was granted, and the
+ * requested version remains a minimum either way. */
+#define TESSERA_FLAG_EXACT_VERSION 0x0400u
 
 /** TesseraContextConfig::surface - what the context will be able to render to */
 #define TESSERA_SURFACE_DEFAULT 0x0000u /**< backend picks the safest available */
@@ -179,7 +185,9 @@ typedef uint32_t TesseraEnum;
 typedef struct TesseraContextConfig {
     uint32_t structSize; /**< in: sizeof(TesseraContextConfig) */
     TesseraEnum api;
-    int32_t versionMajor; /**< minimum requested version; 0 = any */
+    int32_t versionMajor; /**< minimum requested version; 0 = any. The context is the newest the driver offers
+                             that is at least this (see TESSERA_FLAG_EXACT_VERSION); OpenGL ES with 0
+                             tries 3.2, 3.1, 3.0, 2.0 */
     int32_t versionMinor;
     TesseraEnum profile;
     uint32_t flags;

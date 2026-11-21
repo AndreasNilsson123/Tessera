@@ -30,10 +30,12 @@ inline void releaseOtherGlxCurrent() noexcept {}
 #else
 #include "platform/common/cross_api.hpp"
 #endif
+#include "platform/common/create_errors.hpp"
 #include "platform/common/device_select.hpp"
 #include "platform/common/gl_debug.hpp"
 #include "platform/common/gl_query.hpp"
 #include "platform/common/software_renderer.hpp"
+#include "platform/common/version_negotiation.hpp"
 
 namespace tessera::egl {
 namespace {
@@ -744,27 +746,32 @@ TesseraResult createNativeContext(EglShared& sh, EglContext& ctx, const TesseraC
                                   const EglPlan& plan, EGLContext shareCtx) {
     const EglFns& f = sh.api->fn;
     EGLint lastError = 0;
-    for (const auto& version : plan.versions) {
-        std::vector<EGLint> attribs;
-        if (version.first != 0) {
-            attribs.insert(attribs.end(), {kContextMajorVersion, version.first});
-            if (plan.minorVersionAttrib)
-                attribs.insert(attribs.end(), {kContextMinorVersion, version.second});
-        }
-        if (plan.profile)
-            attribs.insert(attribs.end(), {kContextProfileMask, plan.profile});
-        attribs.insert(attribs.end(), plan.flagAttribs.begin(), plan.flagAttribs.end());
-        attribs.push_back(kNone);
+    const bool made =
+        negotiateVersion(versionMemoryKey("egl", reinterpret_cast<std::uintptr_t>(sh.dpy), c), plan.versions,
+                         [&](const GlVersion& version) {
+                             std::vector<EGLint> attribs;
+                             if (version.first != 0) {
+                                 attribs.insert(attribs.end(), {kContextMajorVersion, version.first});
+                                 if (plan.minorVersionAttrib)
+                                     attribs.insert(attribs.end(), {kContextMinorVersion, version.second});
+                             }
+                             if (plan.profile)
+                                 attribs.insert(attribs.end(), {kContextProfileMask, plan.profile});
+                             attribs.insert(attribs.end(), plan.flagAttribs.begin(), plan.flagAttribs.end());
+                             attribs.push_back(kNone);
 
-        EGLContext created = f.eglCreateContext(sh.dpy, ctx.config, shareCtx, attribs.data());
-        if (created) {
-            ctx.ctx = created;
-            return TESSERA_SUCCESS;
-        }
-        lastError = f.eglGetError();
-    }
-    (void)c;
-    if (lastError == kBadAlloc)
+                             EGLContext created =
+                                 f.eglCreateContext(sh.dpy, ctx.config, shareCtx, attribs.data());
+                             if (created) {
+                                 ctx.ctx = created;
+                                 return true;
+                             }
+                             lastError = f.eglGetError();
+                             return false;
+                         });
+    if (made)
+        return TESSERA_SUCCESS;
+    if (classifyEglCreateError(lastError) == TESSERA_ERROR_OUT_OF_MEMORY)
         return fail(TESSERA_ERROR_OUT_OF_MEMORY, eglErrorText("eglCreateContext failed", lastError));
     // BAD_MATCH / BAD_ATTRIBUTE / BAD_CONFIG: the driver cannot provide this version/profile on this config.
     return fail(TESSERA_ERROR_NO_MATCHING_CONFIG,

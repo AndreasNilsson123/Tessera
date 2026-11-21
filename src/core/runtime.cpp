@@ -12,6 +12,7 @@
 #include "boundary.hpp"
 #include "config.hpp"
 #include "log.hpp"
+#include "platform/common/version_negotiation.hpp"
 #include "thread_affinity.hpp"
 
 namespace tessera {
@@ -174,6 +175,8 @@ TesseraResult Runtime::terminate() {
         leftover = contexts_.closeAndDrain();
         backends.swap(backends_);
     }
+    VersionMemory::instance()
+        .clear(); // what worked on a driver is a fact about that run, not about the next one (ADR 0016)
     {
         std::lock_guard<std::mutex> lock(zombiesMutex_);
         pending.swap(zombies_);

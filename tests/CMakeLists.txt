@@ -138,6 +138,19 @@ if(TESSERA_BUILD_SHARED AND ((UNIX AND NOT APPLE) OR (WIN32 AND TESSERA_ANGLE_DI
     endif()
 endif()
 
+# Version negotiation against the real driver of whichever backend this machine has (ADR 0016); exits 77 where none works.
+if(TESSERA_BUILD_SHARED)
+    add_executable(test_versions test_versions.cpp)
+    target_link_libraries(test_versions PRIVATE Tessera::tessera)
+    tessera_apply_options(test_versions)
+    if(WIN32)
+        add_custom_command(TARGET test_versions POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:tessera> $<TARGET_FILE_DIR:test_versions>)
+    endif()
+    add_test(NAME versions COMMAND test_versions)
+    set_tests_properties(versions PROPERTIES LABELS "gpu" TIMEOUT 120 SKIP_RETURN_CODE 77)
+endif()
+
 # Coverage-guided fuzzing (libFuzzer). Needs clang: configure with the `fuzz` preset, which compiles everything with
 # -fsanitize=fuzzer-no-link,address,undefined; the targets add the fuzzer runtime. Run: tests/fuzz/corpus/<target> holds the seeds.
 if(TESSERA_BUILD_FUZZERS)

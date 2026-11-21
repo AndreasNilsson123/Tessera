@@ -19,10 +19,12 @@
 
 #include "platform/common/arb_context.hpp"
 #include "platform/common/context_priority.hpp"
+#include "platform/common/create_errors.hpp"
 #include "platform/common/device_select.hpp"
 #include "platform/common/gl_query.hpp"
 #include "platform/common/software_renderer.hpp"
 #include "platform/common/swap_control.hpp"
+#include "platform/common/version_negotiation.hpp"
 
 #include "core/backend.hpp"
 #include "core/boundary.hpp"
@@ -950,6 +952,166 @@ static void testDeviceSelection() {
     CHECK(selectDevice("software", {}, fakeCanonical).index == -1);
 }
 
+// ---- version negotiation (ROADMAP 12.2, ADR 0016)
+// ------------------------------------------------------------------
+
+static TesseraContextConfig versionRequest(uint32_t api, int major, int minor,
+                                           uint32_t profile = TESSERA_PROFILE_ANY, uint32_t flags = 0) {
+    TesseraContextConfig c = tesseraDefaultContextConfig();
+    c.api = api;
+    c.versionMajor = major;
+    c.versionMinor = minor;
+    c.profile = profile;
+    c.flags = flags;
+    return c;
+}
+
+static std::string ladderText(const std::vector<tessera::GlVersion>& v) {
+    std::string out;
+    for (const auto& r : v)
+        out += std::to_string(r.first) + "." + std::to_string(r.second) + " ";
+    return out;
+}
+
+static void testVersionLadder() {
+    using namespace tessera;
+    const auto gl = TESSERA_API_OPENGL, es = TESSERA_API_OPENGL_ES;
+    // A floor is a floor: the newest version first, down to the request.
+    CHECK(ladderText(versionLadder(versionRequest(gl, 3, 3, TESSERA_PROFILE_CORE))) ==
+          "4.6 4.5 4.4 4.3 4.2 4.1 4.0 3.3 ");
+    CHECK(ladderText(versionLadder(versionRequest(gl, 4, 1, TESSERA_PROFILE_CORE))) ==
+          "4.6 4.5 4.4 4.3 4.2 4.1 ");
+    CHECK(ladderText(versionLadder(versionRequest(gl, 4, 6, TESSERA_PROFILE_CORE))) == "4.6 ");
+    CHECK(
+        ladderText(versionLadder(versionRequest(gl, 3, 2, TESSERA_PROFILE_COMPATIBILITY))).rfind("4.6 ", 0) ==
+        0);
+    // A floor below the profiles' own start (3.2) is asked for as the last rung, after everything newer.
+    CHECK(ladderText(versionLadder(versionRequest(gl, 2, 1, TESSERA_PROFILE_COMPATIBILITY))) ==
+          "4.6 4.5 4.4 4.3 4.2 4.1 4.0 3.3 3.2 2.1 ");
+    // EXACT_VERSION: only the request.
+    CHECK(ladderText(versionLadder(
+              versionRequest(gl, 3, 3, TESSERA_PROFILE_CORE, TESSERA_FLAG_EXACT_VERSION))) == "3.3 ");
+    // No version: a profile walks the whole ladder, no profile leaves it to the driver.
+    CHECK(versionLadder(versionRequest(gl, 0, 0, TESSERA_PROFILE_CORE)).size() == 9);
+    CHECK(ladderText(versionLadder(versionRequest(gl, 0, 0))) == "0.0 ");
+    // OpenGL ES: unspecified walks 3.2 3.1 3.0 2.0; a floor cuts it; exact is exact; unspecified + exact
+    // keeps the old 2.0.
+    CHECK(ladderText(versionLadder(versionRequest(es, 0, 0))) == "3.2 3.1 3.0 2.0 ");
+    CHECK(ladderText(versionLadder(versionRequest(es, 2, 0))) == "3.2 3.1 3.0 2.0 ");
+    CHECK(ladderText(versionLadder(versionRequest(es, 3, 0))) == "3.2 3.1 3.0 ");
+    CHECK(ladderText(versionLadder(versionRequest(es, 3, 2))) == "3.2 ");
+    CHECK(ladderText(versionLadder(
+              versionRequest(es, 3, 0, TESSERA_PROFILE_ANY, TESSERA_FLAG_EXACT_VERSION))) == "3.0 ");
+    CHECK(ladderText(versionLadder(
+              versionRequest(es, 0, 0, TESSERA_PROFILE_ANY, TESSERA_FLAG_EXACT_VERSION))) == "2.0 ");
+    CHECK(ladderText(versionLadder(versionRequest(es, 1, 1))) ==
+          "3.2 3.1 3.0 2.0 1.1 "); // an unknown floor is still asked for
+}
+
+static void testVersionMemory() {
+    using namespace tessera;
+    VersionMemory& memory = VersionMemory::instance();
+    memory.clear();
+    const TesseraContextConfig c = versionRequest(TESSERA_API_OPENGL, 3, 3, TESSERA_PROFILE_CORE);
+    const std::vector<GlVersion> ladder = versionLadder(c); // 4.6 .. 3.3
+    const std::string key = versionMemoryKey("fake", 7, c);
+
+    // A driver whose newest core context is 4.2: the first create fails up the ladder, the second makes ONE
+    // call.
+    int calls = 0;
+    auto driver = [&](int maxMajor, int maxMinor) {
+        return [&calls, maxMajor, maxMinor](const GlVersion& v) {
+            ++calls;
+            return v.first < maxMajor || (v.first == maxMajor && v.second <= maxMinor);
+        };
+    };
+    GlVersion got{};
+    CHECK(negotiateVersion(key, ladder, driver(4, 2), &got) && got == GlVersion(4, 2));
+    CHECK(calls == 5); // 4.6, 4.5, 4.4, 4.3 fail, 4.2 works
+    calls = 0;
+    CHECK(negotiateVersion(key, ladder, driver(4, 2), &got) && got == GlVersion(4, 2));
+    CHECK(calls == 1); // the second identical request: no failing driver call
+
+    // Never trusted: the driver changed (a different GPU behind the same name); the remembered 4.2 now fails
+    // and the full ladder runs again, finding 3.3.
+    calls = 0;
+    CHECK(negotiateVersion(key, ladder, driver(3, 3), &got) && got == GlVersion(3, 3));
+    CHECK(calls == 8); // 4.2 (remembered) fails, then 4.6 4.5 4.4 4.3 4.1 4.0 fail and 3.3 works (4.2 is not
+                       // asked twice)
+    // ... and it remembers the new answer.
+    calls = 0;
+    CHECK(negotiateVersion(key, ladder, driver(3, 3), &got) && got == GlVersion(3, 3));
+    CHECK(calls == 1);
+
+    // Every rung fails: false, nothing remembered for it.
+    memory.clear();
+    CHECK(!negotiateVersion(key, ladder, [](const GlVersion&) { return false; }));
+    CHECK(memory.size() == 0);
+
+    // A single-rung ladder (exact) has nothing to remember.
+    const TesseraContextConfig exact =
+        versionRequest(TESSERA_API_OPENGL, 3, 3, TESSERA_PROFILE_CORE, TESSERA_FLAG_EXACT_VERSION);
+    CHECK(negotiateVersion(versionMemoryKey("fake", 7, exact), versionLadder(exact),
+                           [](const GlVersion&) { return true; }));
+    CHECK(memory.size() == 0);
+
+    // Keys: another display/adapter, API, profile, floor, context flag or adapter request is another entry;
+    // flags that do not change the context (sRGB, double buffering) are not.
+    const std::string base = versionMemoryKey("fake", 7, c);
+    CHECK(base == versionMemoryKey("fake", 7, c));
+    CHECK(base != versionMemoryKey("other", 7, c));
+    CHECK(base != versionMemoryKey("fake", 8, c));
+    CHECK(base !=
+          versionMemoryKey("fake", 7, versionRequest(TESSERA_API_OPENGL, 4, 0, TESSERA_PROFILE_CORE)));
+    CHECK(base != versionMemoryKey("fake", 7,
+                                   versionRequest(TESSERA_API_OPENGL, 3, 3, TESSERA_PROFILE_COMPATIBILITY)));
+    CHECK(base !=
+          versionMemoryKey(
+              "fake", 7, versionRequest(TESSERA_API_OPENGL, 3, 3, TESSERA_PROFILE_CORE, TESSERA_FLAG_DEBUG)));
+    TesseraContextConfig gpu = c;
+    gpu.gpuPreference = TESSERA_GPU_HIGH_PERFORMANCE;
+    CHECK(base != versionMemoryKey("fake", 7, gpu));
+    CHECK(base == versionMemoryKey("fake", 7,
+                                   versionRequest(TESSERA_API_OPENGL, 3, 3, TESSERA_PROFILE_CORE,
+                                                  TESSERA_FLAG_SRGB | TESSERA_FLAG_DOUBLE_BUFFER)));
+    memory.clear();
+}
+
+// The one table of what a driver's refusal means: a row per code.
+static void testCreateErrorTable() {
+    using namespace tessera;
+    // WGL (the high bits drivers add are masked off)
+    CHECK(classifyWglCreateError(0x2095) == TESSERA_ERROR_NO_MATCHING_CONFIG); // ERROR_INVALID_VERSION_ARB
+    CHECK(classifyWglCreateError(0xC0072096) ==
+          TESSERA_ERROR_NO_MATCHING_CONFIG); // ERROR_INVALID_PROFILE_ARB with high bits
+    CHECK(classifyWglCreateError(0x000D) == TESSERA_ERROR_NO_MATCHING_CONFIG); // ERROR_INVALID_DATA (NVIDIA)
+    CHECK(classifyWglCreateError(0x0057) == TESSERA_ERROR_NO_MATCHING_CONFIG); // ERROR_INVALID_PARAMETER
+    CHECK(classifyWglCreateError(0x0008) == TESSERA_ERROR_OUT_OF_MEMORY);      // ERROR_NOT_ENOUGH_MEMORY
+    CHECK(classifyWglCreateError(0x000E) == TESSERA_ERROR_OUT_OF_MEMORY);      // ERROR_OUTOFMEMORY
+    CHECK(classifyWglCreateError(0) == TESSERA_ERROR_PLATFORM);
+    CHECK(classifyWglCreateError(0x0005) ==
+          TESSERA_ERROR_PLATFORM); // ERROR_ACCESS_DENIED: not about the request
+    // GLX (X errors)
+    CHECK(classifyGlxCreateError(11) == TESSERA_ERROR_OUT_OF_MEMORY);     // BadAlloc
+    CHECK(classifyGlxCreateError(8) == TESSERA_ERROR_NO_MATCHING_CONFIG); // BadMatch
+    CHECK(classifyGlxCreateError(2) == TESSERA_ERROR_NO_MATCHING_CONFIG); // BadValue
+    CHECK(classifyGlxCreateError(0) == TESSERA_ERROR_NO_MATCHING_CONFIG); // no X error but no context either
+    // EGL
+    CHECK(classifyEglCreateError(0x3003) == TESSERA_ERROR_OUT_OF_MEMORY);      // BAD_ALLOC
+    CHECK(classifyEglCreateError(0x3009) == TESSERA_ERROR_NO_MATCHING_CONFIG); // BAD_MATCH
+    CHECK(classifyEglCreateError(0x3004) == TESSERA_ERROR_NO_MATCHING_CONFIG); // BAD_ATTRIBUTE
+    CHECK(classifyEglCreateError(0x3005) == TESSERA_ERROR_NO_MATCHING_CONFIG); // BAD_CONFIG
+    CHECK(classifyEglCreateError(0x300C) == TESSERA_ERROR_NO_MATCHING_CONFIG); // BAD_PARAMETER
+    CHECK(classifyEglCreateError(0x3001) == TESSERA_ERROR_PLATFORM);           // NOT_INITIALIZED
+    CHECK(classifyEglCreateError(0x3008) == TESSERA_ERROR_PLATFORM);           // BAD_DISPLAY
+    CHECK(classifyEglCreateError(0x300E) == TESSERA_ERROR_PLATFORM);           // CONTEXT_LOST
+    // CGL
+    CHECK(classifyCglCreateError(10016) == TESSERA_ERROR_OUT_OF_MEMORY);      // kCGLBadAlloc
+    CHECK(classifyCglCreateError(10009) == TESSERA_ERROR_NO_MATCHING_CONFIG); // kCGLBadMatch
+    CHECK(classifyCglCreateError(10002) == TESSERA_ERROR_NO_MATCHING_CONFIG); // kCGLBadPixelFormat
+    CHECK(classifyCglCreateError(10004) == TESSERA_ERROR_PLATFORM);           // kCGLBadContext
+}
+
 // The software backend's promise is checked on the renderer string, because Mesa's "software device"
 // extension also covers GPU drivers (WSL's D3D12 driver reports it).
 static void testCpuRendererNames() {
@@ -1760,6 +1922,9 @@ static void testLifecycleRobustness() {
     testContextLostCallbackThreads();
     testDeviceSelection();
     testCpuRendererNames();
+    testVersionLadder();
+    testVersionMemory();
+    testCreateErrorTable();
     testContextPriority();
     testSwapControlLogic();
     testSwapControlApi();

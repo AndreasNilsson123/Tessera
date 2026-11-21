@@ -26,7 +26,7 @@ mapped surface (a second compositor) before the tag, or mark it in the docs as u
 (ROADMAP 12.2). Tested floors: desktop GL 2.1 compatibility to 4.6 core on NVIDIA; GL 4.2 core / ES 3.1 on Mesa D3D12; 4.1 core,
 forward-compatible only, on Apple (2.1 legacy); GL 1.1 on the Windows software renderer (only best-effort requests succeed there, which is what the CI test checks). GLES 2.0 requests succeed on NVIDIA and Mesa.
 
-**Recommendation: no enforced floor; a documented support floor, and "minimum" must mean what it says.**
+**Implemented (ABI 0.13.0, ADR 0016) as recommended below, pending your decision.** **Recommendation: no enforced floor; a documented support floor, and "minimum" must mean what it says.**
 - Library behaviour: it creates what the driver gives and reports it (`info`), refusing only what cannot satisfy the request. It does not
   hard-code a version below which it refuses.
 - Support floor (what the tests cover and what a bug report is accepted against): **OpenGL 3.2 core, OpenGL 2.1 compatibility, OpenGL ES

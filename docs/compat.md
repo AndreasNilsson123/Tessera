@@ -2,7 +2,7 @@
 
 Only what was actually run is marked as verified. "Not run" means there is no evidence either way, not that it is broken.
 This project has been developed on one machine plus GitHub's hosted runners, so most vendor/OS rows are still empty; filling them
-is the point of this file. Last updated at ABI 0.12.0.
+is the point of this file. Last updated at ABI 0.13.0.
 
 ## Verified
 

@@ -15,9 +15,11 @@
 #include "core/library.hpp"
 #include "core/log.hpp"
 #include "platform/common/arb_context.hpp"
+#include "platform/common/create_errors.hpp"
 #include "platform/common/gl_debug.hpp"
 #include "platform/common/gl_query.hpp"
 #include "platform/common/swap_control.hpp"
+#include "platform/common/version_negotiation.hpp"
 #include "wgl_api.hpp"
 #include "window_host.hpp"
 
@@ -444,30 +446,36 @@ TesseraResult createNativeContext(WglShared& sh, HDC dc, const TesseraContextCon
     }
 
     DWORD lastError = 0;
-    for (const auto& version : plan.versions) {
-        const std::vector<int> attribs = plan.attribs(version);
-        SetLastError(0);
-        HGLRC rc = sh.fn.createContextAttribs(dc, shareRc, attribs.data());
-        if (rc) {
-            rcOut = rc;
-            return TESSERA_SUCCESS;
-        }
-        lastError = GetLastError();
-    }
+    const bool created =
+        negotiateVersion(versionMemoryKey("wgl", 0, c), plan.versions, [&](const GlVersion& version) {
+            const std::vector<int> attribs = plan.attribs(version);
+            SetLastError(0);
+            HGLRC rc = sh.fn.createContextAttribs(dc, shareRc, attribs.data());
+            if (rc) {
+                rcOut = rc;
+                return true;
+            }
+            lastError = GetLastError();
+            return false;
+        });
+    if (created)
+        return TESSERA_SUCCESS;
 
     // The driver rejected the request. The ARB spec names ERROR_INVALID_VERSION_ARB /
     // ERROR_INVALID_PROFILE_ARB, but drivers also answer a combination they dislike with plain Win32 codes
     // (NVIDIA: ERROR_INVALID_DATA), and put various high bits on all of them. Out-of-memory is the only
     // failure that is not about the request itself.
-    const DWORD code = lastError & 0xFFFFu;
-    if (code == 0x2095 || code == 0x2096 || code == 0x000D /*ERROR_INVALID_DATA*/ ||
-        code == 0x0057 /*ERROR_INVALID_PARAMETER*/)
+    switch (classifyWglCreateError(lastError)) { // create_errors.hpp: the one table of what a refusal means
+    case TESSERA_ERROR_NO_MATCHING_CONFIG:
         return fail(TESSERA_ERROR_NO_MATCHING_CONFIG,
                     "the driver does not support the requested OpenGL version/profile/flags");
-    if (code == 0x0008 /*ERROR_NOT_ENOUGH_MEMORY*/ || code == 0x000E /*ERROR_OUTOFMEMORY*/)
+    case TESSERA_ERROR_OUT_OF_MEMORY:
         return fail(TESSERA_ERROR_OUT_OF_MEMORY,
                     describeWin32Error("wglCreateContextAttribsARB failed", lastError));
-    return fail(TESSERA_ERROR_PLATFORM, describeWin32Error("wglCreateContextAttribsARB failed", lastError));
+    default:
+        return fail(TESSERA_ERROR_PLATFORM,
+                    describeWin32Error("wglCreateContextAttribsARB failed", lastError));
+    }
 }
 
 // ---- reporting what we actually got -------------------------------------------------------------

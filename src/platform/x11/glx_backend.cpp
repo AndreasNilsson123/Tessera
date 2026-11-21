@@ -15,10 +15,12 @@
 #include "glx_api.hpp"
 #include "platform/common/arb_context.hpp"
 #include "platform/common/context_priority.hpp"
+#include "platform/common/create_errors.hpp"
 #include "platform/common/cross_api.hpp"
 #include "platform/common/gl_debug.hpp"
 #include "platform/common/gl_query.hpp"
 #include "platform/common/swap_control.hpp"
+#include "platform/common/version_negotiation.hpp"
 
 namespace tessera::x11 {
 namespace {
@@ -717,21 +719,27 @@ class GlxBackend final : public Backend {
         }
 
         int lastError = 0;
-        for (const auto& version : plan.versions) {
-            const std::vector<int> attribs = plan.attribs(version);
-            XErrorScope scope(api, sh.dpy);
-            GLXContext created = sh.createContextAttribs(sh.dpy, ctx.fbconfig, shareCtx, 1, attribs.data());
-            lastError = scope.sync();
-            if (created && lastError == 0) {
-                ctx.ctx = created;
-                return TESSERA_SUCCESS;
-            }
-            // A rejected request may still have produced an object alongside the error.
-            if (created)
-                api.glx.glXDestroyContext(sh.dpy, created);
-        }
+        const bool made =
+            negotiateVersion(versionMemoryKey("glx", reinterpret_cast<std::uintptr_t>(sh.dpy), c),
+                             plan.versions, [&](const GlVersion& version) {
+                                 const std::vector<int> attribs = plan.attribs(version);
+                                 XErrorScope scope(api, sh.dpy);
+                                 GLXContext created = sh.createContextAttribs(sh.dpy, ctx.fbconfig, shareCtx,
+                                                                              1, attribs.data());
+                                 lastError = scope.sync();
+                                 if (created && lastError == 0) {
+                                     ctx.ctx = created;
+                                     return true;
+                                 }
+                                 // A rejected request may still have produced an object alongside the error.
+                                 if (created)
+                                     api.glx.glXDestroyContext(sh.dpy, created);
+                                 return false;
+                             });
+        if (made)
+            return TESSERA_SUCCESS;
         // Unsupported version/profile surfaces as BadMatch / BadValue / GLXBadFBConfig / GLXBadProfileARB.
-        if (lastError == kBadAlloc)
+        if (classifyGlxCreateError(lastError) == TESSERA_ERROR_OUT_OF_MEMORY)
             return fail(TESSERA_ERROR_OUT_OF_MEMORY, "the X server is out of memory");
         return fail(TESSERA_ERROR_NO_MATCHING_CONFIG,
                     "the driver does not support the requested OpenGL version/profile");
