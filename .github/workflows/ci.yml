@@ -38,7 +38,7 @@ jobs:
       CC: ${{ matrix.cc }}
       CXX: ${{ matrix.cxx }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Configure
         run: cmake --preset ci -DCMAKE_BUILD_TYPE=${{ matrix.config }}
       - name: Build
@@ -58,7 +58,7 @@ jobs:
       CC: clang
       CXX: clang++
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Lower ASLR entropy (TSan aborts under the runners' default)
         if: matrix.preset == 'tsan'
         run: sudo sysctl vm.mmap_rnd_bits=28
@@ -75,7 +75,7 @@ jobs:
     name: libFuzzer (short)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build
         run: |
           cmake --preset fuzz
@@ -91,7 +91,7 @@ jobs:
     name: conan package
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: pip install conan
       - run: conan profile detect --force
       - run: conan create packaging/conan --build=missing -s build_type=Release
@@ -106,7 +106,7 @@ jobs:
       matrix:
         os: [ubuntu-24.04, windows-2022, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install the port
         shell: bash
         env:
@@ -134,7 +134,7 @@ jobs:
     name: wgl-integration (software GL)
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # An ANGLE build for the EGL-on-Windows tests (ADR 0015): the one inside a pinned Electron release (BSD-3-Clause), checked
       # against a hash recorded here before anything in it is loaded. The runner image has no loadable ANGLE of its own.
       - name: Fetch a pinned ANGLE (Electron 33.2.0)
@@ -173,7 +173,7 @@ jobs:
     env:
       LIBGL_ALWAYS_SOFTWARE: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install X server and Mesa
         run: |
           sudo apt-get update
@@ -192,7 +192,7 @@ jobs:
     runs-on: macos-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Configure and build
         run: |
           cmake --preset ci -DCMAKE_BUILD_TYPE=Debug
@@ -213,7 +213,7 @@ jobs:
       matrix:
         java: ["21", "25"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -239,7 +239,7 @@ jobs:
     env:
       LIBGL_ALWAYS_SOFTWARE: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -265,7 +265,7 @@ jobs:
       CC: clang
       CXX: clang++
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install tools
         run: |
           python3 -m pip install --user clang-format==18.1.8
