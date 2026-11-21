@@ -16,11 +16,12 @@ namespace tessera {
  */
 struct EglDeviceDesc {
     std::string renderNode;                 // EGL_DRM_RENDER_NODE_FILE_EXT, e.g. /dev/dri/renderD128
+    bool software = false;                  // EGL_MESA_device_software: a CPU renderer (llvmpipe, softpipe)
     bool hasUuid = false;                   // EGL_EXT_device_persistent_id
     std::array<std::uint8_t, 16> uuid = {}; // EGL_DEVICE_UUID_EXT
 };
 
-enum class DeviceSelectorKind { Empty, Index, RenderNode, Pci, Uuid, Invalid };
+enum class DeviceSelectorKind { Empty, Index, RenderNode, Pci, Uuid, Software, Invalid };
 
 /* Result of resolving TESSERA_EGL_DEVICE against a device list. `index` is >= 0 on success. */
 struct DeviceChoice {
@@ -95,6 +96,8 @@ inline bool looksLikePciAddress(const std::string& s) {
 inline DeviceSelectorKind classifyDeviceSelector(const std::string& s) {
     if (s.empty())
         return DeviceSelectorKind::Empty;
+    if (detail::lower(s) == "software")
+        return DeviceSelectorKind::Software;
     std::array<std::uint8_t, 16> ignore;
     if (parseDeviceUuid(s, ignore)) // before Index: a 32-digit UUID can consist of decimal digits only
         return DeviceSelectorKind::Uuid;
@@ -136,6 +139,16 @@ inline DeviceChoice selectDevice(const std::string& selector, const std::vector<
                         " device(s))");
         r.index = i;
         return r;
+    }
+    case DeviceSelectorKind::Software: {
+        for (int i = 0; i < count; ++i) {
+            if (devices[static_cast<std::size_t>(i)]
+                    .software) { // the first one: every software device does the same job
+                r.index = i;
+                return r;
+            }
+        }
+        return fail("no EGL device is a software renderer (EGL_MESA_device_software)");
     }
     case DeviceSelectorKind::Uuid: {
         std::array<std::uint8_t, 16> want;
@@ -189,8 +202,9 @@ inline DeviceChoice selectDevice(const std::string& selector, const std::vector<
     case DeviceSelectorKind::Invalid:
         break;
     }
-    return fail("'" + selector +
-                "' is not an index, a /dev/dri render node, a PCI address (0000:01:00.0) or a UUID");
+    return fail(
+        "'" + selector +
+        "' is not an index, a /dev/dri render node, a PCI address (0000:01:00.0), a UUID or 'software'");
 }
 
 } // namespace tessera

@@ -135,9 +135,16 @@ jobs:
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
-      - name: Configure and build
+      - name: Locate an ANGLE build (Chrome ships one: libEGL.dll, libGLESv2.dll, d3dcompiler_47.dll)
+        id: angle
+        shell: pwsh
         run: |
-          cmake --preset ci
+          $f = Get-ChildItem "C:\Program Files\Google\Chrome\Application","C:\Program Files (x86)\Google\Chrome\Application" -Recurse -Filter libEGL.dll -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($f) { "dir=$($f.DirectoryName -replace '\\','/')" >> $env:GITHUB_OUTPUT; Write-Host "ANGLE: $($f.FullName)" } else { Write-Host "no ANGLE found: the EGL-on-Windows tests are not built" }
+      - name: Configure and build
+        shell: bash
+        run: |
+          cmake --preset ci -DTESSERA_ANGLE_DIR="${{ steps.angle.outputs.dir }}"
           cmake --build --preset ci --config Debug --parallel
       - name: Run WGL integration test
         run: ctest --test-dir build/ci -C Debug -L gpu --output-on-failure

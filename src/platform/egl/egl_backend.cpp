@@ -14,18 +14,34 @@
 #include <vector>
 
 #include "core/boundary.hpp"
+#include "core/env.hpp"
 #include "core/library.hpp"
 #include "core/log.hpp"
 #include "egl_api.hpp"
 #include "platform/common/arb_context.hpp"
 #include "platform/common/context_priority.hpp"
+#if defined(_WIN32)
+namespace tessera::crossapi { // no GLX on Windows: nothing of the other API to guard
+struct EglGuard {
+    EglGuard() noexcept {}
+};
+inline void releaseOtherGlxCurrent() noexcept {}
+} // namespace tessera::crossapi
+#else
 #include "platform/common/cross_api.hpp"
+#endif
 #include "platform/common/device_select.hpp"
 #include "platform/common/gl_debug.hpp"
 #include "platform/common/gl_query.hpp"
+#include "platform/common/software_renderer.hpp"
 
 namespace tessera::egl {
 namespace {
+
+bool envSet(const char* name) {
+    std::string ignore;
+    return readEnv(name, ignore);
+}
 
 std::string eglErrorText(const char* what, EGLint code) {
     const char* name = "unknown error";
@@ -156,7 +172,7 @@ void* x11Display(std::string& error) {
     }
     void* const* lock_ = static_cast<void* const*>(x11.symbol("_Xglobal_lock"));
     const bool hostDidIt = lock_ && *lock_ != nullptr;
-    if (initThreads && !hostDidIt && !std::getenv("TESSERA_NO_XINITTHREADS"))
+    if (initThreads && !hostDidIt && !envSet("TESSERA_NO_XINITTHREADS"))
         initThreads();
     display = open(nullptr);
     if (!display)
@@ -189,6 +205,8 @@ void* x11Display(std::string& error) {
 constexpr EGLint kDrmRenderNodeFile = 0x3377; // EGL_DRM_RENDER_NODE_FILE_EXT
 constexpr EGLint kDeviceUuid = 0x335C;        // EGL_DEVICE_UUID_EXT (EGL_EXT_device_persistent_id)
 
+constexpr const char* kSoftwareDeviceExtension = "EGL_MESA_device_software";
+
 std::string canonicalPath(const std::string& p) {
 #if defined(__unix__) || defined(__APPLE__)
     char buf[4096];
@@ -208,6 +226,10 @@ DeviceChoice findDevice(const EglFns& f, void* const* devices, EGLint count, con
             const char* file = f.eglQueryDeviceStringEXT(devices[i], kDrmRenderNodeFile);
             if (file)
                 d.renderNode = file;
+        }
+        if (f.eglQueryDeviceStringEXT) {
+            const char* exts = f.eglQueryDeviceStringEXT(devices[i], kExtensions);
+            d.software = exts && contains(splitWords(exts), kSoftwareDeviceExtension);
         }
         EGLint size = 0;
         if (f.eglQueryDeviceBinaryEXT &&
@@ -240,7 +262,9 @@ class EglShared {
         return contains(apis, a == kOpenGlApi ? "OpenGL" : "OpenGL_ES");
     }
 
-    bool open(std::string& error) {
+    /* `software`: the CPU renderer only (the "software" backend): Mesa's software device through the device
+     * platform, or ANGLE's WARP / SwiftShader. Never the GPU, even when there is one. */
+    bool open(std::string& error, bool software = false) {
         const EglFns& f = api->fn;
         const char* clientExtList =
             f.eglQueryString(nullptr, kExtensions); // null on EGL < 1.5 without the extension
@@ -248,13 +272,15 @@ class EglShared {
         const bool platformBase =
             contains(client, "EGL_EXT_platform_base") && f.eglGetPlatformDisplayEXT != nullptr;
 
-        const char* wanted = std::getenv("TESSERA_EGL_PLATFORM"); // surfaceless | device | default
-        const std::string want = wanted ? wanted : "";
+        std::string wanted; // TESSERA_EGL_PLATFORM: surfaceless | device | default | angle
+        readEnv("TESSERA_EGL_PLATFORM", wanted);
+        const std::string want = software ? "device" : wanted;
         std::string tried;
 
         // An explicit GPU choice only makes sense on the device platform; the others pick for themselves.
-        const char* selectorEnv = std::getenv("TESSERA_EGL_DEVICE");
-        const std::string selector = selectorEnv ? selectorEnv : "";
+        std::string selectorEnv;
+        readEnv("TESSERA_EGL_DEVICE", selectorEnv);
+        const std::string selector = software ? "software" : selectorEnv;
         if (!selector.empty() && want != "device" && !want.empty()) {
             error = "TESSERA_EGL_DEVICE needs TESSERA_EGL_PLATFORM=device (or unset)";
             return false;
@@ -286,6 +312,26 @@ class EglShared {
             exts = splitWords(e);
             return true;
         };
+
+        // ANGLE is a library that offers EGL on top of another API: its display is chosen by attributes, not
+        // by device.
+        if (platformBase && contains(client, "EGL_ANGLE_platform_angle") &&
+            (want.empty() || want == "angle" || software)) {
+            auto angle = [&](const char* name, std::vector<EGLint> attribs) {
+                attribs.push_back(kNone);
+                return attempt(name, f.eglGetPlatformDisplayEXT(kPlatformAngle, nullptr, attribs.data()));
+            };
+            if (software) {
+                if (angle("angle-warp", {kAngleType, kAngleTypeD3D11, kAngleDeviceType, kAngleDeviceWarp}) ||
+                    angle("angle-swiftshader",
+                          {kAngleType, kAngleTypeVulkan, kAngleDeviceType, kAngleDeviceSwiftShader}))
+                    return finish();
+                error = "this ANGLE has no software device (tried:" + tried + ")";
+                return false;
+            }
+            if (angle("angle", {}))
+                return finish();
+        }
 
         if (selector.empty() && (want.empty() || want == "surfaceless") && platformBase &&
             contains(client, "EGL_MESA_platform_surfaceless") &&
@@ -779,6 +825,8 @@ TesseraResult createWindowSurface(EglShared& sh, EglContext& ctx, const TesseraC
     const EglFns& f = sh.api->fn;
     const bool strict = c.fallback == TESSERA_FALLBACK_STRICT;
     const bool wayland = win.kind == TESSERA_WINDOW_WAYLAND;
+    const bool win32 =
+        win.kind == TESSERA_WINDOW_WIN32; // an HWND, by value, through the plain entry point (ANGLE)
 
     // The native object EGL wants: Wayland needs a wl_egl_window wrapped around the caller's wl_surface
     // (ours, destroyed with the context); X11 takes the Window id (by pointer for the platform entry point).
@@ -813,7 +861,11 @@ TesseraResult createWindowSurface(EglShared& sh, EglContext& ctx, const TesseraC
                 surfaceAttribs.push_back(kNone);
                 EGLSurface surface = nullptr;
                 void* const nativeArg = wayland ? nativeWindow : static_cast<void*>(&xid);
-                if (f.eglCreatePlatformWindowSurfaceEXT) {
+                if (win32) {
+                    surface = f.eglCreateWindowSurface(
+                        sh.dpy, configs[i], reinterpret_cast<void*>(static_cast<std::uintptr_t>(win.window)),
+                        surfaceAttribs.data());
+                } else if (f.eglCreatePlatformWindowSurfaceEXT) {
                     surface = f.eglCreatePlatformWindowSurfaceEXT(sh.dpy, configs[i], nativeArg,
                                                                   surfaceAttribs.data());
                 } else if (f.eglCreatePlatformWindowSurface) {
@@ -821,9 +873,10 @@ TesseraResult createWindowSurface(EglShared& sh, EglContext& ctx, const TesseraC
                     std::vector<intptr_t> wide(surfaceAttribs.begin(), surfaceAttribs.end());
                     surface = f.eglCreatePlatformWindowSurface(sh.dpy, configs[i], nativeArg, wide.data());
                 } else {
-                    surface = f.eglCreateWindowSurface(sh.dpy, configs[i],
-                                                       wayland ? nativeWindow : reinterpret_cast<void*>(xid),
-                                                       surfaceAttribs.data());
+                    surface = f.eglCreateWindowSurface(
+                        sh.dpy, configs[i],
+                        wayland ? nativeWindow : reinterpret_cast<void*>(static_cast<std::uintptr_t>(xid)),
+                        surfaceAttribs.data());
                 }
                 if (!surface) {
                     lastError = f.eglGetError();
@@ -853,10 +906,15 @@ TesseraResult createWindowSurface(EglShared& sh, EglContext& ctx, const TesseraC
 
 // ---- the backend --------------------------------------------------------------------------------
 
+/* "egl" is the platform's EGL (a GPU where there is one); "software" is the same code restricted to the CPU
+ * renderer (Mesa's software device, or ANGLE's WARP / SwiftShader), selected by name only: it is never in the
+ * default order (ADR 0015). */
 class EglBackend final : public Backend {
   public:
+    explicit EglBackend(bool software) : software_(software) {}
+
     const char* name() const noexcept override {
-        return "egl";
+        return software_ ? "software" : "egl";
     }
 
     TesseraResult createContext(const TesseraContextConfig& c,
@@ -875,8 +933,22 @@ class EglBackend final : public Backend {
                                                const TesseraNativeWindow& window, uint32_t /*flags*/,
                                                const std::shared_ptr<ContextObject>& shareWith,
                                                std::shared_ptr<ContextObject>& out) override {
+        if (window.kind == TESSERA_WINDOW_WIN32) { // ANGLE: the display it already has serves every HWND
+#if defined(_WIN32)
+            std::string error;
+            std::shared_ptr<EglShared> sh = getShared(error);
+            if (!sh)
+                return fail(TESSERA_ERROR_UNSUPPORTED, error);
+            return create(sh, c, shareWith, &window, out);
+#else
+            return TESSERA_ERROR_UNSUPPORTED;
+#endif
+        }
         if (window.kind != TESSERA_WINDOW_X11 && window.kind != TESSERA_WINDOW_WAYLAND)
             return TESSERA_ERROR_UNSUPPORTED;
+        if (software_) // the windows of a window system are the GPU's; the CPU renderer draws offscreen
+            return fail(TESSERA_ERROR_UNSUPPORTED,
+                        "the software backend cannot attach to this kind of window");
         const EglApi* api = eglApi();
         if (!api)
             return fail(TESSERA_ERROR_UNSUPPORTED, "libEGL is not available on this system");
@@ -908,8 +980,19 @@ class EglBackend final : public Backend {
         return create(sh, c, shareWith, &window, out);
     }
 
+    /* The integer form (an HWND) is ANGLE's on Windows; everywhere else this backend takes
+     * TesseraNativeWindow only. */
+    TesseraResult createContextForWindow(const TesseraContextConfig& c, uint64_t nativeWindow,
+                                         uint32_t /*flags*/, const std::shared_ptr<ContextObject>& shareWith,
+                                         std::shared_ptr<ContextObject>& out) override {
+        TesseraNativeWindow w = tesseraDefaultNativeWindow();
+        w.kind = TESSERA_WINDOW_WIN32;
+        w.window = nativeWindow;
+        return createContextForNativeWindow(c, w, 0, shareWith, out);
+    }
+
     uint32_t nativeWindowKind() const noexcept override {
-        return 0; // this backend takes its windows as TesseraNativeWindow only
+        return TESSERA_WINDOW_WIN32;
     }
 
     /* The creation path shared by pbuffer/surfaceless contexts (`window` null) and contexts for a caller's
@@ -998,6 +1081,15 @@ class EglBackend final : public Backend {
         if (!ok)
             return fail(TESSERA_ERROR_PLATFORM, "could not query the new context (glGetString failed)");
 
+        // The software backend's promise is the CPU: a GPU that happens to be reached through a "software"
+        // device is refused (WSL's D3D12 driver is; set LIBGL_ALWAYS_SOFTWARE=1 for Mesa's llvmpipe).
+        // UNSUPPORTED, so "wgl,software" falls through.
+        if (software_ && !isCpuRenderer(ctx->info.renderer))
+            return fail(
+                TESSERA_ERROR_UNSUPPORTED,
+                std::string("the software backend found '") + ctx->info.renderer +
+                    "', which is not a CPU renderer (Mesa: LIBGL_ALWAYS_SOFTWARE=1 selects llvmpipe)");
+
         // Never negotiable, whatever the fallback policy: API, minimum version, profile.
         if (const char* why = hardRequirementViolation(c, ctx->info))
             return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, why);
@@ -1049,12 +1141,13 @@ class EglBackend final : public Backend {
         }
         auto s = std::make_shared<EglShared>();
         s->api = api;
-        if (!s->open(error))
+        if (!s->open(error, software_))
             return nullptr;
         shared_ = s;
         return shared_;
     }
 
+    const bool software_;
     std::mutex mutex_;
     std::shared_ptr<EglShared> shared_;
     // One EGLDisplay per caller window system connection: (window kind, native display) -> display state.
@@ -1064,7 +1157,11 @@ class EglBackend final : public Backend {
 } // namespace
 
 std::shared_ptr<Backend> makeEglBackend() {
-    return std::make_shared<EglBackend>();
+    return std::make_shared<EglBackend>(false);
+}
+
+std::shared_ptr<Backend> makeSoftwareBackend() {
+    return std::make_shared<EglBackend>(true);
 }
 
 } // namespace tessera::egl

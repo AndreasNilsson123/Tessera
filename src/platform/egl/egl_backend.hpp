@@ -15,4 +15,7 @@ namespace tessera::egl {
  */
 std::shared_ptr<Backend> makeEglBackend();
 
+/* The same EGL code restricted to a CPU renderer; only ever selected by name (TESSERA_BACKEND=software). */
+std::shared_ptr<Backend> makeSoftwareBackend();
+
 } // namespace tessera::egl

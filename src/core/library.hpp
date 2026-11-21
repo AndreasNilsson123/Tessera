@@ -37,6 +37,13 @@ class DynamicLibrary {
     /* `name` is UTF-8, e.g. "opengl32.dll" or "libEGL.so.1". Returns an empty (false) library on failure. */
     static DynamicLibrary open(const char* name) noexcept;
 
+    /* A library the user pointed us to by full path (an optional bundled ANGLE or Mesa, ADR 0015). Windows:
+     * the path must be absolute, and the library's own directory is searched for ITS dependencies
+     * (LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR) then System32, never the current directory or PATH; so libEGL.dll
+     * finds the libGLESv2.dll next to it and nothing planted elsewhere. POSIX: dlopen(path). A bare name is
+     * refused on Windows (it would search System32 only, which is what open() is for). */
+    static DynamicLibrary openPath(const char* path) noexcept;
+
     /* Null if not found or the library is empty. */
     void* symbol(const char* name) const noexcept;
 
@@ -48,6 +55,10 @@ class DynamicLibrary {
   private:
     void* handle_ = nullptr;
 };
+
+/* True for "C:\x\y.dll", "\\server\share\y.dll" and "/usr/lib/y.so": a path that does not depend on a search
+ * order. */
+bool isAbsolutePath(const char* path) noexcept;
 
 /*
  * wglGetProcAddress (and some other loaders) return 0, 1, 2, 3 or -1 instead of NULL for functions

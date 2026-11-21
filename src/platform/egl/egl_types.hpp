@@ -49,6 +49,12 @@ constexpr EGLenum kPlatformWayland = 0x31D8;     // EGL_EXT_platform_wayland / E
 constexpr EGLenum kPlatformDevice = 0x313F;      // EGL_EXT_platform_device
 constexpr EGLenum kPlatformSurfaceless = 0x31DD; // EGL_MESA_platform_surfaceless
 
+// EGL_ANGLE_platform_angle: ANGLE (OpenGL ES over D3D11, Vulkan, ...) as an EGL platform. A client library,
+// not a driver.
+constexpr EGLenum kPlatformAngle = 0x3202;
+constexpr EGLint kAngleType = 0x3203, kAngleTypeD3D11 = 0x3208, kAngleTypeVulkan = 0x3450;
+constexpr EGLint kAngleDeviceType = 0x3209, kAngleDeviceWarp = 0x320B, kAngleDeviceSwiftShader = 0x3487;
+
 constexpr EGLint kBadAlloc = 0x3003, kBadMatch = 0x3009, kBadAccess = 0x3002;
 constexpr EGLint kContextLost = 0x300E; // EGL 1.1: a power management event or GPU reset lost the context
 

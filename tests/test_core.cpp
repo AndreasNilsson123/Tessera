@@ -21,6 +21,7 @@
 #include "platform/common/context_priority.hpp"
 #include "platform/common/device_select.hpp"
 #include "platform/common/gl_query.hpp"
+#include "platform/common/software_renderer.hpp"
 #include "platform/common/swap_control.hpp"
 
 #include "core/backend.hpp"
@@ -936,6 +937,40 @@ static void testDeviceSelection() {
     CHECK(r.index == -1 && r.reason.find("not an index") != std::string::npos);
     CHECK(selectDevice("", two, fakeCanonical).index == -1);
     CHECK(selectDevice(std::string(5000, 'x'), two, fakeCanonical).index == -1);
+
+    // "software": the first device that says it is a software device; none at all is a refusal with a reason.
+    std::vector<EglDeviceDesc> withSoftware = two;
+    CHECK(selectDevice("software", withSoftware, fakeCanonical).index == -1);
+    CHECK(selectDevice("software", withSoftware, fakeCanonical).reason.find("software") != std::string::npos);
+    withSoftware.push_back(fakeDevice("", nullptr));
+    withSoftware.back().software = true;
+    CHECK(selectDevice("software", withSoftware, fakeCanonical).index == 2);
+    CHECK(selectDevice("SOFTWARE", withSoftware, fakeCanonical).index == 2);
+    CHECK(classifyDeviceSelector("software") == DeviceSelectorKind::Software);
+    CHECK(selectDevice("software", {}, fakeCanonical).index == -1);
+}
+
+// The software backend's promise is checked on the renderer string, because Mesa's "software device"
+// extension also covers GPU drivers (WSL's D3D12 driver reports it).
+static void testCpuRendererNames() {
+    using tessera::isCpuRenderer;
+    CHECK(isCpuRenderer("llvmpipe (LLVM 15.0.7, 256 bits)"));
+    CHECK(isCpuRenderer("softpipe"));
+    CHECK(isCpuRenderer("Software Rasterizer"));
+    CHECK(isCpuRenderer("ANGLE (Microsoft, Microsoft Basic Render Driver (0x0000008C) Direct3D11 vs_5_0 "
+                        "ps_5_0, D3D11-10.0.26100.9711)"));
+    CHECK(isCpuRenderer(
+        "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)"));
+    CHECK(isCpuRenderer("GDI Generic"));
+    CHECK(isCpuRenderer("Apple Software Renderer"));
+    CHECK(!isCpuRenderer("D3D12 (NVIDIA GeForce RTX 3060 Laptop GPU)"));
+    CHECK(!isCpuRenderer("NVIDIA GeForce RTX 3060 Laptop GPU/PCIe/SSE2"));
+    CHECK(!isCpuRenderer("ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Laptop GPU (0x00002560) Direct3D11 vs_5_0 "
+                         "ps_5_0, D3D11-31.0.15.4630)"));
+    CHECK(!isCpuRenderer(
+        "AMD Radeon RX 7800 XT (radeonsi, navi32, LLVM 15.0.7, DRM 3.54, 6.1.0)")); // LLVM compiles shaders,
+                                                                                    // it is not llvmpipe
+    CHECK(!isCpuRenderer(""));
 }
 
 // Several threads lose contexts while another keeps replacing the callback: every loss is reported exactly
@@ -1724,6 +1759,7 @@ static void testLifecycleRobustness() {
     testContextLostCallback();
     testContextLostCallbackThreads();
     testDeviceSelection();
+    testCpuRendererNames();
     testContextPriority();
     testSwapControlLogic();
     testSwapControlApi();

@@ -742,7 +742,7 @@ int main(int argc, char** argv) {
     }
 
     /* Candidate backends. A TESSERA_BACKEND already set by the user is respected as the single candidate. */
-    const char* candidates[5];
+    const char* candidates[6];
     int nCand = 0;
     if (only)
         candidates[nCand++] = only;
@@ -753,6 +753,8 @@ int main(int argc, char** argv) {
         candidates[nCand++] = "glx";
         candidates[nCand++] = "egl";
         candidates[nCand++] = "cgl";
+        candidates[nCand++] =
+            "software"; /* the CPU renderer, by name only: is there a fallback on this machine? */
     }
 
     int first = 1, anyCreated = 0;

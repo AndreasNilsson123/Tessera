@@ -16,6 +16,7 @@ if(Python3_Interpreter_FOUND)
         add_test(NAME abi_check COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/abi-check.py)
     endif()
     add_test(NAME release_check_selftest COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/release-check.py --self-test)
+    add_test(NAME package_provider_selftest COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/package-provider.py --self-test)
     add_test(NAME release_check COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/release-check.py)
     # The compatibility-table generator runs on two real tessera-diag outputs (a stored sample per file).
     file(GLOB TESSERA_DIAG_SAMPLES ${PROJECT_SOURCE_DIR}/docs/compat-samples/*.json)
@@ -114,6 +115,27 @@ if(UNIX AND NOT APPLE AND TESSERA_BUILD_SHARED)
     tessera_apply_options(test_eglimage)
     add_test(NAME eglimage COMMAND test_eglimage)
     set_tests_properties(eglimage PROPERTIES LABELS "gpu" TIMEOUT 120 SKIP_RETURN_CODE 77)
+endif()
+
+# The software backend (ADR 0015): the CPU renderer by name, and on Windows EGL on ANGLE. Linux needs a Mesa with its software device
+# (llvmpipe); Windows needs an ANGLE build: -DTESSERA_ANGLE_DIR=<folder with libEGL.dll, libGLESv2.dll, d3dcompiler_47.dll>
+# (Chrome, Edge and Electron ship one). Exits 77 (skipped) where there is none.
+set(TESSERA_ANGLE_DIR "" CACHE PATH "A folder with an ANGLE build (libEGL.dll and its dependencies) for the EGL-on-Windows tests")
+if(TESSERA_BUILD_SHARED AND ((UNIX AND NOT APPLE) OR (WIN32 AND TESSERA_ANGLE_DIR)))
+    add_executable(test_software test_software.cpp)
+    target_link_libraries(test_software PRIVATE Tessera::tessera)
+    tessera_apply_options(test_software)
+    if(WIN32)
+        add_custom_command(TARGET test_software POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:tessera> $<TARGET_FILE_DIR:test_software>)
+        add_test(NAME software COMMAND test_software software)
+        add_test(NAME angle_egl COMMAND test_software egl)
+        set_tests_properties(software angle_egl PROPERTIES LABELS "gpu" TIMEOUT 180 SKIP_RETURN_CODE 77
+            ENVIRONMENT "TESSERA_EGL_LIBRARY=${TESSERA_ANGLE_DIR}/libEGL.dll")
+    else()
+        add_test(NAME software COMMAND test_software software)
+        set_tests_properties(software PROPERTIES LABELS "gpu" TIMEOUT 180 SKIP_RETURN_CODE 77)
+    endif()
 endif()
 
 # Coverage-guided fuzzing (libFuzzer). Needs clang: configure with the `fuzz` preset, which compiles everything with

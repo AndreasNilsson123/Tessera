@@ -62,7 +62,10 @@ if(WIN32)
         src/platform/win32/window_host.cpp
         src/platform/win32/wgl_api.cpp
         src/platform/win32/adapter.cpp
-        src/platform/win32/wgl_backend.cpp)
+        src/platform/win32/wgl_backend.cpp
+        # EGL on Windows is for ANGLE (OpenGL ES over D3D11): loaded only from a path the user gives (ADR 0015)
+        src/platform/egl/egl_api.cpp
+        src/platform/egl/egl_backend.cpp)
 endif()
 if(UNIX AND NOT APPLE)
     list(APPEND TESSERA_CORE_SOURCES

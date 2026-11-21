@@ -30,6 +30,31 @@ DynamicLibrary DynamicLibrary::open(const char* name) noexcept {
     return lib;
 }
 
+DynamicLibrary DynamicLibrary::openPath(const char* path) noexcept {
+    DynamicLibrary lib;
+    if (!path || !isAbsolutePath(path))
+        return lib;
+    wchar_t wide[1024];
+    const int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path, -1, wide, 1024);
+    if (n <= 0)
+        return lib;
+    // DLL_LOAD_DIR is only honoured with an absolute path (checked above); SYSTEM32 keeps the usual system
+    // DLLs reachable.
+    lib.handle_ = reinterpret_cast<void*>(
+        LoadLibraryExW(wide, nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32));
+    return lib;
+}
+
+bool isAbsolutePath(const char* path) noexcept {
+    if (!path)
+        return false;
+    const unsigned char c0 = static_cast<unsigned char>(path[0]);
+    const bool drive = ((c0 >= 'A' && c0 <= 'Z') || (c0 >= 'a' && c0 <= 'z')) && path[1] == ':' &&
+                       (path[2] == '\\' || path[2] == '/');
+    const bool unc = path[0] == '\\' && path[1] == '\\';
+    return drive || unc;
+}
+
 void* DynamicLibrary::symbol(const char* name) const noexcept {
     if (!handle_ || !name)
         return nullptr;
@@ -50,6 +75,14 @@ DynamicLibrary DynamicLibrary::open(const char* name) noexcept {
         return lib;
     lib.handle_ = dlopen(name, RTLD_NOW | RTLD_LOCAL);
     return lib;
+}
+
+DynamicLibrary DynamicLibrary::openPath(const char* path) noexcept {
+    return open(path);
+}
+
+bool isAbsolutePath(const char* path) noexcept {
+    return path && path[0] == '/';
 }
 
 void* DynamicLibrary::symbol(const char* name) const noexcept {

@@ -26,6 +26,7 @@ Everything is deterministic (fixed timestamps, sorted entries) so that the same 
 import argparse
 import hashlib
 import io
+import json
 import os
 import re
 import shutil
@@ -185,7 +186,7 @@ def sha(path, algo):
     return h.hexdigest()
 
 
-def sbom(path, version, jars):
+def sbom(path, version, jars, providers=()):
     ref = f"pkg:maven/{GROUP}/{ARTIFACT}@{version}"
     doc = {
         "bomFormat": "CycloneDX", "specVersion": "1.5",
@@ -194,7 +195,8 @@ def sbom(path, version, jars):
                      "component": {"type": "library", "bom-ref": ref, "name": ARTIFACT, "group": GROUP, "version": version,
                                    "purl": ref, "licenses": [{"license": {"id": "Apache-2.0"}}],
                                    "externalReferences": [{"type": "vcs", "url": URL}]}},
-        "components": [{"type": "file", "name": os.path.basename(j), "hashes": [{"alg": "SHA-256", "content": sha(j, "sha256")}]} for j in jars],
+        "components": [{"type": "file", "name": os.path.basename(j), "hashes": [{"alg": "SHA-256", "content": sha(j, "sha256")}]} for j in jars]
+        + list(providers),  # optional GL providers (ANGLE, Mesa) from package-provider.py: separate downloads, scope "optional"
         "dependencies": [{"ref": ref, "dependsOn": []}],  # the artifacts embed no third-party code (see THIRD_PARTY_NOTICES.md)
     }
     import json
@@ -212,6 +214,9 @@ def main():
     ap.add_argument("--lwjgl-classpath", default=None, help="classpath for javadoc of the LWJGL adapter (the LWJGL jars)")
     ap.add_argument("--out", required=True)
     ap.add_argument("--version", default=None)
+    ap.add_argument("--provider", action="append", default=[], metavar="PROVIDER.JSON",
+                    help="an optional GL provider made by scripts/package-provider.py (its .provider.json; the .zip next to it is copied "
+                         "to --out, checksummed and listed in the SBOM as an optional component). Repeatable")
     ap.add_argument("--sign", action="store_true", help="sign every artifact with gpg (needs a key in the keyring / GPG_* env)")
     args = ap.parse_args()
 
@@ -277,7 +282,17 @@ def main():
         open(path, "w", encoding="utf-8", newline="\n").write(text)
         artifacts.append(path)
     cdx = os.path.join(out, f"{ARTIFACT}-{version}.cdx.json")
-    sbom(cdx, version, [a for a in artifacts if a.endswith(".jar")])
+    provider_fragments, provider_zips = [], []
+    for pj in args.provider:
+        with open(pj, encoding="utf-8") as f:
+            provider_fragments.append(json.load(f))
+        zsrc = pj[: -len(".provider.json")] + ".zip"
+        if not os.path.exists(zsrc):
+            sys.exit(f"{pj}: the package {zsrc} is missing")
+        zdst = os.path.join(out, os.path.basename(zsrc))
+        shutil.copyfile(zsrc, zdst)
+        provider_zips.append(zdst)
+    sbom(cdx, version, [a for a in artifacts if a.endswith(".jar")], provider_fragments)
     artifacts.append(cdx)
 
     # Maven repository layout + checksums (+ signatures)
@@ -296,6 +311,7 @@ def main():
         if args.sign:
             subprocess.run(["gpg", "--batch", "--yes", "--armor", "--detach-sign", dest], check=True)
 
+    artifacts += provider_zips  # downloads of their own: checksummed, but not part of the Maven bundle
     with open(os.path.join(out, "SHA256SUMS"), "w", newline="\n") as f:
         for a in sorted(artifacts):
             f.write(f"{sha(a, 'sha256')}  {os.path.basename(a)}\n")

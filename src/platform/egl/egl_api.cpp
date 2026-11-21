@@ -6,6 +6,7 @@
 
 #include <tessera/tessera.h>
 
+#include "core/env.hpp"
 #include "core/log.hpp"
 
 namespace tessera::egl {
@@ -19,11 +20,19 @@ template <class Fn> bool load(const DynamicLibrary& lib, const char* name, Fn& o
 const EglApi* loadApi() noexcept {
     try {
         auto* api = new EglApi(); // leaked on purpose, see header
-        if (const char* path = std::getenv("TESSERA_EGL_LIBRARY"); path && *path) {
-            api->lib = DynamicLibrary::open(path);
+        if (std::string path; readEnv("TESSERA_EGL_LIBRARY", path) && !path.empty()) {
+            // A file the user named (an optional bundled ANGLE or Mesa): by full path, its own folder
+            // searched for its dependencies (ADR 0015). On Windows a bare name or relative path is refused
+            // rather than searched for.
+            api->lib = DynamicLibrary::openPath(path.c_str());
+            if (!api->lib)
+                logf(TESSERA_LOG_WARN,
+                     "TESSERA_EGL_LIBRARY=%s could not be loaded (Windows needs an absolute path)",
+                     path.c_str());
         } else {
 #if defined(_WIN32)
-            api->lib = DynamicLibrary::open("libEGL.dll");
+            api->lib = DynamicLibrary::open(
+                "libEGL.dll"); // System32 only: present when a system component ships ANGLE
 #else
             api->lib = DynamicLibrary::open("libEGL.so.1");
 #endif
