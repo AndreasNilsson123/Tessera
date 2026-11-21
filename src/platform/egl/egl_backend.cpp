@@ -153,10 +153,28 @@ const WaylandEgl* waylandEgl() noexcept {
  * (the server is $DISPLAY's, the same one a window of the caller's lives on). Xlib threading is made safe the
  * same way the GLX backend does (ADR 0005/0013): the host's own call is detected, and TESSERA_NO_XINITTHREADS
  * opts out. */
-void* x11Display(std::string& error) {
+/* The name a host's Display* was opened with (XDisplayString): all Tessera takes from a host connection. */
+std::string x11NameOf(void* hostDisplay, std::string& error) {
+    static DynamicLibrary x11 = DynamicLibrary::open("libX11.so.6");
+    using NameFn = const char* (*)(void*);
+    auto name = x11 ? reinterpret_cast<NameFn>(x11.symbol("XDisplayString")) : nullptr;
+    if (!name) {
+        error = "libX11 is not available";
+        return std::string();
+    }
+    const char* text = name(hostDisplay);
+    if (!text || !*text)
+        error = "the display is not an open Xlib Display*";
+    return text ? text : "";
+}
+
+/* `serverName` "" = $DISPLAY; otherwise the server a host's window lives on. One connection per server, kept
+ * for the life of the process. */
+void* x11Display(std::string& error, const std::string& serverName = std::string()) {
     static std::mutex mutex;
-    static void* display = nullptr;
+    static std::map<std::string, void*> displays;
     std::lock_guard<std::mutex> lock(mutex);
+    void*& display = displays[serverName];
     if (display)
         return display;
     static DynamicLibrary x11 = DynamicLibrary::open("libX11.so.6");
@@ -176,9 +194,10 @@ void* x11Display(std::string& error) {
     const bool hostDidIt = lock_ && *lock_ != nullptr;
     if (initThreads && !hostDidIt && !envSet("TESSERA_NO_XINITTHREADS"))
         initThreads();
-    display = open(nullptr);
+    display = open(serverName.empty() ? nullptr : serverName.c_str());
     if (!display)
-        error = "cannot open the X display for EGL";
+        error = serverName.empty() ? "cannot open the X display for EGL"
+                                   : "cannot open the X display \"" + serverName + "\" the window belongs to";
     return display;
 }
 
@@ -206,6 +225,7 @@ void* x11Display(std::string& error) {
  */
 constexpr EGLint kDrmRenderNodeFile = 0x3377; // EGL_DRM_RENDER_NODE_FILE_EXT
 constexpr EGLint kDeviceUuid = 0x335C;        // EGL_DEVICE_UUID_EXT (EGL_EXT_device_persistent_id)
+constexpr EGLint kDeviceRenderer = 0x335F;    // EGL_RENDERER_EXT (EGL_EXT_device_query_name)
 
 constexpr const char* kSoftwareDeviceExtension = "EGL_MESA_device_software";
 
@@ -220,7 +240,7 @@ std::string canonicalPath(const std::string& p) {
 
 /* The device in `devices` that `selector` names, or a reason it names none. The matching rules are
  * device_select.hpp's. */
-DeviceChoice findDevice(const EglFns& f, void* const* devices, EGLint count, const std::string& selector) {
+std::vector<EglDeviceDesc> describeDevices(const EglFns& f, void* const* devices, EGLint count) {
     std::vector<EglDeviceDesc> descs(static_cast<std::size_t>(count));
     for (EGLint i = 0; i < count; ++i) {
         EglDeviceDesc& d = descs[static_cast<std::size_t>(i)];
@@ -239,8 +259,59 @@ DeviceChoice findDevice(const EglFns& f, void* const* devices, EGLint count, con
                                       d.uuid.data(), &size) &&
             size == static_cast<EGLint>(d.uuid.size()))
             d.hasUuid = true;
+        if (f.eglQueryDeviceStringEXT) {
+            const char* renderer = f.eglQueryDeviceStringEXT(devices[i], kDeviceRenderer);
+            if (renderer)
+                d.name = renderer;
+        }
     }
+    return descs;
+}
+
+DeviceChoice findDevice(const std::vector<EglDeviceDesc>& descs, const std::string& selector) {
     return selectDevice(selector, descs, canonicalPath);
+}
+
+/* PCI ids of a DRM render node from sysfs (Linux); zero where not readable. */
+void pciIdsOfRenderNode(const std::string& node, uint32_t& vendor, uint32_t& device) {
+    vendor = device = 0;
+#if defined(__linux__)
+    const std::size_t slash = node.find_last_of('/');
+    if (slash == std::string::npos)
+        return;
+    const std::string base = "/sys/class/drm/" + node.substr(slash + 1) + "/device/";
+    auto readHex = [&base](const char* leaf) -> uint32_t {
+        if (std::FILE* f = std::fopen((base + leaf).c_str(), "r")) {
+            unsigned v = 0;
+            const int got = std::fscanf(f, "%x", &v);
+            std::fclose(f);
+            return got == 1 ? v : 0;
+        }
+        return 0;
+    };
+    vendor = readHex("vendor");
+    device = readHex("device");
+#else
+    (void)node;
+#endif
+}
+
+/* EGL hands out one EGLDisplay per native display and does not count eglInitialize: if the host (GLFW, SDL, a
+ * toolkit) already initialised it, eglQueryString(EGL_VERSION) answers before we initialise anything. Said
+ * once per display, because it explains what Tessera then does (shares it, never terminates it: ADR 0006). */
+void noteIfHostInitialised(const EglFns& f, EGLDisplay d, const char* platform) {
+    static std::mutex mutex;
+    static std::vector<EGLDisplay> told;
+    if (!f.eglQueryString(d, kVersion))
+        return; // not initialised yet: ours to initialise
+    std::lock_guard<std::mutex> lock(mutex);
+    if (std::find(told.begin(), told.end(), d) != told.end())
+        return;
+    told.push_back(d);
+    logf(TESSERA_LOG_INFO,
+         "EGL: the %s display was already initialised by the host; Tessera shares it and will not terminate "
+         "it",
+         platform);
 }
 
 class EglShared {
@@ -251,6 +322,8 @@ class EglShared {
     std::string platform;
     std::vector<std::string> exts;
     std::string clientApis;
+    std::string
+        adapterId; // the device platform's device (tesseraEnumerateAdapters' id); "" where EGL cannot say
 
     bool atLeast(int maj, int min) const {
         return major > maj || (major == maj && minor >= min);
@@ -266,7 +339,7 @@ class EglShared {
 
     /* `software`: the CPU renderer only (the "software" backend): Mesa's software device through the device
      * platform, or ANGLE's WARP / SwiftShader. Never the GPU, even when there is one. */
-    bool open(std::string& error, bool software = false) {
+    bool open(std::string& error, bool software = false, const std::string& adapterSelector = std::string()) {
         const EglFns& f = api->fn;
         const char* clientExtList =
             f.eglQueryString(nullptr, kExtensions); // null on EGL < 1.5 without the extension
@@ -282,7 +355,10 @@ class EglShared {
         // An explicit GPU choice only makes sense on the device platform; the others pick for themselves.
         std::string selectorEnv;
         readEnv("TESSERA_EGL_DEVICE", selectorEnv);
-        const std::string selector = software ? "software" : selectorEnv;
+        // The caller's explicit adapter (TesseraContextConfig::adapter) beats the environment; the CPU
+        // backend names its own.
+        const std::string selector =
+            software ? "software" : (!adapterSelector.empty() ? adapterSelector : selectorEnv);
         if (!selector.empty() && want != "device" && !want.empty()) {
             error = "TESSERA_EGL_DEVICE needs TESSERA_EGL_PLATFORM=device (or unset)";
             return false;
@@ -291,6 +367,7 @@ class EglShared {
         auto attempt = [&](const char* name, EGLDisplay d) {
             if (!d)
                 return false;
+            noteIfHostInitialised(f, d, name);
             EGLint maj = 0, min = 0;
             if (!f.eglInitialize(d, &maj, &min)) {
                 tried += std::string(" ") + name + "(init failed)";
@@ -345,23 +422,28 @@ class EglShared {
             void* devices[16] = {};
             EGLint count = 0;
             if (f.eglQueryDevicesEXT(16, devices, &count) && count > 0) {
+                const std::vector<EglDeviceDesc> descs = describeDevices(f, devices, count);
                 if (!selector.empty()) {
-                    const DeviceChoice choice = findDevice(f, devices, count, selector);
+                    const DeviceChoice choice = findDevice(descs, selector);
                     if (choice.index < 0) {
                         error = "TESSERA_EGL_DEVICE=" + selector + " matches none of the " +
                                 std::to_string(count) + " EGL device(s): " + choice.reason;
                         return false;
                     }
-                    if (attempt("device",
-                                f.eglGetPlatformDisplayEXT(kPlatformDevice, devices[choice.index], nullptr)))
+                    if (attempt("device", f.eglGetPlatformDisplayEXT(kPlatformDevice, devices[choice.index],
+                                                                     nullptr))) {
+                        adapterId = eglAdapterId(descs[static_cast<std::size_t>(choice.index)], choice.index);
                         return finish();
+                    }
                     error = "the EGL device selected by TESSERA_EGL_DEVICE=" + selector +
                             " could not be opened (tried:" + tried + ")";
                     return false;
                 }
                 for (EGLint i = 0; i < count; ++i) {
-                    if (attempt("device", f.eglGetPlatformDisplayEXT(kPlatformDevice, devices[i], nullptr)))
+                    if (attempt("device", f.eglGetPlatformDisplayEXT(kPlatformDevice, devices[i], nullptr))) {
+                        adapterId = eglAdapterId(descs[static_cast<std::size_t>(i)], i);
                         return finish();
+                    }
                 }
             } else if (!selector.empty()) {
                 error = "TESSERA_EGL_DEVICE is set but no EGL devices are available";
@@ -404,6 +486,7 @@ class EglShared {
             error = std::string("eglGetPlatformDisplay failed for the ") + name + " display";
             return false;
         }
+        noteIfHostInitialised(f, d, name);
         EGLint maj = 0, min = 0;
         if (!f.eglInitialize(d, &maj, &min) || maj < 1 || (maj == 1 && min < 4)) {
             error = std::string("the EGL ") + name + " display could not be initialised";
@@ -924,13 +1007,59 @@ class EglBackend final : public Backend {
         return software_ ? "software" : "egl";
     }
 
+    /* EGL can name its devices (uuid, render node, index); LUIDs and GPU preferences are Windows' and refused
+     * here. The CPU backend chooses its own device. */
+    bool supportsAdapterSelection(const TesseraContextConfig& c) const noexcept override {
+        std::string selector;
+        return !software_ && c.adapterLuid == 0 && c.gpuPreference == TESSERA_GPU_DEFAULT &&
+               eglSelectorFromAdapterId(c.adapter, selector);
+    }
+
+    void enumerateAdapters(std::vector<TesseraAdapterInfo>& out) override {
+        if (software_)
+            return;
+        const EglApi* api = eglApi();
+        if (!api)
+            return;
+        const EglFns& f = api->fn;
+        const std::vector<std::string> client = splitWords(f.eglQueryString(nullptr, kExtensions));
+        const bool canEnumerate = contains(client, "EGL_EXT_device_enumeration") ||
+                                  contains(client, "EGL_EXT_device_base") ||
+                                  contains(client, "EGL_EXT_platform_device");
+        if (!f.eglQueryDevicesEXT || !canEnumerate)
+            return;
+        void* devices[16] = {};
+        EGLint count = 0;
+        if (!f.eglQueryDevicesEXT(16, devices, &count) || count <= 0)
+            return;
+        const std::vector<EglDeviceDesc> descs = describeDevices(f, devices, count);
+        for (EGLint i = 0; i < count; ++i) {
+            const EglDeviceDesc& d = descs[static_cast<std::size_t>(i)];
+            TesseraAdapterInfo a = tesseraDefaultAdapterInfo();
+            std::snprintf(a.id, sizeof a.id, "%s", eglAdapterId(d, i).c_str());
+            std::snprintf(a.name, sizeof a.name, "%s",
+                          d.name.empty() ? ("EGL device " + std::to_string(i)).c_str() : d.name.c_str());
+            if (isCpuRenderer(d.name))
+                a.flags |= TESSERA_ADAPTER_SOFTWARE;
+            if (!d.renderNode.empty())
+                pciIdsOfRenderNode(d.renderNode, a.vendorId, a.deviceId);
+            out.push_back(a);
+        }
+    }
+
     TesseraResult createContext(const TesseraContextConfig& c,
                                 const std::shared_ptr<ContextObject>& shareWith,
                                 std::shared_ptr<ContextObject>& out) override {
         std::string error;
-        std::shared_ptr<EglShared> sh = getShared(error);
+        std::string selector;
+        if (c.adapter[0] != '\0' && !eglSelectorFromAdapterId(c.adapter, selector))
+            return TESSERA_ERROR_UNSUPPORTED; // another backend's kind of id: not ours to guess at
+        if (c.adapter[0] != '\0' && software_)
+            return fail(TESSERA_ERROR_UNSUPPORTED, "the software backend chooses its own device");
+        std::shared_ptr<EglShared> sh = getShared(error, selector);
         if (!sh)
-            return fail(TESSERA_ERROR_UNSUPPORTED, error);
+            return fail(c.adapter[0] != '\0' ? TESSERA_ERROR_NO_MATCHING_CONFIG : TESSERA_ERROR_UNSUPPORTED,
+                        error);
         return create(sh, c, shareWith, nullptr, out);
     }
 
@@ -953,6 +1082,9 @@ class EglBackend final : public Backend {
         }
         if (window.kind != TESSERA_WINDOW_X11 && window.kind != TESSERA_WINDOW_WAYLAND)
             return TESSERA_ERROR_UNSUPPORTED;
+        if (c.adapter[0] != '\0')
+            return fail(TESSERA_ERROR_UNSUPPORTED,
+                        "a window's GPU is the window system's: an adapter id cannot be combined with it");
         if (software_) // the windows of a window system are the GPU's; the CPU renderer draws offscreen
             return fail(TESSERA_ERROR_UNSUPPORTED,
                         "the software backend cannot attach to this kind of window");
@@ -965,7 +1097,14 @@ class EglBackend final : public Backend {
         if (wayland) {
             nativeDisplay = reinterpret_cast<void*>(static_cast<std::uintptr_t>(window.display));
         } else {
-            nativeDisplay = x11Display(error);
+            std::string serverName; // the host's own Display* names a server that need not be $DISPLAY
+            if (window.display != 0) {
+                serverName =
+                    x11NameOf(reinterpret_cast<void*>(static_cast<std::uintptr_t>(window.display)), error);
+                if (serverName.empty())
+                    return fail(TESSERA_ERROR_INVALID_ARGUMENT, error);
+            }
+            nativeDisplay = x11Display(error, serverName);
             if (!nativeDisplay)
                 return fail(TESSERA_ERROR_UNSUPPORTED, error);
         }
@@ -1084,6 +1223,8 @@ class EglBackend final : public Backend {
             return fail(TESSERA_ERROR_PLATFORM,
                         eglErrorText("eglMakeCurrent failed on the new context", f.eglGetError()));
         const bool ok = queryInfo(*sh, *ctx, plan.srgb, ctx->info);
+        if (ok && !sh->adapterId.empty())
+            std::snprintf(ctx->info.adapter, sizeof ctx->info.adapter, "%s", sh->adapterId.c_str());
         // `guard` releases the context again and restores the caller's state; it must not be left to us.
         if (!ok)
             return fail(TESSERA_ERROR_PLATFORM, "could not query the new context (glGetString failed)");
@@ -1137,8 +1278,27 @@ class EglBackend final : public Backend {
     }
 
   private:
-    std::shared_ptr<EglShared> getShared(std::string& error) {
+    /* `adapterSelector` (an EGL device selector) names a particular device; "" = the backend's usual choice.
+     * One display per selector: EGL hands out the same EGLDisplay for the same device, and none is ever
+     * terminated (ADR 0006). */
+    std::shared_ptr<EglShared> getShared(std::string& error,
+                                         const std::string& adapterSelector = std::string()) {
         std::lock_guard<std::mutex> lock(mutex_);
+        if (!adapterSelector.empty()) {
+            auto it = adapterShared_.find(adapterSelector);
+            if (it != adapterShared_.end())
+                return it->second;
+            const EglApi* api = eglApi();
+            if (!api) {
+                error = "libEGL is not available on this system";
+                return nullptr;
+            }
+            auto s = std::make_shared<EglShared>();
+            s->api = api;
+            if (!s->open(error, false, adapterSelector))
+                return nullptr;
+            return adapterShared_.emplace(adapterSelector, std::move(s)).first->second;
+        }
         if (shared_)
             return shared_;
         const EglApi* api = eglApi();
@@ -1157,6 +1317,8 @@ class EglBackend final : public Backend {
     const bool software_;
     std::mutex mutex_;
     std::shared_ptr<EglShared> shared_;
+    std::map<std::string, std::shared_ptr<EglShared>>
+        adapterShared_; // by device selector (TesseraContextConfig::adapter)
     // One EGLDisplay per caller window system connection: (window kind, native display) -> display state.
     std::map<std::pair<uint32_t, std::uintptr_t>, std::shared_ptr<EglShared>> windowDisplays_;
 };

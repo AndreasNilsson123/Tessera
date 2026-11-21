@@ -30,6 +30,10 @@ It uses only the public API. Each case is a **strict** request, so `[ -- ]` mean
 generic cases are single-buffered (headless EGL cannot be double-buffered); a separate case asks for double buffering.
 Exit status: 0 if some backend could create a context, 1 if none could, 2 for a usage error.
 
+Each backend section lists the adapters it can name (`adapter  : <id>  <name> [software|discrete|integrated]`, `"adapters"` in the
+JSON) and which one served the baseline context (`served by:`, `"adapter"`): the ids are what `TesseraContextConfig::adapter` /
+`ContextConfig.Builder.adapter(...)` take (ADR 0017). `--backend software` is the CPU renderer (ADR 0015).
+
 When reporting a problem or adding a row to `compat.md`, paste `tessera-diag --json` (it contains the platform, the
 `TESSERA_*`/`DISPLAY` variables that are set, the GL strings and every case's result and message).
 

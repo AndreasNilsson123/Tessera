@@ -880,6 +880,57 @@ static void testTopUp() {
 static void testAdapterRequests() {
     interop::adapterRequestsRefused(eglHooks());
 }
+// One way to say "this GPU" (ABI 0.14.0): the EGL devices as an inventory, selecting by id, reporting who
+// served the context.
+static void testAdapterIds() {
+    int32_t count = 0;
+    EXPECT(tesseraEnumerateAdapters(nullptr, 0, &count), TESSERA_SUCCESS);
+    if (count == 0) {
+        std::printf("  no EGL device enumeration here: nothing to select from\n");
+        return;
+    }
+    std::vector<TesseraAdapterInfo> list(static_cast<std::size_t>(count), tesseraDefaultAdapterInfo());
+    EXPECT(tesseraEnumerateAdapters(list.data(), count, &count), TESSERA_SUCCESS);
+    for (const auto& a : list) {
+        std::printf("  adapter %s | %s | flags 0x%x vendor 0x%04x\n", a.id, a.name, a.flags, a.vendorId);
+        CHECK(std::strcmp(a.backend, "egl") == 0);
+        CHECK(std::strncmp(a.id, "uuid:", 5) == 0 || std::strncmp(a.id, "node:", 5) == 0 ||
+              std::strncmp(a.id, "index:", 6) == 0);
+    }
+    // A context picks the device through the same id the inventory printed, and says so.
+    for (const auto& a : list) {
+        TesseraContextConfig cfg = baseConfig();
+        cfg.fallback = TESSERA_FALLBACK_BEST_EFFORT;
+        std::snprintf(cfg.adapter, sizeof cfg.adapter, "%s", a.id);
+        TesseraContext ctx = 0;
+        const TesseraResult r = tesseraCreateContext(&cfg, &ctx);
+        if (r != TESSERA_SUCCESS) { // a device that cannot make a context: a refusal, never another device
+            CHECK(r == TESSERA_ERROR_NO_MATCHING_CONFIG || r == TESSERA_ERROR_UNSUPPORTED);
+            continue;
+        }
+        TesseraContextInfo info = tesseraDefaultContextInfo();
+        EXPECT(tesseraGetContextInfo(ctx, &info), TESSERA_SUCCESS);
+        CHECK(std::strcmp(info.adapter, a.id) == 0);
+        std::printf("  context on %s: %s (class 0x%x)\n", info.adapter, info.renderer, info.adapterClass);
+        if (std::strstr(info.renderer, "llvmpipe") != nullptr)
+            CHECK(info.adapterClass & TESSERA_ADAPTER_SOFTWARE);
+        EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
+    }
+    // Refusals: no such device, another backend's id, a window (the window system's GPU) with an id.
+    TesseraContextConfig none = baseConfig();
+    std::snprintf(none.adapter, sizeof none.adapter, "uuid:00000000-0000-0000-0000-000000000000");
+    TesseraContext ctx = 0;
+    EXPECT(tesseraCreateContext(&none, &ctx), TESSERA_ERROR_NO_MATCHING_CONFIG);
+    TesseraContextConfig bad = baseConfig();
+    std::snprintf(bad.adapter, sizeof bad.adapter, "index:99");
+    EXPECT(tesseraCreateContext(&bad, &ctx), TESSERA_ERROR_NO_MATCHING_CONFIG);
+    TesseraContextConfig foreign = baseConfig();
+    std::snprintf(foreign.adapter, sizeof foreign.adapter, "luid:00000000-00001234");
+    EXPECT(tesseraCreateContext(&foreign, &ctx), TESSERA_ERROR_UNSUPPORTED);
+    TesseraContextConfig mac = baseConfig();
+    std::snprintf(mac.adapter, sizeof mac.adapter, "cgl:0x00024600");
+    EXPECT(tesseraCreateContext(&mac, &ctx), TESSERA_ERROR_UNSUPPORTED);
+}
 static void testProbe() {
     ForeignContext foreign; // a context from "another library" must survive every probe
     robust::Hooks h = eglHooks();
@@ -1009,6 +1060,7 @@ int main() {
         {"keeping the pool full", testTopUp},
         {"probe", testProbe},
         {"GPU requests are refused", testAdapterRequests},
+        {"adapter ids", testAdapterIds},
         {"native handles", testNativeHandles},
         {"context priority", testContextPriority},
         {"terminate leaves the shared display alive", testTerminateKeepsSharedDisplayAlive},

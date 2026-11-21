@@ -1049,6 +1049,77 @@ static void testSwapControlAndPacing() {
 
 // Context priority: WGL has no extension for it, so a strict request is refused (never silently ignored) and
 // a best-effort one gives an ordinary context that reports no priority.
+// One way to say "this GPU" (ABI 0.14.0): the inventory, selecting by id, reporting who served the context.
+static void testAdapterIds() {
+    int32_t count = 0;
+    EXPECT(tesseraEnumerateAdapters(nullptr, 0, &count), TESSERA_SUCCESS);
+    CHECK(count >= 1);
+    std::vector<TesseraAdapterInfo> list(static_cast<std::size_t>(count), tesseraDefaultAdapterInfo());
+    int32_t again = 0;
+    EXPECT(tesseraEnumerateAdapters(list.data(), count, &again), TESSERA_SUCCESS);
+    CHECK(again == count);
+    const TesseraAdapterInfo* hardware = nullptr;
+    for (const auto& a : list) {
+        std::printf("  adapter %s | %s | vendor 0x%04x flags 0x%x | backend %s\n", a.id, a.name, a.vendorId,
+                    a.flags, a.backend);
+        CHECK(std::strcmp(a.backend, "wgl") == 0 && std::strncmp(a.id, "luid:", 5) == 0 && a.luid != 0);
+        if (!(a.flags & TESSERA_ADAPTER_SOFTWARE) && !hardware)
+            hardware = &a;
+    }
+
+    // Who served a default context.
+    TesseraContextConfig cfg = baseConfig();
+    cfg.fallback = TESSERA_FALLBACK_BEST_EFFORT;
+    TesseraContext ctx = 0;
+    EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_SUCCESS);
+    TesseraContextInfo served = tesseraDefaultContextInfo();
+    if (ctx) {
+        EXPECT(tesseraGetContextInfo(ctx, &served), TESSERA_SUCCESS);
+        std::printf("  served by: '%s' class 0x%x (%s)\n", served.adapter, served.adapterClass,
+                    served.renderer);
+        EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
+    }
+    if (!hardware)
+        return;
+
+    // Selecting by id: the adapter whose driver this machine's OpenGL is (verified, never assumed)...
+    TesseraContextConfig want = baseConfig();
+    std::snprintf(want.adapter, sizeof want.adapter, "%s", hardware->id);
+    TesseraContext c = 0;
+    const TesseraResult r = tesseraCreateContext(&want, &c);
+    if (r == TESSERA_SUCCESS) {
+        TesseraContextInfo info = tesseraDefaultContextInfo();
+        EXPECT(tesseraGetContextInfo(c, &info), TESSERA_SUCCESS);
+        CHECK(std::strcmp(info.adapter, hardware->id) == 0);
+        CHECK(info.adapterClass ==
+              (hardware->flags & (TESSERA_ADAPTER_INTEGRATED | TESSERA_ADAPTER_DISCRETE)));
+        EXPECT(tesseraDestroyContext(c), TESSERA_SUCCESS);
+        // ... the same GPU through the numeric field is the same context.
+        TesseraContextConfig byLuid = baseConfig();
+        byLuid.adapterLuid = hardware->luid;
+        EXPECT(tesseraCreateContext(&byLuid, &c), TESSERA_SUCCESS);
+        if (c)
+            tesseraDestroyContext(c);
+    } else {
+        // Another machine: this adapter is not the one the OpenGL driver belongs to (a hybrid laptop); a
+        // refusal, never another GPU.
+        CHECK(r == TESSERA_ERROR_NO_MATCHING_CONFIG);
+        std::printf("  (adapter %s is not the OpenGL driver's: %s)\n", hardware->id,
+                    tesseraGetLastErrorMessage());
+    }
+    // An id that names no adapter, another backend's kind of id, and combinations that make no sense.
+    TesseraContextConfig none = baseConfig();
+    std::snprintf(none.adapter, sizeof none.adapter, "luid:7FFFFFFF-7FFFFFFF");
+    EXPECT(tesseraCreateContext(&none, &c), TESSERA_ERROR_NO_MATCHING_CONFIG);
+    TesseraContextConfig foreign = baseConfig();
+    std::snprintf(foreign.adapter, sizeof foreign.adapter, "uuid:11111111-2222-3333-4444-555555555555");
+    EXPECT(tesseraCreateContext(&foreign, &c), TESSERA_ERROR_UNSUPPORTED);
+    TesseraContextConfig both = baseConfig();
+    std::snprintf(both.adapter, sizeof both.adapter, "%s", hardware->id);
+    both.adapterLuid = hardware->luid;
+    EXPECT(tesseraCreateContext(&both, &c), TESSERA_ERROR_INVALID_ARGUMENT);
+}
+
 static void testContextPriority() {
     TesseraContextConfig cfg = baseConfig();
     cfg.priority = TESSERA_PRIORITY_HIGH;
@@ -1111,6 +1182,7 @@ int main() {
         {"native handles", testNativeHandles},
         {"window attach", testWindowAttach},
         {"swap control and frame pacing", testSwapControlAndPacing},
+        {"adapter ids", testAdapterIds},
         {"context priority", testContextPriority},
         {"GPU selection", testAdapterSelection},
         {"terminate / re-init", testTerminateAndReinit},

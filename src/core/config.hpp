@@ -6,6 +6,11 @@
 
 namespace tessera {
 
+/* Does the request name a particular GPU (a LUID, a preference, or an adapter id)? */
+inline bool namesAGpu(const TesseraContextConfig& c) noexcept {
+    return c.adapterLuid != 0 || c.gpuPreference != TESSERA_GPU_DEFAULT || c.adapter[0] != '\0';
+}
+
 /*
  * Validates a caller-supplied config and produces a fully-populated copy.
  *  - structSize smaller than the current struct: missing trailing fields are treated as zero (older caller).

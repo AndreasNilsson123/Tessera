@@ -127,6 +127,7 @@ constexpr int kGlxPreservedContents = 0x801B;
 // ---- function pointer types ---------------------------------------------------------------------
 struct X11Fns {
     Display* (*XOpenDisplay)(const char*) = nullptr;
+    char* (*XDisplayString)(Display*) = nullptr; // the name a host connection was opened with
     int (*XCloseDisplay)(Display*) = nullptr;
     int (*XInitThreads)() = nullptr;
     int (*XDefaultScreen)(Display*) = nullptr;

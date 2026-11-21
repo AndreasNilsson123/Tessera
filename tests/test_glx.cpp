@@ -723,6 +723,31 @@ static void testTopUp() {
 static void testAdapterRequests() {
     interop::adapterRequestsRefused(glxHooks());
 }
+// GLX has no way to name a GPU: an adapter id is refused (never served by whatever the X server picks) and
+// nothing is listed.
+static void testAdapterIds() {
+    int32_t count = -1;
+    EXPECT(tesseraEnumerateAdapters(nullptr, 0, &count), TESSERA_SUCCESS);
+    CHECK(count == 0);
+    TesseraContextConfig cfg = baseConfig();
+    cfg.fallback = TESSERA_FALLBACK_BEST_EFFORT;
+    std::snprintf(cfg.adapter, sizeof cfg.adapter, "uuid:11111111-2222-3333-4444-555555555555");
+    TesseraContext ctx = 0;
+    EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_ERROR_UNSUPPORTED);
+    CHECK(ctx == TESSERA_NULL_HANDLE);
+    // A default context says who it ran on as far as GLX can tell: nothing by id, the class from the
+    // renderer.
+    std::memset(cfg.adapter, 0, sizeof cfg.adapter);
+    EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_SUCCESS);
+    if (ctx) {
+        TesseraContextInfo info = tesseraDefaultContextInfo();
+        EXPECT(tesseraGetContextInfo(ctx, &info), TESSERA_SUCCESS);
+        CHECK(info.adapter[0] == '\0');
+        if (std::strstr(info.renderer, "llvmpipe") != nullptr)
+            CHECK(info.adapterClass & TESSERA_ADAPTER_SOFTWARE);
+        EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
+    }
+}
 static void testProbe() {
     ForeignContext foreign; // a context from "another library" must survive every probe
     robust::Hooks h = glxHooks();
@@ -890,6 +915,38 @@ static void testWindowAttach() {
         g_g.glXMakeContextCurrent(owner.dpy, 0, 0, nullptr);
     }
 
+    // The described form with the host's own Display* (ABI 0.14.0): the window lives on the server that
+    // connection names, which Tessera reads once (XDisplayString) and then connects to itself; the host's
+    // connection is never used or closed.
+    {
+        TesseraNativeWindow w = tesseraDefaultNativeWindow();
+        w.kind = TESSERA_WINDOW_X11;
+        w.window = static_cast<uint64_t>(owner.win);
+        w.display = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(owner.dpy));
+        TesseraContext viaDisplay = 0;
+        EXPECT(tesseraCreateContextForNativeWindow(&cfg, &w, 0, &viaDisplay), TESSERA_SUCCESS);
+        if (viaDisplay) {
+            TesseraContextInfo info = tesseraDefaultContextInfo();
+            EXPECT(tesseraGetContextInfo(viaDisplay, &info), TESSERA_SUCCESS);
+            CHECK(info.surface == TESSERA_SURFACE_WINDOW);
+            EXPECT(tesseraMakeCurrent(viaDisplay), TESSERA_SUCCESS);
+            EXPECT(tesseraSwapBuffers(viaDisplay), TESSERA_SUCCESS);
+            EXPECT(tesseraMakeCurrent(TESSERA_NULL_HANDLE), TESSERA_SUCCESS);
+            TesseraNativeHandles nh = tesseraDefaultNativeHandles();
+            EXPECT(tesseraGetNativeHandles(viaDisplay, &nh), TESSERA_SUCCESS);
+            CHECK(nh.handles[0] !=
+                  static_cast<uint64_t>(reinterpret_cast<uintptr_t>(owner.dpy))); // our own connection
+            EXPECT(tesseraDestroyContext(viaDisplay), TESSERA_SUCCESS);
+        }
+        // the host's connection is still usable, and its own context still works on its window:
+        owner.makeCurrent();
+        CHECK(owner.isCurrent());
+        g_g.glXMakeContextCurrent(owner.dpy, 0, 0, nullptr);
+        // Another kind of window is not this backend's.
+        w.kind = TESSERA_WINDOW_COCOA;
+        EXPECT(tesseraCreateContextForNativeWindow(&cfg, &w, 0, &viaDisplay), TESSERA_ERROR_UNSUPPORTED);
+    }
+
     // A window that does not exist.
     TesseraContext none = 0;
     EXPECT(tesseraCreateContextForWindow(&cfg, 0x7fffffffu, 0, &none), TESSERA_ERROR_INVALID_ARGUMENT);
@@ -1041,6 +1098,7 @@ int main(int argc, char** argv) {
         {"keeping the pool full", testTopUp},
         {"probe", testProbe},
         {"GPU requests are refused", testAdapterRequests},
+        {"adapter ids", testAdapterIds},
         {"native handles", testNativeHandles},
         {"window attach", testWindowAttach},
         {"swap control", testSwapControl},

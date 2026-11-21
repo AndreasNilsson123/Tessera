@@ -150,6 +150,7 @@ public final class ContextConfig {
     private final Context shareWith;
     private final GpuPreference gpuPreference;
     private final long adapterLuid;
+    private final String adapter;
     private final Priority priority;
 
     private ContextConfig(Builder b) {
@@ -170,6 +171,7 @@ public final class ContextConfig {
         shareWith = b.shareWith;
         gpuPreference = b.gpuPreference;
         adapterLuid = b.adapterLuid;
+        adapter = b.adapter;
         priority = b.priority;
     }
 
@@ -226,14 +228,26 @@ public final class ContextConfig {
         return adapterLuid;
     }
 
+    /** The adapter id asked for ({@link Tessera#enumerateAdapters()}), or "" for no request. */
+    public String adapter() {
+        return adapter;
+    }
+
     /**
      * Layout shared with the native side: api, major, minor, profile, flags, surface, fallback, r, g, b, a, depth, stencil,
-     * samples, gpuPreference, adapterLuid (low 32 bits, high 32 bits), priority.
+     * samples, gpuPreference, adapterLuid (low 32 bits, high 32 bits), priority, then the 48 bytes of the adapter id in 12 ints
+     * (four to an int, least significant byte first).
      */
     int[] toNative() {
-        return new int[] {api.nativeValue, versionMajor, versionMinor, profile.nativeValue, flags, surface.nativeValue,
+        final int[] v = new int[30];
+        final int[] head = {api.nativeValue, versionMajor, versionMinor, profile.nativeValue, flags, surface.nativeValue,
                 fallback.nativeValue, red, green, blue, alpha, depth, stencil, samples, gpuPreference.nativeValue,
                 (int) adapterLuid, (int) (adapterLuid >>> 32), priority.nativeValue};
+        System.arraycopy(head, 0, v, 0, head.length);
+        for (int i = 0; i < adapter.length(); i++) {
+            v[18 + i / 4] |= (adapter.charAt(i) & 0xFF) << (8 * (i % 4));
+        }
+        return v;
     }
 
     @Override
@@ -253,6 +267,7 @@ public final class ContextConfig {
         private Fallback fallback = Fallback.STRICT;
         private GpuPreference gpuPreference = GpuPreference.DEFAULT;
         private long adapterLuid;
+        private String adapter = "";
         private Priority priority = Priority.DEFAULT;
         private int red;
         private int green;
@@ -309,6 +324,26 @@ public final class ContextConfig {
         /** A DXGI adapter LUID ({@code (HighPart << 32) | LowPart}); Windows only, see {@link GpuPreference}. 0 = none. */
         public Builder adapterLuid(long luid) {
             this.adapterLuid = luid;
+            return this;
+        }
+
+        /**
+         * Which GPU: an id from {@link Tessera#enumerateAdapters()} (text such as {@code luid:00000000-0000F7E7},
+         * {@code uuid:...}, {@code node:/dev/dri/renderD128}, {@code cgl:0x00024600}); "" = no request. At most 47 printable ASCII
+         * characters; not combinable with {@link #adapterLuid(long)} or {@link #gpuPreference}. A backend that cannot honour it
+         * refuses ({@code UNSUPPORTED}); it is never silently replaced by another GPU.
+         */
+        public Builder adapter(String id) {
+            Objects.requireNonNull(id, "id");
+            if (id.length() > 47) {
+                throw new IllegalArgumentException("an adapter id has at most 47 characters");
+            }
+            for (int i = 0; i < id.length(); i++) {
+                if (id.charAt(i) < 0x20 || id.charAt(i) > 0x7E) {
+                    throw new IllegalArgumentException("an adapter id is printable ASCII");
+                }
+            }
+            this.adapter = id;
             return this;
         }
 

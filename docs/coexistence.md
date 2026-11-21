@@ -41,6 +41,30 @@ Tessera is a guest in your process. What it promises, and how each promise is ch
 - **Several Tessera users in one process** (two libraries each linking Tessera): `tesseraInit` is reference counted, but each
   *copy* of the library has its own state. They are independent guests of each other, with the same guarantees.
 
+## What each backend saves and restores (the foreign-state matrix)
+
+Every create, destroy, inspect and attach call runs inside a guard that captures this per thread, does its work, and puts it back
+(`ScopedForeignState`, one `*ForeignOps` per backend). If the restore itself fails, the guard retries and then releases, so no
+Tessera context is ever left current on the host's thread. "Not touched" means Tessera neither reads nor writes it.
+
+| State | WGL | GLX | EGL | CGL |
+|---|---|---|---|---|
+| The thread's current context | saved and restored (`HGLRC`) | saved and restored (`GLXContext`) | saved and restored, **for both client APIs** (OpenGL and OpenGL ES each have one) | saved and restored (`CGLContextObj`) |
+| The current drawable(s) | `HDC` | display, draw **and** read drawable | display, draw **and** read surface, per API | none (a CGL context has no drawable here) |
+| The bound client API (`eglBindAPI`) | n/a | n/a | saved and restored; Tessera binds only for its own call (`ScopedBindApi`) | n/a |
+| The other API's thread state (Mesa: one native current context per thread, whichever API made it) | n/a | the host's EGL context is captured (only if libEGL is already loaded) and released before ours becomes current | the host's GLX context likewise | n/a |
+| The window's swap interval | never touched by attach or any other call; set only by your `tesseraSetSwapInterval`, on the context's own drawable | same | same (acts on the current draw surface, which is ours) | n/a |
+| The window's pixel format / visual | never changed on a window you hand over, unless you pass the allow flag (WGL) | never (GLX cannot) | never | n/a |
+| Connections and displays | own hidden window, own `HDC`; the host's are never used | own `Display*` (a second connection to the server the window is on, from the host's `Display*`'s name or `$DISPLAY`); the host's connection is never used or closed | own X connection for X11 windows; the host's `wl_display` is used as given for Wayland and never dispatched; an `EGLDisplay` the host already initialised is shared, **never terminated** | n/a |
+| X error handler | n/a | installed only around our own calls, chained, restored exactly | n/a (EGL reports errors by return value) | n/a |
+| Last error (`GetLastError`, `eglGetError`, `glGetError`) | not preserved: our calls overwrite it (a thread's last-error code cannot be saved portably; ADR 0006 says so for EGL) | not preserved | not preserved | not preserved |
+
+What is checked: `test_wgl`/`test_glx`/`test_egl`/`test_cgl_fake` make a foreign context current first and verify it afterwards on
+success and failure paths (fault-injected on the CGL fake), including a foreign context of the *other* API (`testForeignEglContext`,
+`testForeignGlxContext`), a host EGL display initialised before Tessera (`egl_host_first`) and a window attached with the host's own
+`Display*` (`test_glx`, `test_eglwindow`). **Not covered:** a GLX drawable on a different *screen* of one server, and an X server other
+than `$DISPLAY`'s (one machine only: both resolve to the same server here).
+
 ## What is not covered
 
 - Windows `java_javafx_d3d`/`sw`, Linux `es2`/`sw` (Mesa D3D12 and llvmpipe) and a longer stress run are tested. Not run: JavaFX's

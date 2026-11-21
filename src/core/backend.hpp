@@ -6,6 +6,7 @@
 
 #include <atomic>
 #include <memory>
+#include <vector>
 
 #include "boundary.hpp"
 #include "thread_affinity.hpp"
@@ -86,12 +87,15 @@ class Backend {
     virtual TesseraResult createContext(const TesseraContextConfig& config,
                                         const std::shared_ptr<ContextObject>& shareWith,
                                         std::shared_ptr<ContextObject>& out) = 0;
-    /* Can this backend honour TesseraContextConfig::adapterLuid / gpuPreference? Backends that cannot are
-     * skipped for such a request (so it fails with UNSUPPORTED instead of silently using whatever GPU the
-     * backend picks). */
-    virtual bool supportsAdapterSelection() const noexcept {
+    /* Can this backend honour the GPU this request names (adapterLuid, gpuPreference or the `adapter` id)?
+     * Backends that cannot are skipped for such a request (so it fails with UNSUPPORTED instead of silently
+     * using whatever GPU the backend picks). Never called for a request that names no GPU. */
+    virtual bool supportsAdapterSelection(const TesseraContextConfig& /*config*/) const noexcept {
         return false;
     }
+    /* Appends the GPUs this backend can use (tesseraEnumerateAdapters). `backend` is filled in by the caller.
+     */
+    virtual void enumerateAdapters(std::vector<TesseraAdapterInfo>& /*out*/) {}
     /* Renders into a caller-owned window; see tesseraCreateContextForWindow. UNSUPPORTED by default (without
      * side effects). */
     virtual TesseraResult createContextForWindow(const TesseraContextConfig& /*config*/,

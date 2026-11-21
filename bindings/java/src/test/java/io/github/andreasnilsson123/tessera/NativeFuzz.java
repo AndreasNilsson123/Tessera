@@ -88,14 +88,14 @@ public final class NativeFuzz {
     /** A plausible config (so creation sometimes succeeds and later calls reach live objects), sometimes corrupted. */
     private int[] config() {
         if (rnd.nextInt(3) == 0) {
-            return ints(18);
+            return ints(30);
         }
-        final int[] c = new int[18];
+        final int[] c = new int[30];
         c[0] = 1;                                // OPENGL
         c[6] = 1;                                // best effort
         c[13] = rnd.nextInt(3) == 0 ? rnd.nextInt(9) : 0;
         if (rnd.nextInt(8) == 0) {
-            c[rnd.nextInt(18)] = anyInt();
+            c[rnd.nextInt(30)] = anyInt(); // including the bytes of the adapter id: any bytes, printable or not
         }
         return c;
     }
@@ -153,7 +153,7 @@ public final class NativeFuzz {
 
     private void step() {
         calls++;
-        final int op = rnd.nextInt(25);
+        final int op = rnd.nextInt(26);
         if (!ONLY.isEmpty() && !ONLY.contains(op) && op != 0 && op != 24) { // creation and release always run: later ops need handles
             return;
         }
@@ -261,6 +261,12 @@ public final class NativeFuzz {
                 api.setLostSink(rnd.nextBoolean() ? (handle, status) -> {
                 } : null);
                 break;
+            case 25: { // the adapter inventory, with hostile indexes and arrays
+                api.adapterCount();
+                api.adapter(rnd.nextInt(4) == 0 ? anyInt() : rnd.nextInt(3), ints(rnd.nextInt(3) == 0 ? rnd.nextInt(8) : 5),
+                        strings(rnd.nextInt(3) == 0 ? rnd.nextInt(5) : 3));
+                break;
+            }
             default: // 24
                 api.makeCurrent(0L); // release whatever this thread holds
                 break;
@@ -276,7 +282,7 @@ public final class NativeFuzz {
         try {
             api = Tessera.apiInitialized();
             final long[] probe = new long[1];
-            final int[] cfg = new int[18];
+            final int[] cfg = new int[30];
             cfg[0] = 1;
             cfg[6] = 1;
             if (api.createContext(cfg, 0L, probe) != 0) {

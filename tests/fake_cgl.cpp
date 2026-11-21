@@ -29,6 +29,7 @@ constexpr int kProfileLegacy = 0x1000, kProfile32 = 0x3200, kProfile4 = 0x4100;
 struct CGLPixelFormatRec {
     int profile = 0, colorSize = 0, alpha = 0, depth = 0, stencil = 0, samples = 0;
     bool dbl = false, stereo = false, flt = false;
+    int renderer = 0x24600; // the renderer the format belongs to
 };
 struct CGLContextRec {
     int profile = 0;
@@ -93,6 +94,13 @@ FAKE_EXPORT int CGLChoosePixelFormat(const int* attribs, CGLPixelFormatRec** pix
             offline = true;
             ++a;
             break;
+        case 70: // kCGLPFARendererID: the fake has an "integrated" 0x24600 (default) and an offline
+                 // "discrete" 0x22600
+            if (a[1] != 0x24600 && a[1] != 0x22600 && a[1] != 0x20400)
+                return 0;         // no such renderer: no format
+            want.renderer = a[1]; // (the offline rule is applied once every attribute has been read)
+            a += 2;
+            break;
         case 8:
             want.colorSize = a[1];
             a += 2;
@@ -128,6 +136,8 @@ FAKE_EXPORT int CGLChoosePixelFormat(const int* attribs, CGLPixelFormatRec** pix
     }
     if (!havePofile)
         return kBadAttribute;
+    if (want.renderer == 0x22600 && !offline)
+        return 0; // the discrete GPU is asleep until the caller allows offline renderers
     if (want.profile != kProfileLegacy && want.profile != kProfile32 && want.profile != kProfile4)
         return kBadAttribute;
     // Simulated hardware limits, adjustable from the environment between calls.
@@ -185,10 +195,51 @@ FAKE_EXPORT int CGLDescribePixelFormat(CGLPixelFormatRec* pf, int /*screen*/, in
     case 58:
         *value = pf->flt;
         break;
+    case 70:
+        *value = pf->renderer;
+        break;
     default:
         *value = 0;
         break;
     }
+    return 0;
+}
+
+// The renderer inventory: three renderers, one of them offline (a discrete GPU asleep), one Apple's software
+// renderer.
+FAKE_EXPORT int CGLQueryRendererInfo(unsigned /*displayMask*/, void** info, int* count) {
+    static int token = 0;
+    *info = &token;
+    *count = 3;
+    return 0;
+}
+FAKE_EXPORT int CGLDescribeRenderer(void* /*info*/, int index, int prop, int* value) {
+    static const int ids[3] = {0x24600, 0x22600, 0x20400};
+    static const int accelerated[3] = {1, 1, 0};
+    static const int online[3] = {1, 0, 1};
+    static const int mb[3] = {1536, 6144, 0};
+    if (index < 0 || index > 2)
+        return kBadAttribute;
+    switch (prop) {
+    case 70:
+        *value = ids[index];
+        break;
+    case 73:
+        *value = accelerated[index];
+        break;
+    case 43:
+        *value = online[index];
+        break;
+    case 131:
+        *value = mb[index];
+        break;
+    default:
+        *value = 0;
+        break;
+    }
+    return 0;
+}
+FAKE_EXPORT int CGLDestroyRendererInfo(void* /*info*/) {
     return 0;
 }
 

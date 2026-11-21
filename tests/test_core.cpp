@@ -19,6 +19,9 @@
 
 #include "platform/common/arb_context.hpp"
 #include "platform/common/context_priority.hpp"
+#if defined(_WIN32)
+#include "platform/win32/adapter.hpp"
+#endif
 #include "platform/common/create_errors.hpp"
 #include "platform/common/device_select.hpp"
 #include "platform/common/gl_query.hpp"
@@ -182,7 +185,22 @@ static void testConfig() {
     bad.surface = 77;
     CHECK(normalizeConfig(&bad, out) != TESSERA_SUCCESS);
     bad = cfg;
-    bad.reserved[3] = 1;
+    bad.adapter[47] = 'x'; // not NUL-terminated
+    CHECK(normalizeConfig(&bad, out) != TESSERA_SUCCESS);
+    bad = cfg;
+    std::snprintf(bad.adapter, sizeof bad.adapter, "luid:0000");
+    bad.adapter[20] = 'z'; // data after the terminator
+    CHECK(normalizeConfig(&bad, out) != TESSERA_SUCCESS);
+    bad = cfg;
+    std::snprintf(bad.adapter, sizeof bad.adapter, "bad\x01id");
+    CHECK(normalizeConfig(&bad, out) != TESSERA_SUCCESS);
+    bad = cfg;
+    std::snprintf(bad.adapter, sizeof bad.adapter, "uuid:11111111-2222-3333-4444-555555555555");
+    CHECK(normalizeConfig(&bad, out) == TESSERA_SUCCESS); // the longest form fits (41 characters)
+    bad.adapterLuid = 1;
+    CHECK(normalizeConfig(&bad, out) != TESSERA_SUCCESS); // an id and a LUID cannot both name the GPU
+    bad.adapterLuid = 0;
+    bad.gpuPreference = TESSERA_GPU_LOW_POWER;
     CHECK(normalizeConfig(&bad, out) != TESSERA_SUCCESS);
 
     // Older caller: structSize ends right after `fallback`; the rest must read as zero, not as garbage.
@@ -951,6 +969,111 @@ static void testDeviceSelection() {
     CHECK(classifyDeviceSelector("software") == DeviceSelectorKind::Software);
     CHECK(selectDevice("software", {}, fakeCanonical).index == -1);
 }
+
+// ---- "one way to say this GPU" (ABI 0.14.0): ids, selectors, the hybrid advisory
+// -----------------------------------------
+
+static void testEglAdapterIds() {
+    using namespace tessera;
+    EglDeviceDesc d;
+    CHECK(eglAdapterId(d, 3) == "index:3"); // nothing better to say
+    d.renderNode = "/dev/dri/renderD128";
+    CHECK(eglAdapterId(d, 0) == "node:/dev/dri/renderD128");
+    d.hasUuid = parseDeviceUuid("11111111-2222-3333-4444-555555555555", d.uuid);
+    CHECK(eglAdapterId(d, 0) == "uuid:11111111-2222-3333-4444-555555555555"); // the UUID is the best name
+    CHECK(eglAdapterId(d, 0).size() < 48);                                    // it fits the field
+    d.hasUuid = false;
+    d.renderNode = std::string(60, 'x'); // a path that cannot fit the field falls back to the index
+    CHECK(eglAdapterId(d, 7) == "index:7");
+
+    // The id as a TESSERA_EGL_DEVICE selector, and the round trip through selectDevice.
+    std::string sel;
+    CHECK(eglSelectorFromAdapterId("uuid:11111111-2222-3333-4444-555555555555", sel) &&
+          classifyDeviceSelector(sel) == DeviceSelectorKind::Uuid);
+    CHECK(eglSelectorFromAdapterId("node:/dev/dri/renderD129", sel) && sel == "/dev/dri/renderD129");
+    CHECK(eglSelectorFromAdapterId("pci:0000:01:00.0", sel) && sel == "0000:01:00.0");
+    CHECK(eglSelectorFromAdapterId("index:2", sel) && sel == "2");
+    CHECK(!eglSelectorFromAdapterId("luid:00000000-00001234", sel));
+    CHECK(!eglSelectorFromAdapterId("cgl:0x00024600", sel));
+    CHECK(!eglSelectorFromAdapterId("index:abc", sel));
+    CHECK(!eglSelectorFromAdapterId("uuid:nonsense", sel));
+    CHECK(!eglSelectorFromAdapterId("node:relative/path", sel));
+    CHECK(!eglSelectorFromAdapterId("", sel));
+    std::vector<EglDeviceDesc> two(2);
+    two[0].hasUuid = parseDeviceUuid("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", two[0].uuid);
+    two[1].hasUuid = parseDeviceUuid("11111111-2222-3333-4444-555555555555", two[1].uuid);
+    for (int i = 0; i < 2; ++i) { // an id we hand out selects the device it names
+        CHECK(eglSelectorFromAdapterId(eglAdapterId(two[static_cast<std::size_t>(i)], i), sel));
+        CHECK(selectDevice(sel, two, [](const std::string& p) { return p; }).index == i);
+    }
+}
+
+#if defined(_WIN32)
+static tessera::win32::AdapterInfo fakeAdapter(const char* name, uint32_t vendor, uint64_t luid,
+                                               uint64_t memory, bool software = false) {
+    tessera::win32::AdapterInfo a;
+    a.name = name;
+    a.vendorId = vendor;
+    a.luid = luid;
+    a.dedicatedVideoMemory = memory;
+    a.software = software;
+    return a;
+}
+
+static void testWindowsAdapterIds() {
+    using namespace tessera::win32;
+    CHECK(adapterId(0x0000000100000abcull) == "luid:00000001-00000ABC");
+    uint64_t luid = 0;
+    CHECK(parseAdapterId("luid:00000001-00000ABC", luid) && luid == 0x0000000100000abcull);
+    CHECK(parseAdapterId("luid:00000001-00000abc", luid) && luid == 0x0000000100000abcull); // any case
+    CHECK(!parseAdapterId("luid:00000000-00000000", luid)); // 0 means "no request", not an adapter
+    CHECK(!parseAdapterId("luid:1-2", luid));
+    CHECK(!parseAdapterId("luid:00000001-00000ABCx", luid));
+    CHECK(!parseAdapterId("luid:0000000100000ABC", luid));
+    CHECK(!parseAdapterId("uuid:11111111-2222-3333-4444-555555555555", luid));
+    CHECK(!parseAdapterId("", luid) && !parseAdapterId(nullptr, luid));
+    for (uint64_t v : {0x1ull, 0xFFFFFFFFFFFFFFFFull, 0x8000000000000001ull, 0x0000000100000abcull}) {
+        CHECK(parseAdapterId(adapterId(v).c_str(), luid) && luid == v); // round trip
+        CHECK(adapterId(v).size() < 48);
+    }
+
+    const AdapterInfo nvidia = fakeAdapter("NVIDIA GeForce RTX 3060 Laptop GPU", 0x10DE, 0x1000, 6ull << 30);
+    const AdapterInfo intel = fakeAdapter("Intel(R) UHD Graphics", 0x8086, 0x2000, 128ull << 20);
+    const AdapterInfo warp = fakeAdapter("Microsoft Basic Render Driver", 0x1414, 0x3000, 0, true);
+    CHECK(adapterClassOf(nvidia) == TESSERA_ADAPTER_DISCRETE);
+    CHECK(adapterClassOf(intel) == TESSERA_ADAPTER_INTEGRATED);
+    CHECK(adapterClassOf(warp) == TESSERA_ADAPTER_SOFTWARE);
+    TesseraAdapterInfo pub;
+    toPublic(nvidia, pub);
+    CHECK(std::strcmp(pub.id, "luid:00000000-00001000") == 0 && pub.vendorId == 0x10DE && pub.luid == 0x1000);
+
+    // Who served the context: the one adapter of that vendor, nothing when it cannot be told.
+    const std::vector<AdapterInfo> hybrid = {intel, nvidia, warp};
+    const AdapterInfo* serving =
+        identifyServing(hybrid, "NVIDIA Corporation", "NVIDIA GeForce RTX 3060/PCIe/SSE2");
+    CHECK(serving && serving->luid == 0x1000);
+    serving = identifyServing(hybrid, "Intel", "Intel(R) UHD Graphics");
+    CHECK(serving && serving->luid == 0x2000);
+    serving = identifyServing(hybrid, "Microsoft Corporation", "GDI Generic");
+    CHECK(serving && serving->software);
+    CHECK(identifyServing(hybrid, "Acme", "Mystery GPU") == nullptr);
+    const std::vector<AdapterInfo> twoNvidia = {nvidia,
+                                                fakeAdapter("NVIDIA Quadro", 0x10DE, 0x4000, 8ull << 30)};
+    CHECK(identifyServing(twoNvidia, "NVIDIA Corporation", "NVIDIA GeForce") == nullptr); // two of one vendor
+
+    // The hybrid-laptop advice: only when the process got the weaker GPU while a stronger one of another
+    // vendor exists.
+    CHECK(hybridAdvisory(hybrid, "Intel", "Intel(R) UHD Graphics").find("NvOptimusEnablement") !=
+          std::string::npos);
+    CHECK(hybridAdvisory(hybrid, "NVIDIA Corporation", "NVIDIA GeForce RTX 3060")
+              .empty()); // the good one: nothing to say
+    CHECK(hybridAdvisory({nvidia, warp}, "NVIDIA Corporation", "NVIDIA GeForce")
+              .empty()); // one GPU: nothing to say
+    CHECK(hybridAdvisory({nvidia, warp}, "Microsoft Corporation", "GDI Generic")
+              .empty());                                      // software is not "the weaker GPU"
+    CHECK(hybridAdvisory(hybrid, "Acme", "Mystery").empty()); // unknown driver: no guess
+}
+#endif
 
 // ---- version negotiation (ROADMAP 12.2, ADR 0016)
 // ------------------------------------------------------------------
@@ -1922,6 +2045,10 @@ static void testLifecycleRobustness() {
     testContextLostCallbackThreads();
     testDeviceSelection();
     testCpuRendererNames();
+    testEglAdapterIds();
+#if defined(_WIN32)
+    testWindowsAdapterIds();
+#endif
     testVersionLadder();
     testVersionMemory();
     testCreateErrorTable();

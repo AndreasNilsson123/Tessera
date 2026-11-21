@@ -32,6 +32,7 @@ const LinuxApi* loadApi() noexcept {
         }
         X11Fns& x = api->xlib;
         const bool xok = load(api->x11, "XOpenDisplay", x.XOpenDisplay) &&
+                         load(api->x11, "XDisplayString", x.XDisplayString) &&
                          load(api->x11, "XCloseDisplay", x.XCloseDisplay) &&
                          load(api->x11, "XInitThreads", x.XInitThreads) &&
                          load(api->x11, "XDefaultScreen", x.XDefaultScreen) &&

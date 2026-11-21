@@ -245,45 +245,40 @@ and a regression test.** What changes is that the first entries already exist, s
 Exit: the table ships with at least the seed entries, every entry fails its test when disabled, and no
 vendor-name `if` remains in backend code outside the table.
 
-### 12.4 Platforms and hosts
+### 12.4 Platforms and hosts - DONE (chunk 9, ABI 0.14.0, ADRs 0014, 0015, 0017)
 
-- [ ] **Wayland.** EGL on a `wl_display` the *host* owns: attach to a borrowed `wl_surface` through a
-  `wl_egl_window`, creating no connection of our own and never dispatching the host's queue. Needs an explicit
-  native-display argument on attach (an EGL display must match the one the surface belongs to). Test against a
-  compositor in CI (headless weston) once it is available; until then keep the WSLg manual check. **ABI**
-- [ ] **EGL window surfaces on X11 and Windows (ANGLE)**, sharing the attach rules above; tied to the loader policy
-  decision in 10.5.
-- [ ] **Attach with an explicit native display on X11.** Attach currently assumes `$DISPLAY`; accept the host's
-  `Display*`/server so a host connected elsewhere (or through a different screen) attaches correctly. **ABI**
-- [ ] **Foreign-state matrix.** Extend the coexistence tests from "a host context current" to the other pieces of
-  host state each backend can disturb: the bound EGL API, the current drawable (not just context), swap interval
-  of a shared window, GLX drawable on a different screen. One table in `docs/coexistence.md` listing what is
-  saved/restored per backend.
-- [ ] **Detect, don't assume, host threading.** Detect (or at least report) whether the host called `XInitThreads`
-  (10.3) and whether the host already initialised EGL on the same display, and log the consequence once.
+- [x] **Wayland.** EGL on a `wl_display` the *host* owns: attach to a borrowed `wl_surface` through a `wl_egl_window`, no connection of
+  our own, never dispatching the host's queue (ABI 0.12.0, ADR 0014; `display` is the native-display argument). Tested against a real
+  compositor (WSLg) with a hand-made client and with GLFW's Wayland window from Java. **Not verified:** a headless weston in CI (not
+  added), a mapped surface with frame callbacks.
+- [x] **EGL window surfaces on X11 and Windows (ANGLE)**: X11 in 0.12.0; ANGLE `HWND` surfaces in chunk 7 (ADR 0015), run in CI on the
+  hosted Windows runner.
+- [x] **Attach with an explicit native display on X11** (0.14.0): `TesseraNativeWindow::display` may be the host's `Display*`; Tessera
+  reads the server name (`XDisplayString`) and opens its own connection to that server, for GLX and EGL (the host's connection is
+  never used: Xlib is not thread-safe without `XInitThreads`). Tested with the default connection and one opened with an explicit
+  name (`test_glx`, `test_eglwindow`). **Not verified:** a server other than `$DISPLAY`'s, another screen.
+- [x] **Foreign-state matrix**: `docs/coexistence.md` lists what each backend saves and restores (context, draw/read drawable, bound
+  EGL API, the other API's thread state, connections, the X error handler) and what is deliberately not preserved (last-error codes),
+  written from the `*ForeignOps` code and the tests that check it. The existing coexistence tests already cover context, other-API
+  and display ownership; **not covered:** a GLX drawable on a different screen.
+- [x] **Detect, don't assume, host threading**: `XInitThreads` detection (0.11.0, ADR 0013) and, new, an EGL display the host already
+  initialised is detected (`eglQueryString` before our `eglInitialize`) and logged once; `egl_host_first` runs it in a fresh process.
 
-### 12.5 One way to say "this GPU"
+### 12.5 One way to say "this GPU" - DONE except real targeting on Windows and hardware we do not have (chunk 9, ABI 0.14.0, ADR 0017)
 
-Today: Windows verifies an adapter (never switches), EGL selects through an environment variable, GLX and CGL have
-nothing, and the reported context does not say which GPU served it.
-
-- [ ] **Adapter inventory.** `tesseraEnumerateAdapters` returns a uniform descriptor per backend (stable id —
-  LUID / PCI address / render node / device UUID / CGL renderer id — plus vendor, name, software flag, and whether
-  it drives a display). **ABI**
-- [ ] **One selection field.** A config `adapter` (an id from the inventory) honoured wherever the backend can,
-  refused with `UNSUPPORTED` where it cannot, under the existing rule that an explicit choice is never silently
-  replaced. `TESSERA_EGL_DEVICE` becomes a spelling of it, not the only way. **ABI**
-- [ ] **Report who served the context.** `TesseraContextInfo.adapter` (the id and the software/integrated/discrete
-  class) for every backend, so applications and the probe can see a hybrid-laptop mismatch instead of inferring it
-  from `GL_RENDERER`. **ABI**
-- [ ] **CGL renderer selection.** macOS can really target a renderer (renderer id attribute; offline renderers
-  already handled last); implement it, with the "allowing offline renderers can wake a discrete GPU" cost
-  documented.
-- [ ] **Real targeting on Windows** (`WGL_NV_gpu_affinity`, `WGL_AMD_gpu_association`) once hardware that exposes
-  them is available (10.3); until then keep verify-only.
-- [ ] **Hybrid-laptop advisory.** When verification shows the process got the low-power adapter while a
-  high-performance one exists, log the one-line fix for hosts (the exported `NvOptimusEnablement` /
-  `AmdPowerXpressRequestHighPerformance` symbols) once per process. Requires an actual hybrid machine to test.
+- [x] **Adapter inventory**: `tesseraEnumerateAdapters` (WGL: DXGI, `luid:`; EGL: devices, `uuid:`/`node:`/`index:`; CGL: renderers,
+  `cgl:0x...`; GLX lists nothing). Java `Tessera.enumerateAdapters()`. Integrated vs discrete on Windows is a memory heuristic.
+- [x] **One selection field**: `TesseraContextConfig::adapter` (the last reserved bytes, size unchanged), honoured by WGL (as a LUID,
+  verified), EGL (device platform, one display per device) and CGL (renderer id), `UNSUPPORTED` on GLX, never replaced by another GPU;
+  `TESSERA_EGL_DEVICE` stays as the environment spelling.
+- [x] **Report who served the context**: `TesseraContextInfo::adapter` and `adapterClass` on every backend (GLX: class only).
+- [x] **CGL renderer selection**: `kCGLPFARendererID`, offline renderers allowed as the last attempt (cost documented in ADR 0017).
+  Verified against the fake CGL (3 renderers, one offline, one software) and, in CI, the real framework on the macOS VM.
+- [ ] **Real targeting on Windows** (`WGL_NV_gpu_affinity`, `WGL_AMD_gpu_association`): not done; there is still no hardware here that
+  exposes them. Windows stays verify-only.
+- [~] **Hybrid-laptop advisory**: implemented and logged once per process; the decision is a pure function covered by unit tests with fake
+  adapter lists. **Not verified on a real hybrid machine** (this one has a single GPU plus WARP), so no claim that the advice appears
+  where it should on one.
 
 ### 12.6 Loss and reset beyond polling
 
@@ -388,6 +383,8 @@ Needs: the owner for the decisions; the tooling needs nothing.
 - [x] A release-candidate checklist and the freeze procedure: `docs/freeze.md`, backed by `scripts/release-check.py` (`--rc`, `--freeze`, `--tag`, `--set-version`; ctest `release_check`). It found real drift on its first run (the vcpkg manifest said 0.9.0, the header 0.12.0; fixed) and `--freeze` lists every open ROADMAP 10.x item as a reason not to freeze (an accepted gap is marked `ACCEPTED-FOR-1.0`). Also fixed: the README still said 0.7 and "macOS never run".
 
 ### Chunk 8 - Version negotiation (12.2) - DONE (this is Phase 12.2; the four items are listed there)
+
+### Chunk 9 - Hosts and GPUs (12.4 and 12.5) - DONE except real targeting on Windows (see the two sections above)
 
 ### Chunk 7 - Software/headless fallback and ANGLE/Mesa - DONE on the recommendation of `docs/decisions-1.0.md` item 3 (system only for 1.0; the owner has not recorded the decision)
 Needs: the 10.5 decision "do we ship Mesa/ANGLE?" (**started on the owner's go-ahead; it assumes "no bundled binaries in the release", the reversible choice**), an ANGLE build to test against.

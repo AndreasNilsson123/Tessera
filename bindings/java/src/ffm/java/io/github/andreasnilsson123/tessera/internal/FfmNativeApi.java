@@ -30,12 +30,16 @@ final class FfmNativeApi implements NativeApi {
     private static final long CONFIG_SIZE = 136;
     private static final long CFG_STRUCT_SIZE = 0, CFG_API = 4, CFG_MAJOR = 8, CFG_MINOR = 12, CFG_PROFILE = 16, CFG_FLAGS = 20,
             CFG_SURFACE = 24, CFG_FALLBACK = 28, CFG_RED = 32, CFG_GREEN = 36, CFG_BLUE = 40, CFG_ALPHA = 44, CFG_DEPTH = 48,
-            CFG_STENCIL = 52, CFG_SAMPLES = 56, CFG_SHARE_WITH = 64, CFG_ADAPTER_LUID = 72, CFG_GPU_PREFERENCE = 80, CFG_PRIORITY = 84;
+            CFG_STENCIL = 52, CFG_SAMPLES = 56, CFG_SHARE_WITH = 64, CFG_ADAPTER_LUID = 72, CFG_GPU_PREFERENCE = 80, CFG_PRIORITY = 84, CFG_ADAPTER = 88;
     // TesseraContextInfo (504 bytes)
     private static final long INFO_SIZE = 504;
     private static final long INFO_STRUCT_SIZE = 0, INFO_API = 4, INFO_MAJOR = 8, INFO_MINOR = 12, INFO_PROFILE = 16, INFO_FLAGS = 20,
             INFO_SURFACE = 24, INFO_SAMPLES = 28, INFO_RED = 32, INFO_GREEN = 36, INFO_BLUE = 40, INFO_ALPHA = 44, INFO_DEPTH = 48,
-            INFO_STENCIL = 52, INFO_VENDOR = 56, INFO_RENDERER = 184, INFO_VERSION = 312, INFO_PRIORITY = 440;
+            INFO_STENCIL = 52, INFO_VENDOR = 56, INFO_RENDERER = 184, INFO_VERSION = 312, INFO_PRIORITY = 440,
+            INFO_ADAPTER_CLASS = 444, INFO_ADAPTER = 448;
+    // TesseraAdapterInfo (248 bytes)
+    private static final long AD_SIZE = 248;
+    private static final long AD_FLAGS = 4, AD_VENDOR = 8, AD_DEVICE = 12, AD_LUID = 16, AD_BACKEND = 24, AD_ID = 40, AD_NAME = 88;
 
     // TesseraNativeHandles (88 bytes): structSize, kind, handles[6] at 8, reserved[4]
     private static final long NH_SIZE = 88, NH_KIND = 4, NH_HANDLES = 8;
@@ -50,7 +54,7 @@ final class FfmNativeApi implements NativeApi {
     private static volatile LostSink lostSink;
 
     private final MethodHandle hInit, hTerminate, hAbi, hVersion, hCreate, hDestroy, hInfo, hMakeCurrent, hCurrent, hProc, hSwap,
-            hSwapInterval, hReset, hRecreate, hLastError, hResultString, hSetLog, hNativeHandles, hPrewarm, hPooled, hCreateForWindow, hProbe, hPoolTopUp, hPooledCountFor, hPoolClear, hIsLost, hSetLost, hSwapControl, hCreateForNativeWindow, hResizeWindow;
+            hSwapInterval, hReset, hRecreate, hLastError, hResultString, hSetLog, hNativeHandles, hPrewarm, hPooled, hCreateForWindow, hProbe, hPoolTopUp, hPooledCountFor, hPoolClear, hIsLost, hSetLost, hSwapControl, hCreateForNativeWindow, hResizeWindow, hAdapters;
     private final MemorySegment logStub, lostStub;
 
     public FfmNativeApi(Path library) {
@@ -85,6 +89,7 @@ final class FfmNativeApi implements NativeApi {
         hCreateForNativeWindow = down(linker, lookup, "tesseraCreateContextForNativeWindow",
                 FunctionDescriptor.of(INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS, INT, ValueLayout.ADDRESS));
         hResizeWindow = down(linker, lookup, "tesseraResizeWindow", FunctionDescriptor.of(INT, LONG, INT, INT));
+        hAdapters = down(linker, lookup, "tesseraEnumerateAdapters", FunctionDescriptor.of(INT, ValueLayout.ADDRESS, INT, ValueLayout.ADDRESS));
         hSwapControl = down(linker, lookup, "tesseraGetSwapControl", FunctionDescriptor.of(INT, LONG, ValueLayout.ADDRESS));
         hIsLost = down(linker, lookup, "tesseraIsContextLost", FunctionDescriptor.of(INT, LONG, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
         hSetLost = down(linker, lookup, "tesseraSetContextLostCallback", FunctionDescriptor.ofVoid(ValueLayout.ADDRESS, ValueLayout.ADDRESS));
@@ -214,6 +219,11 @@ final class FfmNativeApi implements NativeApi {
         c.set(INT, CFG_GPU_PREFERENCE, cfg[14]);
         c.set(INT, CFG_PRIORITY, cfg[17]);
         c.set(LONG, CFG_ADAPTER_LUID, (cfg[15] & 0xFFFFFFFFL) | ((long) cfg[16] << 32));
+        if (cfg.length >= 30) { // the adapter id: 48 bytes in cfg[18..29], four to an int, least significant first
+            for (int i = 0; i < 12; i++) {
+                c.set(INT, CFG_ADAPTER + 4L * i, cfg[18 + i]);
+            }
+        }
         return c;
     }
 
@@ -232,6 +242,7 @@ final class FfmNativeApi implements NativeApi {
         ints[11] = info.get(INT, base + INFO_DEPTH);
         ints[12] = info.get(INT, base + INFO_STENCIL);
         ints[13] = info.get(INT, base + INFO_PRIORITY);
+        ints[14] = info.get(INT, base + INFO_ADAPTER_CLASS);
         strings[0] = ascii(info.getString(base + INFO_VENDOR));
         strings[1] = ascii(info.getString(base + INFO_RENDERER));
         strings[2] = ascii(info.getString(base + INFO_VERSION));
@@ -378,6 +389,7 @@ final class FfmNativeApi implements NativeApi {
             readInfo(report, PROBE_INFO, infoInts, strings5);
             strings5[3] = backend;
             strings5[4] = message;
+            strings5[5] = ascii(report.getString(PROBE_INFO + INFO_ADAPTER));
             return r;
         } catch (Throwable t) {
             throw failed(t);
@@ -415,9 +427,12 @@ final class FfmNativeApi implements NativeApi {
             ints[10] = info.get(INT, INFO_ALPHA);
             ints[11] = info.get(INT, INFO_DEPTH);
             ints[12] = info.get(INT, INFO_STENCIL);
+            ints[13] = info.get(INT, INFO_PRIORITY);
+            ints[14] = info.get(INT, INFO_ADAPTER_CLASS);
             strings[0] = ascii(info.getString(INFO_VENDOR));
             strings[1] = ascii(info.getString(INFO_RENDERER));
             strings[2] = ascii(info.getString(INFO_VERSION));
+            strings[3] = ascii(info.getString(INFO_ADAPTER));
             return 0;
         } catch (Throwable t) {
             throw failed(t);
@@ -495,6 +510,56 @@ final class FfmNativeApi implements NativeApi {
             out4[2] = sc.get(INT, SC_APPLIED);
             out4[3] = sc.get(INT, SC_MAX);
             return r;
+        } catch (Throwable t) {
+            throw failed(t);
+        }
+    }
+
+    @Override
+    public int adapterCount() {
+        try (Arena arena = Arena.ofConfined()) {
+            final MemorySegment count = arena.allocate(4, 4);
+            final int r = (int) hAdapters.invokeExact(MemorySegment.NULL, 0, count);
+            return r == 0 ? count.get(INT, 0) : r;
+        } catch (Throwable t) {
+            throw failed(t);
+        }
+    }
+
+    @Override
+    public int adapter(int index, int[] ints5, String[] strings3) {
+        try (Arena arena = Arena.ofConfined()) {
+            final MemorySegment count = arena.allocate(4, 4);
+            int r = (int) hAdapters.invokeExact(MemorySegment.NULL, 0, count);
+            if (r != 0) {
+                return r;
+            }
+            final int n = count.get(INT, 0);
+            if (index < 0 || index >= n) {
+                return -2; // INVALID_ARGUMENT: the inventory shrank between the calls
+            }
+            final MemorySegment list = arena.allocate(AD_SIZE * n, 8);
+            for (int i = 0; i < n; i++) {
+                list.set(INT, AD_SIZE * i, (int) AD_SIZE);
+            }
+            r = (int) hAdapters.invokeExact(list, n, count);
+            if (r != 0) {
+                return r;
+            }
+            if (index >= count.get(INT, 0)) {
+                return -2;
+            }
+            final long base = AD_SIZE * index;
+            ints5[0] = list.get(INT, base + AD_FLAGS);
+            ints5[1] = list.get(INT, base + AD_VENDOR);
+            ints5[2] = list.get(INT, base + AD_DEVICE);
+            final long luid = list.get(LONG, base + AD_LUID);
+            ints5[3] = (int) luid;
+            ints5[4] = (int) (luid >>> 32);
+            strings3[0] = ascii(list.getString(base + AD_BACKEND));
+            strings3[1] = ascii(list.getString(base + AD_ID));
+            strings3[2] = ascii(list.getString(base + AD_NAME));
+            return 0;
         } catch (Throwable t) {
             throw failed(t);
         }

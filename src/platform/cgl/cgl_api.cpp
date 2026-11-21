@@ -36,6 +36,11 @@ const CglApi* loadApi() noexcept {
                         load(api->lib, "CGLSetCurrentContext", f.CGLSetCurrentContext) &&
                         load(api->lib, "CGLGetCurrentContext", f.CGLGetCurrentContext) &&
                         load(api->lib, "CGLErrorString", f.CGLErrorString);
+        // The renderer inventory is optional: without it enumeration is empty and a renderer id cannot be
+        // honoured.
+        load(api->lib, "CGLQueryRendererInfo", f.CGLQueryRendererInfo);
+        load(api->lib, "CGLDescribeRenderer", f.CGLDescribeRenderer);
+        load(api->lib, "CGLDestroyRendererInfo", f.CGLDestroyRendererInfo);
         if (!ok) {
             logf(TESSERA_LOG_ERROR, "CGL backend unavailable: the library is missing required entry points");
             delete api;

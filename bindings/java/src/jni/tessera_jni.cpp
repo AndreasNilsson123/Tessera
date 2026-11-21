@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -95,8 +96,9 @@ void TESSERA_CALL lostTrampoline(TesseraContext context, int32_t status, void* /
         vm->DetachCurrentThread();
 }
 
-constexpr jint kConfigInts = 18;
-constexpr jint kInfoInts = 14;
+// cfg ints 18..29 hold the 48 bytes of the adapter id, four to an int, least significant byte first.
+constexpr jint kConfigInts = 30;
+constexpr jint kInfoInts = 15; // [14] = adapterClass
 
 // cfg: api, major, minor, profile, flags, surface, fallback, red, green, blue, alpha, depth, stencil, samples
 TesseraContextConfig configFrom(const jint* v, TesseraContext share) {
@@ -120,6 +122,11 @@ TesseraContextConfig configFrom(const jint* v, TesseraContext share) {
     c.adapterLuid =
         (static_cast<uint64_t>(static_cast<uint32_t>(v[16])) << 32) | static_cast<uint32_t>(v[15]);
     c.shareWith = share;
+    for (int i = 0; i < 12; ++i) {
+        const uint32_t w = static_cast<uint32_t>(v[18 + i]);
+        for (int k = 0; k < 4; ++k)
+            c.adapter[4 * i + k] = static_cast<char>((w >> (8 * k)) & 0xFFu);
+    }
     return c;
 }
 
@@ -138,6 +145,7 @@ void infoToInts(const TesseraContextInfo& info, jint* v) {
     v[11] = info.depthBits;
     v[12] = info.stencilBits;
     v[13] = static_cast<jint>(info.priority);
+    v[14] = static_cast<jint>(info.adapterClass);
 }
 
 } // namespace
@@ -293,10 +301,10 @@ TESSERA_JNI(jint, nPooledCount)(JNIEnv*, jclass) {
     return tesseraPooledContextCount();
 }
 
-// infoInts as nContextInfo; strings: vendor, renderer, version, backend, message
+// infoInts as nContextInfo; strings: vendor, renderer, version, backend, message, adapter
 TESSERA_JNI(jint, nProbe)(JNIEnv* env, jclass, jintArray cfg, jintArray infoInts, jobjectArray strings) {
     if (!cfg || !infoInts || !strings || env->GetArrayLength(cfg) < kConfigInts ||
-        env->GetArrayLength(infoInts) < kInfoInts || env->GetArrayLength(strings) < 5)
+        env->GetArrayLength(infoInts) < kInfoInts || env->GetArrayLength(strings) < 6)
         return TESSERA_ERROR_INVALID_ARGUMENT;
     jint v[kConfigInts];
     env->GetIntArrayRegion(cfg, 0, kConfigInts, v);
@@ -308,9 +316,9 @@ TESSERA_JNI(jint, nProbe)(JNIEnv* env, jclass, jintArray cfg, jintArray infoInts
     jint out[kInfoInts];
     infoToInts(report.info, out);
     env->SetIntArrayRegion(infoInts, 0, kInfoInts, out);
-    const char* texts[5] = {report.info.vendor, report.info.renderer, report.info.version, report.backend,
-                            report.message};
-    for (jsize i = 0; i < 5; ++i) {
+    const char* texts[6] = {report.info.vendor, report.info.renderer, report.info.version,
+                            report.backend,     report.message,       report.info.adapter};
+    for (jsize i = 0; i < 6; ++i) {
         jstring s = toJString(env, texts[i]);
         if (!s)
             return TESSERA_ERROR_OUT_OF_MEMORY; // an OutOfMemoryError is pending
@@ -327,7 +335,7 @@ TESSERA_JNI(jint, nDestroyContext)(JNIEnv*, jclass, jlong ctx) {
 // ints: api, major, minor, profile, flags, surface, samples, red, green, blue, alpha, depth, stencil;
 // strings: vendor, renderer, version
 TESSERA_JNI(jint, nContextInfo)(JNIEnv* env, jclass, jlong ctx, jintArray ints, jobjectArray strings) {
-    if (!ints || !strings || env->GetArrayLength(ints) < kInfoInts || env->GetArrayLength(strings) < 3)
+    if (!ints || !strings || env->GetArrayLength(ints) < kInfoInts || env->GetArrayLength(strings) < 4)
         return TESSERA_ERROR_INVALID_ARGUMENT;
     TesseraContextInfo info = tesseraDefaultContextInfo();
     const TesseraResult r = tesseraGetContextInfo(static_cast<TesseraContext>(ctx), &info);
@@ -346,10 +354,11 @@ TESSERA_JNI(jint, nContextInfo)(JNIEnv* env, jclass, jlong ctx, jintArray ints, 
                                info.alphaBits,
                                info.depthBits,
                                info.stencilBits,
-                               static_cast<jint>(info.priority)};
+                               static_cast<jint>(info.priority),
+                               static_cast<jint>(info.adapterClass)};
     env->SetIntArrayRegion(ints, 0, kInfoInts, v);
-    const char* texts[3] = {info.vendor, info.renderer, info.version};
-    for (jsize i = 0; i < 3; ++i) {
+    const char* texts[4] = {info.vendor, info.renderer, info.version, info.adapter};
+    for (jsize i = 0; i < 4; ++i) {
         jstring s = toJString(env, texts[i]);
         if (!s)
             return TESSERA_ERROR_OUT_OF_MEMORY; // an OutOfMemoryError is pending; the Java side sees it first
@@ -392,6 +401,44 @@ TESSERA_JNI(jint, nResetStatus)(JNIEnv* env, jclass, jlong ctx, jintArray out) {
     const jint j = status;
     env->SetIntArrayRegion(out, 0, 1, &j);
     return r;
+}
+
+// The adapter inventory (ABI 0.14.0): the count, then one entry at a time (ints: flags, vendor, device, luid
+// low, luid high; strings: backend, id, name). The list is re-read on each call, which is cheap and keeps the
+// JNI surface to two calls.
+TESSERA_JNI(jint, nAdapterCount)(JNIEnv*, jclass) {
+    int32_t count = 0;
+    const TesseraResult r = tesseraEnumerateAdapters(nullptr, 0, &count);
+    return r == TESSERA_SUCCESS ? count : r; // a negative result is an error code
+}
+
+TESSERA_JNI(jint, nAdapter)(JNIEnv* env, jclass, jint index, jintArray ints, jobjectArray strings) {
+    if (!ints || !strings || env->GetArrayLength(ints) < 5 || env->GetArrayLength(strings) < 3 || index < 0)
+        return TESSERA_ERROR_INVALID_ARGUMENT;
+    int32_t count = 0;
+    if (const TesseraResult r = tesseraEnumerateAdapters(nullptr, 0, &count); r != TESSERA_SUCCESS)
+        return r;
+    if (index >= count)
+        return TESSERA_ERROR_INVALID_ARGUMENT; // the inventory shrank between the two calls
+    std::vector<TesseraAdapterInfo> list(static_cast<std::size_t>(count), tesseraDefaultAdapterInfo());
+    if (const TesseraResult r = tesseraEnumerateAdapters(list.data(), count, &count); r != TESSERA_SUCCESS)
+        return r;
+    if (index >= count)
+        return TESSERA_ERROR_INVALID_ARGUMENT;
+    const TesseraAdapterInfo& a = list[static_cast<std::size_t>(index)];
+    const jint v[5] = {static_cast<jint>(a.flags), static_cast<jint>(a.vendorId),
+                       static_cast<jint>(a.deviceId), static_cast<jint>(a.luid & 0xFFFFFFFFu),
+                       static_cast<jint>(a.luid >> 32)};
+    env->SetIntArrayRegion(ints, 0, 5, v);
+    const char* texts[3] = {a.backend, a.id, a.name};
+    for (jsize i = 0; i < 3; ++i) {
+        jstring s = toJString(env, texts[i]);
+        if (!s)
+            return TESSERA_ERROR_OUT_OF_MEMORY;
+        env->SetObjectArrayElement(strings, i, s);
+        env->DeleteLocalRef(s);
+    }
+    return TESSERA_SUCCESS;
 }
 
 TESSERA_JNI(jint, nSwapControl)(JNIEnv* env, jclass, jlong ctx, jintArray out) {

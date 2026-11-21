@@ -36,6 +36,7 @@ struct PixelFormatInfo {
     bool doubleBuffer = false;
     bool stereo = false;
     bool colorFloat = false;
+    int rendererId = 0; // kCGLPFARendererID: which renderer the format belongs to
 };
 
 // ---- a native context ---------------------------------------------------------------------------
@@ -184,9 +185,39 @@ TesseraResult planCgl(const TesseraContextConfig& c, const CglContext* parent, C
     return TESSERA_SUCCESS;
 }
 
+/* "cgl:0x00024600" -> the renderer id; false for anything else. */
+bool parseRendererId(const char* id, int32_t& out) {
+    if (!id || std::strncmp(id, "cgl:0x", 6) != 0 || id[6] == '\0')
+        return false;
+    uint32_t v = 0;
+    int digits = 0;
+    for (const char* p = id + 6; *p; ++p, ++digits) {
+        int d;
+        if (*p >= '0' && *p <= '9')
+            d = *p - '0';
+        else if (*p >= 'a' && *p <= 'f')
+            d = *p - 'a' + 10;
+        else if (*p >= 'A' && *p <= 'F')
+            d = *p - 'A' + 10;
+        else
+            return false;
+        if (digits >= 8)
+            return false;
+        v = v * 16 + static_cast<uint32_t>(d);
+    }
+    out = static_cast<int32_t>(v);
+    return true;
+}
+
+std::string rendererIdText(int32_t id) {
+    char buf[24];
+    std::snprintf(buf, sizeof buf, "cgl:0x%08x", static_cast<unsigned>(id));
+    return buf;
+}
+
 std::vector<PixelFormatAttribute> pixelFormatAttribs(const TesseraContextConfig& c, int32_t profile,
                                                      const FormatAttempt& a, bool floatColor,
-                                                     bool allowOffline) {
+                                                     bool allowOffline, int32_t rendererId = 0) {
     std::vector<PixelFormatAttribute> v;
     auto add = [&v](PixelFormatAttribute key, int32_t value) {
         v.push_back(key);
@@ -215,6 +246,8 @@ std::vector<PixelFormatAttribute> pixelFormatAttribs(const TesseraContextConfig&
     }
     if (floatColor)
         v.push_back(kPFAColorFloat);
+    if (rendererId != 0)
+        add(kPFARendererID, rendererId); // an explicit GPU: this renderer or nothing
     if (allowOffline)
         v.push_back(kPFAAllowOfflineRenderers);
     v.push_back(0);
@@ -236,6 +269,7 @@ PixelFormatInfo describePixelFormat(const CglApi& api, CGLPixelFormatObj pf) {
     p.doubleBuffer = get(kPFADoubleBuffer) != 0;
     p.stereo = get(kPFAStereo) != 0;
     p.colorFloat = get(kPFAColorFloat) != 0;
+    p.rendererId = get(kPFARendererID);
     return p;
 }
 
@@ -267,6 +301,12 @@ bool queryInfo(const CglApi& api, const PixelFormatInfo& p, TesseraContextInfo& 
     if (p.colorFloat)
         info.flags |= TESSERA_FLAG_FLOAT_COLOR;
     info.surface = TESSERA_SURFACE_NONE; // CGL contexts here never have a drawable
+    if (p.rendererId != 0) {             // which renderer (GPU) the pixel format belongs to
+        std::snprintf(info.adapter, sizeof info.adapter, "%s", rendererIdText(p.rendererId).c_str());
+        if (p.rendererId == kRendererGeneric || p.rendererId == kRendererGenericFloat ||
+            p.rendererId == kRendererAppleSW)
+            info.adapterClass |= TESSERA_ADAPTER_SOFTWARE;
+    }
     return true;
 }
 
@@ -276,6 +316,44 @@ class CglBackend final : public Backend {
   public:
     const char* name() const noexcept override {
         return "cgl";
+    }
+
+    /* A renderer id ("cgl:0x00024600") is honoured through the pixel format; LUIDs, preferences and other
+     * backends' ids are not ours. */
+    bool supportsAdapterSelection(const TesseraContextConfig& c) const noexcept override {
+        int32_t id = 0;
+        return c.adapterLuid == 0 && c.gpuPreference == TESSERA_GPU_DEFAULT && parseRendererId(c.adapter, id);
+    }
+
+    void enumerateAdapters(std::vector<TesseraAdapterInfo>& out) override {
+        const CglApi* api = cglApi();
+        if (!api || !api->fn.CGLQueryRendererInfo || !api->fn.CGLDescribeRenderer ||
+            !api->fn.CGLDestroyRendererInfo)
+            return;
+        CGLRendererInfoObj info = nullptr;
+        GLint count = 0;
+        if (api->fn.CGLQueryRendererInfo(0xFFFFFFFFu, &info, &count) != kNoError || !info)
+            return;
+        for (GLint i = 0; i < count; ++i) {
+            auto prop = [&](CGLRendererProperty p) {
+                GLint v = 0;
+                api->fn.CGLDescribeRenderer(info, i, p, &v);
+                return static_cast<int32_t>(v);
+            };
+            const int32_t id = prop(kRPRendererID);
+            TesseraAdapterInfo a = tesseraDefaultAdapterInfo();
+            std::snprintf(a.id, sizeof a.id, "%s", rendererIdText(id).c_str());
+            const bool accelerated = prop(kRPAccelerated) != 0;
+            if (!accelerated || id == kRendererGeneric || id == kRendererGenericFloat ||
+                id == kRendererAppleSW)
+                a.flags |= TESSERA_ADAPTER_SOFTWARE;
+            const int mb = prop(kRPVideoMemoryMB);
+            std::snprintf(a.name, sizeof a.name, "CGL renderer 0x%08x (%s%s%s)", static_cast<unsigned>(id),
+                          accelerated ? "accelerated" : "software", prop(kRPOnline) ? "" : ", offline",
+                          mb > 0 ? (", " + std::to_string(mb) + " MB").c_str() : "");
+            out.push_back(a);
+        }
+        api->fn.CGLDestroyRendererInfo(info);
     }
 
     TesseraResult createContext(const TesseraContextConfig& c,
@@ -293,6 +371,13 @@ class CglBackend final : public Backend {
                 return fail(TESSERA_ERROR_INVALID_ARGUMENT,
                             "cannot share objects with a context from another backend");
         }
+
+        // An explicit renderer: honoured through the pixel format, which offers this renderer or nothing.
+        // Allowing offline renderers (below) can wake a discrete GPU; asking for one by id is the caller's
+        // own choice to pay that.
+        int32_t wantedRenderer = 0;
+        if (c.adapter[0] != '\0' && !parseRendererId(c.adapter, wantedRenderer))
+            return TESSERA_ERROR_UNSUPPORTED; // another backend's kind of id
 
         // Making the new context current changes this thread's CGL state; the caller's goes back on every
         // path.
@@ -313,8 +398,8 @@ class CglBackend final : public Backend {
         for (int32_t profile : plan.profiles) {
             for (const FormatAttempt& attempt : formatAttempts(plan.samples, false, strict)) {
                 for (int offline = 0; offline < 2 && !pf; ++offline) {
-                    const std::vector<PixelFormatAttribute> attribs =
-                        pixelFormatAttribs(c, profile, attempt, plan.floatColor, offline != 0);
+                    const std::vector<PixelFormatAttribute> attribs = pixelFormatAttribs(
+                        c, profile, attempt, plan.floatColor, offline != 0, wantedRenderer);
                     GLint count = 0;
                     CGLPixelFormatObj candidate = nullptr;
                     const CGLError e = api.fn.CGLChoosePixelFormat(attribs.data(), &candidate, &count);

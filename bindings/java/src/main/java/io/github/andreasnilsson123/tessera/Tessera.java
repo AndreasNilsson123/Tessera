@@ -165,16 +165,40 @@ public final class Tessera {
             throw new IllegalArgumentException("a probe cannot share objects with a context");
         }
         final NativeApi api = apiInitialized();
-        final int[] ints = new int[14];
-        final String[] strings = new String[5];
+        final int[] ints = new int[15];
+        final String[] strings = new String[6];
         final int code = api.probe(config.toNative(), ints, strings);
         if (strings[3] == null) {
             check(api, code); // rejected before the probe ran
             throw new IllegalStateException("probe returned without a report");
         }
         final Result result = Result.of(code);
-        final ContextInfo info = result == Result.SUCCESS ? new ContextInfo(ints, new String[] {strings[0], strings[1], strings[2]}) : null;
+        final ContextInfo info = result == Result.SUCCESS ? new ContextInfo(ints, new String[] {strings[0], strings[1], strings[2], strings[5]}) : null;
         return new ProbeReport(result, info, strings[3], strings[4]);
+    }
+
+    /**
+     * The GPUs the backends of this build can use, backend by backend in the order they are tried (ABI 0.14.0). An id goes to
+     * {@link ContextConfig.Builder#adapter(String)}. GLX cannot list; an empty list is not an error.
+     */
+    public static java.util.List<AdapterInfo> enumerateAdapters() {
+        final NativeApi api = apiInitialized();
+        final int count = api.adapterCount();
+        if (count < 0) {
+            check(api, count);
+        }
+        final java.util.List<AdapterInfo> out = new java.util.ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            final int[] ints = new int[5];
+            final String[] strings = new String[3];
+            final int code = api.adapter(i, ints, strings);
+            if (code == Result.INVALID_ARGUMENT.code()) {
+                break; // the inventory shrank while it was being read
+            }
+            check(api, code);
+            out.add(new AdapterInfo(ints, strings));
+        }
+        return java.util.Collections.unmodifiableList(out);
     }
 
     /**

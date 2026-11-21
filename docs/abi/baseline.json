@@ -16,6 +16,10 @@
    "params": "TesseraContext context",
    "return": "TesseraResult"
   },
+  "tesseraEnumerateAdapters": {
+   "params": "TesseraAdapterInfo* out, int32_t capacity, int32_t* outCount",
+   "return": "TesseraResult"
+  },
   "tesseraGetAbiVersion": {
    "params": "void",
    "return": "int32_t"
@@ -122,6 +126,9 @@
   }
  },
  "macros": {
+  "TESSERA_ADAPTER_DISCRETE": "0x4u",
+  "TESSERA_ADAPTER_INTEGRATED": "0x2u",
+  "TESSERA_ADAPTER_SOFTWARE": "0x1u",
   "TESSERA_API_OPENGL": "0x0001u",
   "TESSERA_API_OPENGL_ES": "0x0002u",
   "TESSERA_ATTACH_ALLOW_PIXEL_FORMAT": "0x1u",
@@ -189,6 +196,66 @@
   "TESSERA_WINDOW_X11": "2u"
  },
  "structs": {
+  "TesseraAdapterInfo": {
+   "align": 8,
+   "fields": [
+    {
+     "name": "structSize",
+     "offset": 0,
+     "size": 4,
+     "type": "uint32_t"
+    },
+    {
+     "name": "flags",
+     "offset": 4,
+     "size": 4,
+     "type": "uint32_t"
+    },
+    {
+     "name": "vendorId",
+     "offset": 8,
+     "size": 4,
+     "type": "uint32_t"
+    },
+    {
+     "name": "deviceId",
+     "offset": 12,
+     "size": 4,
+     "type": "uint32_t"
+    },
+    {
+     "name": "luid",
+     "offset": 16,
+     "size": 8,
+     "type": "uint64_t"
+    },
+    {
+     "name": "backend",
+     "offset": 24,
+     "size": 16,
+     "type": "char[16]"
+    },
+    {
+     "name": "id",
+     "offset": 40,
+     "size": 48,
+     "type": "char[48]"
+    },
+    {
+     "name": "name",
+     "offset": 88,
+     "size": 128,
+     "type": "char[128]"
+    },
+    {
+     "name": "reserved",
+     "offset": 216,
+     "size": 32,
+     "type": "uint64_t[4]"
+    }
+   ],
+   "size": 248
+  },
   "TesseraContextConfig": {
    "align": 8,
    "fields": [
@@ -307,10 +374,10 @@
      "type": "uint32_t"
     },
     {
-     "name": "reserved",
+     "name": "adapter",
      "offset": 88,
      "size": 48,
-     "type": "uint64_t[6]"
+     "type": "char[48]"
     }
    ],
    "size": 136
@@ -427,16 +494,22 @@
      "type": "uint32_t"
     },
     {
-     "name": "reserved32",
+     "name": "adapterClass",
      "offset": 444,
      "size": 4,
      "type": "uint32_t"
     },
     {
-     "name": "reserved",
+     "name": "adapter",
      "offset": 448,
-     "size": 56,
-     "type": "uint64_t[7]"
+     "size": 48,
+     "type": "char[48]"
+    },
+    {
+     "name": "reserved",
+     "offset": 496,
+     "size": 8,
+     "type": "uint64_t[1]"
     }
    ],
    "size": 504

@@ -92,7 +92,95 @@ bool vendorOwns(uint32_t vendorId, const std::string& text) {
 } // namespace
 
 bool adapterRequested(const TesseraContextConfig& c) noexcept {
-    return c.adapterLuid != 0 || c.gpuPreference != TESSERA_GPU_DEFAULT;
+    return c.adapterLuid != 0 || c.gpuPreference != TESSERA_GPU_DEFAULT || c.adapter[0] != '\0';
+}
+
+std::string adapterId(uint64_t luid) {
+    char buf[40];
+    std::snprintf(buf, sizeof buf, "luid:%08X-%08X", static_cast<unsigned>(luid >> 32),
+                  static_cast<unsigned>(luid & 0xFFFFFFFFu));
+    return buf;
+}
+
+bool parseAdapterId(const char* id, uint64_t& luid) {
+    if (!id || std::strncmp(id, "luid:", 5) != 0)
+        return false;
+    const char* p = id + 5;
+    uint64_t hi = 0, lo = 0;
+    for (int part = 0; part < 2; ++part) {
+        uint64_t v = 0;
+        for (int i = 0; i < 8; ++i, ++p) {
+            const char ch = *p;
+            int d;
+            if (ch >= '0' && ch <= '9')
+                d = ch - '0';
+            else if (ch >= 'a' && ch <= 'f')
+                d = ch - 'a' + 10;
+            else if (ch >= 'A' && ch <= 'F')
+                d = ch - 'A' + 10;
+            else
+                return false;
+            v = v * 16 + static_cast<uint64_t>(d);
+        }
+        (part == 0 ? hi : lo) = v;
+        if (part == 0) {
+            if (*p != '-')
+                return false;
+            ++p;
+        }
+    }
+    if (*p != '\0')
+        return false;
+    luid = (hi << 32) | lo;
+    return luid != 0;
+}
+
+uint32_t adapterClassOf(const AdapterInfo& a) {
+    if (a.software)
+        return TESSERA_ADAPTER_SOFTWARE;
+    return a.dedicatedVideoMemory >= (1ull << 30) ? TESSERA_ADAPTER_DISCRETE : TESSERA_ADAPTER_INTEGRATED;
+}
+
+void toPublic(const AdapterInfo& a, TesseraAdapterInfo& out) {
+    out = tesseraDefaultAdapterInfo();
+    out.flags = adapterClassOf(a);
+    out.vendorId = a.vendorId;
+    out.deviceId = a.deviceId;
+    out.luid = a.luid;
+    std::snprintf(out.id, sizeof out.id, "%s", adapterId(a.luid).c_str());
+    std::snprintf(out.name, sizeof out.name, "%s", a.name.c_str());
+}
+
+const AdapterInfo* identifyServing(const std::vector<AdapterInfo>& all, const char* vendor,
+                                   const char* renderer) {
+    const std::string text = std::string(vendor ? vendor : "") + " " + (renderer ? renderer : "");
+    const AdapterInfo* found = nullptr;
+    for (const AdapterInfo& a : all) {
+        if (!vendorOwns(a.vendorId, text))
+            continue;
+        if (found)
+            return nullptr; // two adapters of that vendor: cannot be told apart
+        found = &a;
+    }
+    return found;
+}
+
+std::string hybridAdvisory(const std::vector<AdapterInfo>& all, const char* vendor, const char* renderer) {
+    const AdapterInfo* serving = identifyServing(all, vendor, renderer);
+    if (!serving || serving->software)
+        return std::string();
+    const AdapterInfo* strongest = nullptr;
+    for (const AdapterInfo& a : all)
+        if (!a.software && (!strongest || a.dedicatedVideoMemory > strongest->dedicatedVideoMemory))
+            strongest = &a;
+    if (!strongest || strongest->vendorId == serving->vendorId ||
+        strongest->dedicatedVideoMemory <= serving->dedicatedVideoMemory)
+        return std::string();
+    return "this process got the OpenGL driver of \"" + serving->name + "\" while \"" + strongest->name +
+           "\" is available; to get the faster GPU the host executable can export NvOptimusEnablement = 1 "
+           "(NVIDIA) and "
+           "AmdPowerXpressRequestHighPerformance = 1 (AMD), or the user can set it under Settings > System > "
+           "Display > Graphics";
 }
 
 std::vector<AdapterInfo> enumerateAdapters(std::string& error) {
@@ -118,9 +206,14 @@ bool resolveAdapter(const TesseraContextConfig& c, AdapterInfo& out, std::string
         error = why.empty() ? "no display adapters were found" : why;
         return false;
     }
-    if (c.adapterLuid != 0) {
+    uint64_t wantedLuid = c.adapterLuid;
+    if (c.adapter[0] != '\0' && !parseAdapterId(c.adapter, wantedLuid)) {
+        error = std::string("'") + c.adapter + "' is not a luid: adapter id";
+        return false;
+    }
+    if (wantedLuid != 0) {
         for (const AdapterInfo& a : all) {
-            if (a.luid == c.adapterLuid) {
+            if (a.luid == wantedLuid) {
                 out = a;
                 return true;
             }

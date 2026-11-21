@@ -243,6 +243,42 @@ static void swapCapsText(uint32_t caps, char* out, size_t cap) {
              caps & TESSERA_SWAP_CAP_READBACK ? ", read-back" : "");
 }
 
+/* The adapters the backend (the only one initialised) can name: an inventory the user can pass back as an
+ * adapter id. */
+static void printAdapters(void) {
+    int32_t count = 0;
+    if (tesseraEnumerateAdapters(NULL, 0, &count) != TESSERA_SUCCESS || count <= 0)
+        return;
+    TesseraAdapterInfo* list = (TesseraAdapterInfo*)calloc((size_t)count, sizeof *list);
+    if (!list)
+        return;
+    for (int32_t i = 0; i < count; ++i)
+        list[i] = tesseraDefaultAdapterInfo();
+    if (tesseraEnumerateAdapters(list, count, &count) == TESSERA_SUCCESS) {
+        if (g_json) {
+            printf(",\n      \"adapters\":[");
+            for (int32_t i = 0; i < count; ++i) {
+                printf("%s{\"id\":", i ? "," : "");
+                jstr(list[i].id);
+                printf(",\"name\":");
+                jstr(list[i].name);
+                printf(",\"software\":%s,\"vendorId\":%u,\"deviceId\":%u}",
+                       (list[i].flags & TESSERA_ADAPTER_SOFTWARE) ? "true" : "false", list[i].vendorId,
+                       list[i].deviceId);
+            }
+            printf("]");
+        } else {
+            for (int32_t i = 0; i < count; ++i)
+                printf("  adapter  : %s  %s%s%s\n", list[i].id, list[i].name,
+                       (list[i].flags & TESSERA_ADAPTER_SOFTWARE) ? " [software]" : "",
+                       (list[i].flags & TESSERA_ADAPTER_DISCRETE)     ? " [discrete]"
+                       : (list[i].flags & TESSERA_ADAPTER_INTEGRATED) ? " [integrated]"
+                                                                      : "");
+        }
+    }
+    free(list);
+}
+
 static BackendSummary runBackend(const char* name, int* firstBackend) {
     BackendSummary sum = {0, 0};
     SETENV("TESSERA_BACKEND", name);
@@ -294,6 +330,8 @@ static BackendSummary runBackend(const char* name, int* firstBackend) {
             jstr(baseline.info.renderer);
             printf(",\"version\":");
             jstr(baseline.info.version);
+            printf(",\"adapter\":");
+            jstr(baseline.info.adapter);
             const SwapReport sw = probeSwapControl();
             if (sw.known)
                 printf(",\"swapControl\":{\"control\":%s,\"adaptive\":%s,\"readback\":%s}",
@@ -304,12 +342,16 @@ static BackendSummary runBackend(const char* name, int* firstBackend) {
             printf(",\"baselineError\":");
             jstr(baseline.message);
         }
+        printAdapters();
         printf(",\n      \"cases\":[");
     } else {
         printf("[%s]%s\n", name, r == TESSERA_SUCCESS ? "" : " (the baseline request failed)");
         if (r == TESSERA_SUCCESS) {
             printf("  vendor   : %s\n  renderer : %s\n  version  : %s\n", baseline.info.vendor,
                    baseline.info.renderer, baseline.info.version);
+            if (baseline.info.adapter[0])
+                printf("  served by: %s\n", baseline.info.adapter);
+            printAdapters();
         } else {
             printf("  %s: %s\n", tesseraResultString(r), baseline.message);
         }

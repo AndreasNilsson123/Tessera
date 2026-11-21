@@ -17,6 +17,7 @@ namespace tessera {
 struct EglDeviceDesc {
     std::string renderNode;                 // EGL_DRM_RENDER_NODE_FILE_EXT, e.g. /dev/dri/renderD128
     bool software = false;                  // EGL_MESA_device_software: a CPU renderer (llvmpipe, softpipe)
+    std::string name;                       // EGL_RENDERER_EXT (EGL_EXT_device_query_name), "" if not exposed
     bool hasUuid = false;                   // EGL_EXT_device_persistent_id
     std::array<std::uint8_t, 16> uuid = {}; // EGL_DEVICE_UUID_EXT
 };
@@ -205,6 +206,48 @@ inline DeviceChoice selectDevice(const std::string& selector, const std::vector<
     return fail(
         "'" + selector +
         "' is not an index, a /dev/dri render node, a PCI address (0000:01:00.0), a UUID or 'software'");
+}
+
+/* The id tesseraEnumerateAdapters gives an EGL device (and TesseraContextConfig::adapter takes back): the
+ * UUID if the device has one, else its DRM render node, else its position (which is not stable across boots,
+ * so it is the last resort). */
+inline std::string eglAdapterId(const EglDeviceDesc& d, int index) {
+    static const char* const hex = "0123456789abcdef";
+    if (d.hasUuid) {
+        std::string s = "uuid:";
+        for (std::size_t i = 0; i < d.uuid.size(); ++i) {
+            if (i == 4 || i == 6 || i == 8 || i == 10)
+                s.push_back('-');
+            s.push_back(hex[d.uuid[i] >> 4]);
+            s.push_back(hex[d.uuid[i] & 15]);
+        }
+        return s;
+    }
+    if (!d.renderNode.empty() && d.renderNode.size() + 5 < 48)
+        return "node:" + d.renderNode;
+    return "index:" + std::to_string(index);
+}
+
+/* An adapter id of the EGL kinds as a TESSERA_EGL_DEVICE selector ("uuid:..." and "pci:..." and "node:..."
+ * and "index:N" become what selectDevice understands). False for anything else ("luid:", "cgl:", garbage). */
+inline bool eglSelectorFromAdapterId(const std::string& id, std::string& selector) {
+    if (detail::startsWith(id, "uuid:") && id.size() > 5) {
+        selector = id; // selectDevice takes the prefix
+        return classifyDeviceSelector(selector) == DeviceSelectorKind::Uuid;
+    }
+    if (detail::startsWith(id, "node:") && id.size() > 5) {
+        selector = id.substr(5);
+        return classifyDeviceSelector(selector) == DeviceSelectorKind::RenderNode;
+    }
+    if (detail::startsWith(id, "pci:") && id.size() > 4) {
+        selector = id.substr(4);
+        return classifyDeviceSelector(selector) == DeviceSelectorKind::Pci;
+    }
+    if (detail::startsWith(id, "index:") && id.size() > 6) {
+        selector = id.substr(6);
+        return classifyDeviceSelector(selector) == DeviceSelectorKind::Index;
+    }
+    return false;
 }
 
 } // namespace tessera

@@ -153,6 +153,27 @@ int runX11() {
         if (ctx)
             EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
     }
+    // With the host's own Display* (ABI 0.14.0): Tessera reads the server name from it and uses a connection
+    // of its own, for a connection named explicitly as well as for the default one.
+    {
+        const char* name = getenv("DISPLAY");
+        void* explicitConnection = open(name);
+        for (void* host : {dpy, explicitConnection}) {
+            if (!host)
+                continue;
+            TesseraNativeWindow wd = w;
+            wd.display = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(host));
+            TesseraContext viaDisplay = 0;
+            EXPECT(tesseraCreateContextForNativeWindow(&cfg, &wd, 0, &viaDisplay), TESSERA_SUCCESS);
+            if (viaDisplay) {
+                renderAndPresent(viaDisplay, false);
+                EXPECT(tesseraDestroyContext(viaDisplay), TESSERA_SUCCESS);
+            }
+            sync(host, 0); // the host's connection is still alive and error-free
+        }
+        if (explicitConnection)
+            close(explicitConnection);
+    }
     // A window id that is not a window: refused, never a crash.
     w.window = 0x7ffffff0ul;
     TesseraContext none = 0;

@@ -22,7 +22,12 @@ public final class ContextInfo {
     private final String renderer;
     private final String version;
 
+    private final int adapterClass;
+    private final String adapter;
+
     ContextInfo(int[] v, String[] s) {
+        adapterClass = v.length > 14 ? v[14] : 0;
+        adapter = s.length > 3 && s[3] != null ? s[3] : "";
         api = v[0] == 2 ? ContextConfig.Api.OPENGL_ES : ContextConfig.Api.OPENGL;
         versionMajor = v[1];
         versionMinor = v[2];
@@ -97,6 +102,19 @@ public final class ContextInfo {
 
     public int stencilBits() {
         return stencil;
+    }
+
+    /**
+     * {@link AdapterInfo#SOFTWARE} / {@link AdapterInfo#INTEGRATED} / {@link AdapterInfo#DISCRETE} bits of the GPU that served the
+     * context; 0 = not known.
+     */
+    public int adapterClass() {
+        return adapterClass;
+    }
+
+    /** The id of the GPU that served the context where the backend can tell (see {@link AdapterInfo#id()}), else "". */
+    public String adapter() {
+        return adapter;
     }
 
     /** The priority the driver says it granted ({@link ContextConfig.Priority#DEFAULT} where it cannot say). */

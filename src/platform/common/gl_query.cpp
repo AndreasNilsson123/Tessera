@@ -5,6 +5,7 @@
 #include <cstring>
 
 #include "core/boundary.hpp"
+#include "software_renderer.hpp"
 #include <mutex>
 
 namespace tessera {
@@ -87,6 +88,8 @@ bool queryContextInfo(const GlQueryFns& gl, TesseraContextInfo& info) {
                    reinterpret_cast<const char*>(gl.getString(kGlRenderer)));
     }
     copyString(info.version, sizeof info.version, versionText);
+    if (isCpuRenderer(info.renderer)) // every backend knows at least this much about who served the context
+        info.adapterClass = TESSERA_ADAPTER_SOFTWARE;
 
     bool isEs = false;
     int major = 0, minor = 0;

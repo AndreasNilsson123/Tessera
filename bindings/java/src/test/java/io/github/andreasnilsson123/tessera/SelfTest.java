@@ -90,6 +90,7 @@ public final class SelfTest {
         } catch (TesseraException e2) {
             check(e2.result() == Result.NO_MATCHING_CONFIG, "core refused only as NO_MATCHING_CONFIG: " + e2);
         }
+        adapters();
         // EXACT_VERSION is a flag the library knows (ABI 0.13.0): it is accepted and the minimum still holds.
         try (Context exact = Context.create(ContextConfig.builder().profile(ContextConfig.Profile.CORE).version(3, 3)
                 .flags(ContextConfig.Flags.EXACT_VERSION).build())) {
@@ -98,6 +99,39 @@ public final class SelfTest {
         } catch (TesseraException e3) {
             check(e3.result() == Result.NO_MATCHING_CONFIG, "exact core refused only as NO_MATCHING_CONFIG: " + e3);
         }
+    }
+
+    /** One way to say "this GPU" (ABI 0.14.0): the inventory, selection by id, and who served the context. */
+    static void adapters() {
+        final java.util.List<AdapterInfo> list = Tessera.enumerateAdapters();
+        for (AdapterInfo a : list) {
+            System.out.println("  adapter " + a);
+            check(!a.id().isEmpty() && a.id().length() <= 47 && !a.backend().isEmpty(), "adapter fields");
+        }
+        // The context says who served it (the id is "" where the backend cannot tell, e.g. GLX).
+        try (Context ctx = Context.create(ContextConfig.builder().build())) {
+            final ContextInfo info = ctx.info();
+            System.out.println("  served by '" + info.adapter() + "' class " + info.adapterClass());
+            if (!info.adapter().isEmpty()) {
+                check(list.stream().anyMatch(a -> a.id().equals(info.adapter())), "the serving adapter is in the inventory");
+            }
+        }
+        // Asking for an adapter by id: the one that served us is honoured where selection exists, never replaced by another.
+        for (AdapterInfo a : list) {
+            try (Context c = Context.create(ContextConfig.builder().adapter(a.id()).fallback(ContextConfig.Fallback.BEST_EFFORT).build())) {
+                check(c.info().adapter().equals(a.id()), "selected adapter " + a.id() + " is the one reported: " + c.info().adapter());
+            } catch (TesseraException e) {
+                check(e.result() == Result.NO_MATCHING_CONFIG || e.result() == Result.UNSUPPORTED,
+                        "an adapter that cannot serve is refused, not replaced: " + e);
+            }
+        }
+        final TesseraException none = expect(TesseraException.class, "adapter of another backend",
+                () -> Context.create(ContextConfig.builder().adapter("cgl:0x0000ffff").build()).close());
+        check(none.result() == Result.UNSUPPORTED || none.result() == Result.NO_MATCHING_CONFIG, "no such adapter: " + none.result());
+        expect(IllegalArgumentException.class, "adapter id too long", () -> ContextConfig.builder().adapter("x".repeat(48)));
+        expect(IllegalArgumentException.class, "adapter id not ASCII", () -> ContextConfig.builder().adapter("caf\u00e9"));
+        expect(TesseraException.class, "adapter with adapterLuid",
+                () -> Context.create(ContextConfig.builder().adapter("luid:00000000-00000001").adapterLuid(1L).build()).close());
     }
 
     static void threadRules() throws Exception {
@@ -179,7 +213,7 @@ public final class SelfTest {
             Thread.sleep(50);
             allGone = true;
             for (long h : handles) {
-                if (api.contextInfo(h, new int[14], new String[3]) != Result.INVALID_HANDLE.code()) {
+                if (api.contextInfo(h, new int[15], new String[4]) != Result.INVALID_HANDLE.code()) {
                     allGone = false;
                 }
             }

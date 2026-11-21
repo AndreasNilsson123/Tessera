@@ -615,6 +615,72 @@ static int runUnavailableLibrary(const char* path) {
     return g_failures == 0 ? 0 : 1;
 }
 
+// One way to say "this GPU" (ABI 0.14.0): the renderer inventory, selection by id, and the report of who
+// served the context.
+static TesseraContextConfig adapterConfig(const char* id) {
+    TesseraContextConfig c = baseConfig();
+    std::snprintf(c.adapter, sizeof c.adapter, "%s", id);
+    return c;
+}
+
+static void testAdapters() {
+    int32_t count = 0;
+    EXPECT(tesseraEnumerateAdapters(nullptr, 0, &count), TESSERA_SUCCESS);
+    CHECK(count == 3);
+    TesseraAdapterInfo list[4];
+    for (auto& a : list)
+        a = tesseraDefaultAdapterInfo();
+    EXPECT(tesseraEnumerateAdapters(list, 4, &count), TESSERA_SUCCESS);
+    CHECK(count == 3);
+    CHECK(std::strcmp(list[0].id, "cgl:0x00024600") == 0 && std::strcmp(list[0].backend, "cgl") == 0);
+    CHECK(list[0].flags == 0 && std::strstr(list[0].name, "1536 MB") != nullptr);
+    CHECK(std::strcmp(list[1].id, "cgl:0x00022600") == 0 && std::strstr(list[1].name, "offline") != nullptr);
+    CHECK(std::strcmp(list[2].id, "cgl:0x00020400") == 0 && (list[2].flags & TESSERA_ADAPTER_SOFTWARE));
+    // a smaller capacity writes what fits and still reports the total
+    TesseraAdapterInfo one[1] = {tesseraDefaultAdapterInfo()};
+    EXPECT(tesseraEnumerateAdapters(one, 1, &count), TESSERA_SUCCESS);
+    CHECK(count == 3 && std::strcmp(one[0].id, "cgl:0x00024600") == 0);
+
+    // Who served a default context.
+    TesseraContext ctx = 0;
+    TesseraContextConfig cfg = baseConfig();
+    EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_SUCCESS);
+    TesseraContextInfo info = tesseraDefaultContextInfo();
+    if (ctx) {
+        EXPECT(tesseraGetContextInfo(ctx, &info), TESSERA_SUCCESS);
+        CHECK(std::strcmp(info.adapter, "cgl:0x00024600") == 0);
+        EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
+    }
+
+    // Selecting: the id asked for is the id reported, including the one that needs offline renderers allowed.
+    for (const char* id : {"cgl:0x00024600", "cgl:0x00022600", "cgl:0x00020400"}) {
+        TesseraContextConfig want = adapterConfig(id);
+        TesseraContext c = 0;
+        EXPECT(tesseraCreateContext(&want, &c), TESSERA_SUCCESS);
+        if (!c)
+            continue;
+        info = tesseraDefaultContextInfo();
+        EXPECT(tesseraGetContextInfo(c, &info), TESSERA_SUCCESS);
+        CHECK(std::strcmp(info.adapter, id) == 0);
+        if (std::strcmp(id, "cgl:0x00020400") == 0)
+            CHECK(info.adapterClass & TESSERA_ADAPTER_SOFTWARE);
+        EXPECT(tesseraDestroyContext(c), TESSERA_SUCCESS);
+    }
+    // An explicit choice is never replaced: no such renderer is a refusal, another backend's id is
+    // UNSUPPORTED.
+    TesseraContextConfig none = adapterConfig("cgl:0x00099999");
+    TesseraContext c = 0;
+    EXPECT(tesseraCreateContext(&none, &c), TESSERA_ERROR_NO_MATCHING_CONFIG);
+    TesseraContextConfig foreign = adapterConfig("luid:00000000-00001234");
+    EXPECT(tesseraCreateContext(&foreign, &c), TESSERA_ERROR_UNSUPPORTED);
+    TesseraContextConfig garbage = adapterConfig("cgl:0xZZ");
+    EXPECT(tesseraCreateContext(&garbage, &c), TESSERA_ERROR_UNSUPPORTED);
+    TesseraContextConfig luidReq = baseConfig();
+    luidReq.adapterLuid = 5; // a Windows request must not be served by whatever renderer CGL likes
+    EXPECT(tesseraCreateContext(&luidReq, &c), TESSERA_ERROR_UNSUPPORTED);
+    noLeaks(__LINE__);
+}
+
 int main(int argc, char** argv) {
     if (argc > 1 && std::strcmp(argv[1], "--missing-library") == 0)
         return runUnavailableLibrary("/nonexistent/OpenGL");
@@ -648,6 +714,7 @@ int main(int argc, char** argv) {
         {"pixel format negotiation", testPixelFormatNegotiation},
         {"make current / procs / swap", testMakeCurrentAndProcs},
         {"foreign context untouched", testForeignContextUntouched},
+        {"adapters (inventory, selection, report)", testAdapters},
         {"sharing", testSharing},
         {"threads and concurrency", testThreadsAndConcurrency},
         {"fault injection at every native call", testFaultInjection},

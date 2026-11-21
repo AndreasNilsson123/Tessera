@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <mutex>
 #include <string>
 #include <utility>
@@ -77,7 +78,7 @@ class GlxShared {
         return std::find(exts_.begin(), exts_.end(), extension) != exts_.end();
     }
 
-    bool open(std::string& error) {
+    bool open(std::string& error, const std::string& serverName = std::string()) {
         // Xlib is only safe to use from several threads after XInitThreads(); contexts here are used from
         // whichever threads the application chooses. Every toolkit that creates GL contexts (GLFW, SDL, GTK,
         // AWT) makes this same call, and it is idempotent. TESSERA_NO_XINITTHREADS=1 opts out for hosts that
@@ -108,15 +109,22 @@ class GlxShared {
             }
         });
 
-        {
+        if (!serverName.empty()) { // the host named its server (a window's Display*): ours is a connection to
+                                   // that one
+            displayName = serverName;
+            dpy = api->xlib.XOpenDisplay(serverName.c_str());
+            if (!dpy) {
+                error = "cannot open the X display \"" + serverName + "\" the window belongs to";
+                return false;
+            }
+        } else {
             const char* name = std::getenv("DISPLAY");
             displayName = name ? name : "";
-        }
-        dpy = api->xlib.XOpenDisplay(nullptr);
-        if (!dpy) {
-            const char* name = std::getenv("DISPLAY");
-            error = std::string("cannot open the X display (DISPLAY=") + (name ? name : "<unset>") + ")";
-            return false;
+            dpy = api->xlib.XOpenDisplay(nullptr);
+            if (!dpy) {
+                error = std::string("cannot open the X display (DISPLAY=") + (name ? name : "<unset>") + ")";
+                return false;
+            }
         }
         screen = api->xlib.XDefaultScreen(dpy);
 
@@ -547,8 +555,37 @@ class GlxBackend final : public Backend {
     TesseraResult createContextForWindow(const TesseraContextConfig& c, uint64_t nativeWindow,
                                          uint32_t /*flags*/, const std::shared_ptr<ContextObject>& shareWith,
                                          std::shared_ptr<ContextObject>& out) override {
+        return attachToWindow(std::string(), c, nativeWindow, shareWith, out);
+    }
+
+    /* The described form. For X11, `display` (optional) is the host's own Display*: the window lives on ITS
+     * server, which may not be $DISPLAY. Tessera never uses that pointer for anything but reading the name
+     * the host opened it with (XDisplayString): Xlib connections are not thread-safe unless the host called
+     * XInitThreads, so Tessera opens its own connection to the same server (and screen's server-wide GLX) and
+     * the host's one stays the host's. */
+    TesseraResult createContextForNativeWindow(const TesseraContextConfig& c,
+                                               const TesseraNativeWindow& window, uint32_t flags,
+                                               const std::shared_ptr<ContextObject>& shareWith,
+                                               std::shared_ptr<ContextObject>& out) override {
+        if (window.kind != TESSERA_WINDOW_X11)
+            return fail(TESSERA_ERROR_UNSUPPORTED, "this backend cannot attach to that kind of window");
+        if (window.display == 0)
+            return createContextForWindow(c, window.window, flags, shareWith, out);
+        const LinuxApi* api = linuxApi();
+        if (!api)
+            return fail(TESSERA_ERROR_UNSUPPORTED, "libX11 and libGL are not available on this system");
+        const char* name =
+            api->xlib.XDisplayString(reinterpret_cast<Display*>(static_cast<std::uintptr_t>(window.display)));
+        if (!name || !*name)
+            return fail(TESSERA_ERROR_INVALID_ARGUMENT, "the display is not an open Xlib Display*");
+        return attachToWindow(name, c, window.window, shareWith, out);
+    }
+
+    TesseraResult attachToWindow(const std::string& serverName, const TesseraContextConfig& c,
+                                 uint64_t nativeWindow, const std::shared_ptr<ContextObject>& shareWith,
+                                 std::shared_ptr<ContextObject>& out) {
         std::string error;
-        std::shared_ptr<GlxShared> sh = getShared(error);
+        std::shared_ptr<GlxShared> sh = getShared(error, serverName);
         if (!sh)
             return fail(TESSERA_ERROR_UNSUPPORTED, error);
         const LinuxApi& api = *sh->api;
@@ -745,10 +782,16 @@ class GlxBackend final : public Backend {
                     "the driver does not support the requested OpenGL version/profile");
     }
 
-    std::shared_ptr<GlxShared> getShared(std::string& error) {
+    /* `serverName` (a window's server, from a host Display*): "" = $DISPLAY, the usual connection. */
+    std::shared_ptr<GlxShared> getShared(std::string& error, const std::string& serverName = std::string()) {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (shared_)
+        if (serverName.empty() && shared_)
             return shared_;
+        if (!serverName.empty()) {
+            auto it = namedShared_.find(serverName);
+            if (it != namedShared_.end())
+                return it->second;
+        }
         const LinuxApi* api = linuxApi();
         if (!api) {
             error = "libX11 and libGL are not available on this system";
@@ -761,7 +804,7 @@ class GlxBackend final : public Backend {
             new std::vector<std::shared_ptr<GlxShared>>(); // never freed
         std::lock_guard<std::mutex> keptLock(keptMutex);
         const char* display = std::getenv("DISPLAY");
-        const std::string wanted = display ? display : "";
+        const std::string wanted = !serverName.empty() ? serverName : (display ? display : "");
         std::shared_ptr<GlxShared> s;
         for (const auto& k : *kept)
             if (k->displayName == wanted && k->api == api)
@@ -769,9 +812,13 @@ class GlxBackend final : public Backend {
         if (!s) {
             s = std::make_shared<GlxShared>();
             s->api = api;
-            if (!s->open(error))
+            if (!s->open(error, serverName))
                 return nullptr;
             kept->push_back(s);
+        }
+        if (!serverName.empty()) {
+            namedShared_[serverName] = s;
+            return s;
         }
         shared_ = s;
         return shared_;
@@ -779,6 +826,8 @@ class GlxBackend final : public Backend {
 
     std::mutex mutex_;
     std::shared_ptr<GlxShared> shared_;
+    std::map<std::string, std::shared_ptr<GlxShared>>
+        namedShared_; // by X server name (a host window's Display*)
 };
 
 } // namespace

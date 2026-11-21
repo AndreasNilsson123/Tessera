@@ -36,8 +36,14 @@ public interface NativeApi {
 
     int destroyContext(long handle);
 
-    /** ints: api, major, minor, profile, flags, surface, samples, r, g, b, a, depth, stencil, priority; strings: vendor, renderer, version. */
+    /** ints: api, major, minor, profile, flags, surface, samples, r, g, b, a, depth, stencil, priority, adapterClass; strings: vendor, renderer, version, adapter. */
     int contextInfo(long handle, int[] ints, String[] strings);
+
+    /** The number of adapters the backends can list (negative = an error code). */
+    int adapterCount();
+
+    /** One adapter. ints: flags, vendorId, deviceId, luid low 32 bits, luid high 32 bits; strings: backend, id, name. */
+    int adapter(int index, int[] ints5, String[] strings3);
 
     int makeCurrent(long handle);
 

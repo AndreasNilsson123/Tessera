@@ -105,6 +105,20 @@ TESSERA_API TesseraResult TESSERA_CALL tesseraGetSwapControl(TesseraContext cont
     });
 }
 
+TESSERA_API TesseraResult TESSERA_CALL tesseraEnumerateAdapters(TesseraAdapterInfo* out, int32_t capacity,
+                                                                int32_t* outCount) {
+    return guarded([&]() -> TesseraResult {
+        if (!outCount)
+            return fail(TESSERA_ERROR_INVALID_ARGUMENT, "outCount is NULL");
+        *outCount = 0;
+        if (capacity < 0)
+            return fail(TESSERA_ERROR_INVALID_ARGUMENT, "capacity is negative");
+        if (capacity > 0 && !out)
+            return fail(TESSERA_ERROR_INVALID_ARGUMENT, "out is NULL but capacity is not zero");
+        return Runtime::instance().enumerateAdapters(out, capacity, outCount);
+    });
+}
+
 TESSERA_API void TESSERA_CALL tesseraSetContextLostCallback(TesseraContextLostCallback callback,
                                                             void* userData) {
     guarded([&] {

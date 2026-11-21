@@ -22,6 +22,16 @@ static_assert(sizeof(TesseraResult) == 4, "results are 32-bit");
 static_assert(sizeof(TesseraContextInfo) == 504, "TesseraContextInfo layout");
 static_assert(offsetof(TesseraContextInfo, priority) == 440 && offsetof(TesseraContextConfig, priority) == 84,
               "priority offsets (the Java FFM binding hard-codes them)");
+static_assert(offsetof(TesseraContextConfig, adapter) == 88 &&
+                  sizeof(((TesseraContextConfig*)0)->adapter) == 48,
+              "adapter id offset in the config (the Java bindings hard-code it)");
+static_assert(offsetof(TesseraContextInfo, adapterClass) == 444 &&
+                  offsetof(TesseraContextInfo, adapter) == 448,
+              "adapter fields of the info (the Java FFM binding hard-codes the offsets)");
+static_assert(sizeof(TesseraAdapterInfo) == 248 && offsetof(TesseraAdapterInfo, luid) == 16 &&
+                  offsetof(TesseraAdapterInfo, backend) == 24 && offsetof(TesseraAdapterInfo, id) == 40 &&
+                  offsetof(TesseraAdapterInfo, name) == 88,
+              "TesseraAdapterInfo layout (the Java FFM binding hard-codes it)");
 static_assert(sizeof(TesseraProbeReport) == 832, "TesseraProbeReport layout");
 static_assert(offsetof(TesseraContextConfig, adapterLuid) == 72 &&
                   offsetof(TesseraContextConfig, gpuPreference) == 80,

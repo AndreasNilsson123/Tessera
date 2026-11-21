@@ -194,6 +194,44 @@ static void testSharingAndThreads() {
     EXPECT(tesseraDestroyContext(b), TESSERA_SUCCESS);
 }
 
+// One way to say "this GPU" (ABI 0.14.0) against the real OpenGL.framework: the renderer inventory, who
+// served a context, selecting that renderer by its id.
+static void testAdapters() {
+    int32_t count = 0;
+    EXPECT(tesseraEnumerateAdapters(nullptr, 0, &count), TESSERA_SUCCESS);
+    std::vector<TesseraAdapterInfo> list(static_cast<std::size_t>(count), tesseraDefaultAdapterInfo());
+    if (count > 0)
+        EXPECT(tesseraEnumerateAdapters(list.data(), count, &count), TESSERA_SUCCESS);
+    for (const auto& a : list) {
+        std::printf("  renderer %s | %s | flags 0x%x\n", a.id, a.name, a.flags);
+        CHECK(std::strcmp(a.backend, "cgl") == 0 && std::strncmp(a.id, "cgl:0x", 6) == 0);
+    }
+    TesseraContextConfig cfg = baseConfig();
+    TesseraContext ctx = 0;
+    EXPECT(tesseraCreateContext(&cfg, &ctx), TESSERA_SUCCESS);
+    if (!ctx)
+        return;
+    TesseraContextInfo info = tesseraDefaultContextInfo();
+    EXPECT(tesseraGetContextInfo(ctx, &info), TESSERA_SUCCESS);
+    EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
+    std::printf("  served by: %s (class 0x%x, %s)\n", info.adapter, info.adapterClass, info.renderer);
+    CHECK(std::strncmp(info.adapter, "cgl:0x", 6) == 0); // CGL always knows the renderer of its pixel format
+    // Asking for the renderer that served us gets that renderer.
+    TesseraContextConfig want = baseConfig();
+    std::snprintf(want.adapter, sizeof want.adapter, "%s", info.adapter);
+    EXPECT(tesseraCreateContext(&want, &ctx), TESSERA_SUCCESS);
+    if (ctx) {
+        TesseraContextInfo again = tesseraDefaultContextInfo();
+        EXPECT(tesseraGetContextInfo(ctx, &again), TESSERA_SUCCESS);
+        CHECK(std::strcmp(again.adapter, info.adapter) == 0);
+        EXPECT(tesseraDestroyContext(ctx), TESSERA_SUCCESS);
+    }
+    // A renderer that does not exist is a refusal, never another renderer.
+    TesseraContextConfig none = baseConfig();
+    std::snprintf(none.adapter, sizeof none.adapter, "cgl:0x00ffffff");
+    EXPECT(tesseraCreateContext(&none, &ctx), TESSERA_ERROR_NO_MATCHING_CONFIG);
+}
+
 int main() {
     if (!loadRaw()) {
         std::fprintf(stderr, "test_cgl: OpenGL.framework not available, skipping\n");
@@ -224,6 +262,7 @@ int main() {
         {"core context", testCore},
         {"foreign context untouched / current / procs", testForeignUntouchedAndCurrent},
         {"sharing and threads", testSharingAndThreads},
+        {"adapters (inventory, selection, report)", testAdapters},
     };
     for (const Section& sec : sections) {
         std::puts(sec.name);

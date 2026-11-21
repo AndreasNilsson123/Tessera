@@ -162,6 +162,38 @@ TesseraResult Runtime::init() {
     return TESSERA_SUCCESS;
 }
 
+TesseraResult Runtime::enumerateAdapters(TesseraAdapterInfo* out, int32_t capacity, int32_t* outCount) {
+    std::vector<std::shared_ptr<Backend>> backends;
+    {
+        std::lock_guard<std::mutex> lock(lifecycle_);
+        if (refCount_ == 0)
+            return fail(TESSERA_ERROR_NOT_INITIALIZED, "tesseraEnumerateAdapters without tesseraInit");
+        backends = backends_;
+    }
+    std::vector<TesseraAdapterInfo> all;
+    for (const auto& backend : backends) {
+        const std::size_t before = all.size();
+        backend->enumerateAdapters(all);
+        for (std::size_t i = before; i < all.size(); ++i)
+            std::snprintf(all[i].backend, sizeof all[i].backend, "%s", backend->name());
+    }
+    *outCount = static_cast<int32_t>(all.size());
+    if (!out || capacity <= 0)
+        return TESSERA_SUCCESS;
+    const uint32_t stride = out[0].structSize;
+    if (stride < offsetof(TesseraAdapterInfo, backend))
+        return fail(TESSERA_ERROR_INVALID_ARGUMENT,
+                    "out[0].structSize is not set (or smaller than the first fields)");
+    const std::size_t n = std::min<std::size_t>(all.size(), static_cast<std::size_t>(capacity));
+    for (std::size_t i = 0; i < n; ++i) {
+        unsigned char* slot = reinterpret_cast<unsigned char*>(out) + i * stride;
+        TesseraAdapterInfo full = all[i];
+        full.structSize = stride;
+        std::memcpy(slot, &full, std::min<std::size_t>(stride, sizeof full));
+    }
+    return TESSERA_SUCCESS;
+}
+
 TesseraResult Runtime::terminate() {
     std::vector<std::shared_ptr<ContextObject>> leftover;
     std::map<TesseraHandle, std::shared_ptr<ContextObject>> pending;
@@ -237,9 +269,9 @@ TesseraResult Runtime::createNative(const TesseraContextConfig& config,
 
     TesseraResult result = TESSERA_ERROR_UNSUPPORTED;
     created.reset();
-    const bool adapter = config.adapterLuid != 0 || config.gpuPreference != TESSERA_GPU_DEFAULT;
+    const bool adapter = namesAGpu(config);
     for (const auto& backend : backends) {
-        if (adapter && !backend->supportsAdapterSelection())
+        if (adapter && !backend->supportsAdapterSelection(config))
             continue; // never serve a GPU request from a backend that cannot honour it
         result = attempt(*backend, share, created);
         if (result != TESSERA_ERROR_UNSUPPORTED)
@@ -299,7 +331,8 @@ bool sameRequest(const TesseraContextConfig& a, const TesseraContextConfig& b) {
            a.fallback == b.fallback && a.redBits == b.redBits && a.greenBits == b.greenBits &&
            a.blueBits == b.blueBits && a.alphaBits == b.alphaBits && a.depthBits == b.depthBits &&
            a.stencilBits == b.stencilBits && a.samples == b.samples && a.adapterLuid == b.adapterLuid &&
-           a.gpuPreference == b.gpuPreference && a.priority == b.priority;
+           a.gpuPreference == b.gpuPreference && a.priority == b.priority &&
+           std::strncmp(a.adapter, b.adapter, sizeof a.adapter) == 0;
 }
 constexpr std::size_t kMaxPooled = 64;
 } // namespace
@@ -459,9 +492,9 @@ TesseraResult Runtime::probe(const TesseraContextConfig& config, TesseraProbeRep
     }
     TesseraResult result = TESSERA_ERROR_UNSUPPORTED;
     std::shared_ptr<ContextObject> created;
-    const bool adapter = config.adapterLuid != 0 || config.gpuPreference != TESSERA_GPU_DEFAULT;
+    const bool adapter = namesAGpu(config);
     for (const auto& backend : backends) {
-        if (adapter && !backend->supportsAdapterSelection())
+        if (adapter && !backend->supportsAdapterSelection(config))
             continue;
         std::snprintf(report.backend, sizeof report.backend, "%s", backend->name());
         created.reset();

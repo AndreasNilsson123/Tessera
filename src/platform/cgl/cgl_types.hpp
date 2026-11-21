@@ -45,6 +45,7 @@ constexpr PixelFormatAttribute kPFAStencilSize = 13;
 constexpr PixelFormatAttribute kPFASampleBuffers = 55;
 constexpr PixelFormatAttribute kPFASamples = 56;
 constexpr PixelFormatAttribute kPFAColorFloat = 58;
+constexpr PixelFormatAttribute kPFARendererID = 70; // kCGLPFARendererID: ask for / report one renderer
 constexpr PixelFormatAttribute kPFAAllowOfflineRenderers = 96;
 constexpr PixelFormatAttribute kPFAOpenGLProfile = 99;
 
@@ -54,7 +55,18 @@ constexpr int32_t kProfile32Core = 0x3200; // 3.2 core (a newer core version may
 constexpr int32_t kProfile4Core = 0x4100;  // 4.1 core
 
 // ---- function table -------------------------------------------------------------------------------
+// ---- renderer inventory (CGLQueryRendererInfo): optional, an old system without it just lists nothing -----
+using CGLRendererInfoObj = void*;
+using CGLRendererProperty = int32_t;
+constexpr CGLRendererProperty kRPOnline = 43, kRPRendererID = 70, kRPAccelerated = 73, kRPVideoMemoryMB = 131;
+// kCGLRendererGenericID, GenericFloatID, AppleSWID: Apple's CPU renderers
+constexpr int32_t kRendererGeneric = 0x00020200, kRendererGenericFloat = 0x00020400,
+                  kRendererAppleSW = 0x00020600;
+
 struct CglFns {
+    CGLError (*CGLQueryRendererInfo)(uint32_t, CGLRendererInfoObj*, GLint*) = nullptr;
+    CGLError (*CGLDescribeRenderer)(CGLRendererInfoObj, GLint, CGLRendererProperty, GLint*) = nullptr;
+    CGLError (*CGLDestroyRendererInfo)(CGLRendererInfoObj) = nullptr;
     CGLError (*CGLChoosePixelFormat)(const PixelFormatAttribute*, CGLPixelFormatObj*, GLint*) = nullptr;
     CGLError (*CGLDescribePixelFormat)(CGLPixelFormatObj, GLint, PixelFormatAttribute, GLint*) = nullptr;
     CGLError (*CGLReleasePixelFormat)(CGLPixelFormatObj) = nullptr;

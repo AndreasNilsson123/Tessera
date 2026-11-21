@@ -85,9 +85,24 @@ TesseraResult normalizeConfig(const TesseraContextConfig* in, TesseraContextConf
     if (out.priority > TESSERA_PRIORITY_HIGH)
         return bad("unknown priority");
 
-    for (uint64_t r : out.reserved)
-        if (r != 0)
-            return bad("reserved fields must be zero");
+    // The adapter id: NUL-terminated printable ASCII (the forms are in tessera.h), not combinable with the
+    // numeric requests.
+    {
+        std::size_t len = 0;
+        while (len < sizeof out.adapter && out.adapter[len] != '\0') {
+            const unsigned char ch = static_cast<unsigned char>(out.adapter[len]);
+            if (ch < 0x20 || ch > 0x7E)
+                return bad("adapter must be printable ASCII");
+            ++len;
+        }
+        if (len == sizeof out.adapter)
+            return bad("adapter is not NUL-terminated");
+        for (std::size_t i = len; i < sizeof out.adapter; ++i)
+            if (out.adapter[i] != '\0')
+                return bad("adapter has data after its terminator");
+        if (len > 0 && (out.adapterLuid != 0 || out.gpuPreference != TESSERA_GPU_DEFAULT))
+            return bad("adapter cannot be combined with adapterLuid or gpuPreference");
+    }
 
     return TESSERA_SUCCESS;
 }

@@ -31,7 +31,7 @@ extern "C" {
 /* ---------------------------------------------------------------- version */
 
 #define TESSERA_VERSION_MAJOR 0
-#define TESSERA_VERSION_MINOR 13
+#define TESSERA_VERSION_MINOR 14
 #define TESSERA_VERSION_PATCH 0
 
 /** Incremented on every incompatible change to the C ABI, independent of the semantic version. */
@@ -178,6 +178,13 @@ typedef uint32_t TesseraEnum;
 #define TESSERA_PRIORITY_MEDIUM 2u
 #define TESSERA_PRIORITY_HIGH 3u
 
+/** TesseraAdapterInfo::flags and TesseraContextInfo::adapterClass. Integrated/discrete are known where the
+ * platform says so (Windows: by dedicated video memory, a heuristic; macOS: by renderer); neither set = not
+ * known. */
+#define TESSERA_ADAPTER_SOFTWARE 0x1u   /**< runs on the CPU (WARP, llvmpipe, Apple Software Renderer) */
+#define TESSERA_ADAPTER_INTEGRATED 0x2u /**< shares memory with the CPU */
+#define TESSERA_ADAPTER_DISCRETE 0x4u   /**< has its own memory */
+
 /** TesseraContextConfig::fallback */
 #define TESSERA_FALLBACK_STRICT 0x0000u      /**< fail unless every requested attribute is met */
 #define TESSERA_FALLBACK_BEST_EFFORT 0x0001u /**< relax soft attributes (samples, bits); report result */
@@ -201,7 +208,12 @@ typedef struct TesseraContextConfig {
     uint64_t adapterLuid; /**< Windows: DXGI adapter LUID as (HighPart << 32) | LowPart; see TESSERA_GPU_* */
     uint32_t gpuPreference; /**< TESSERA_GPU_*; not combinable with adapterLuid */
     uint32_t priority;      /**< TESSERA_PRIORITY_* (added in 0.11.0, taken from the reserved space) */
-    uint64_t reserved[6];   /**< must be zero; reserved for future use */
+    /** Which GPU, as an id from tesseraEnumerateAdapters (added in 0.14.0, the last of the reserved space,
+     * the size did not change): "" = no request. NUL-terminated ASCII, at most 47 characters. See
+     * TesseraAdapterInfo for the forms. An explicit adapter is never silently replaced by another: a backend
+     * that cannot honour it reports UNSUPPORTED, one that cannot find it NO_MATCHING_CONFIG. Not combinable
+     * with adapterLuid or gpuPreference. */
+    char adapter[48];
 } TesseraContextConfig;
 
 /** Zeroed config with structSize set: `TesseraContextConfig cfg = tesseraDefaultContextConfig();`
@@ -231,8 +243,14 @@ typedef struct TesseraContextInfo {
     char version[128];  /**< GL_VERSION */
     uint32_t
         priority; /**< TESSERA_PRIORITY_*: what the driver reports it granted; DEFAULT where it cannot say */
-    uint32_t reserved32;
-    uint64_t reserved[7];
+    /** TESSERA_ADAPTER_SOFTWARE / _INTEGRATED / _DISCRETE of the GPU that served the context (0 = not known).
+     * Added in 0.14.0. */
+    uint32_t adapterClass;
+    /** The id (see TesseraAdapterInfo) of the GPU that served the context, as far as the backend can tell; ""
+     * when it cannot (GLX, a Windows machine with two adapters of one vendor). Added in 0.14.0, taken from
+     * the reserved space. */
+    char adapter[48];
+    uint64_t reserved[1];
 } TesseraContextInfo;
 
 static inline TesseraContextInfo tesseraDefaultContextInfo(void) {
@@ -241,6 +259,47 @@ static inline TesseraContextInfo tesseraDefaultContextInfo(void) {
     i.structSize = (uint32_t)sizeof i;
     return i;
 }
+
+/* ---------------------------------------------------------------- adapters (0.14.0)
+ *
+ * One way to say "this GPU": the inventory below lists them, `TesseraContextConfig::adapter` asks for one,
+ * and `TesseraContextInfo::adapter` says which one served a context. The id is text, stable across runs where
+ * the platform has a stable name for the device: "luid:00000000-0000ABCD"  Windows, the DXGI adapter LUID
+ * (HighPart-LowPart in hex): WGL, and the same value as adapterLuid
+ *   "uuid:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  EGL, the device UUID (EGL_EXT_device_persistent_id)
+ *   "node:/dev/dri/renderD128"  EGL, the DRM render node
+ *   "index:N"                 EGL, the position in eglQueryDevicesEXT (NOT stable across boots; only when
+ * nothing better exists) "cgl:0x00024600"          macOS, the CGL renderer id Nothing here switches GPUs
+ * behind your back: where a backend cannot honour an id it says UNSUPPORTED (GLX has no way to name a GPU);
+ * where Windows decides the driver (WGL), the id is verified, never assumed (see TESSERA_GPU_*).
+ */
+typedef struct TesseraAdapterInfo {
+    uint32_t structSize; /**< in, per element: sizeof(TesseraAdapterInfo); also the array stride */
+    uint32_t flags;      /**< TESSERA_ADAPTER_* */
+    uint32_t vendorId;   /**< PCI vendor id, 0 = not known */
+    uint32_t deviceId;   /**< PCI device id, 0 = not known */
+    uint64_t luid;    /**< Windows: the adapter LUID as TesseraContextConfig::adapterLuid takes it; else 0 */
+    char backend[16]; /**< "wgl", "egl", "cgl": the backend that can use this adapter */
+    char id[48];      /**< what TesseraContextConfig::adapter takes */
+    char name[128];   /**< UTF-8, for people */
+    uint64_t reserved[4];
+} TesseraAdapterInfo;
+
+static inline TesseraAdapterInfo tesseraDefaultAdapterInfo(void) {
+    TesseraAdapterInfo a;
+    memset(&a, 0, sizeof a);
+    a.structSize = (uint32_t)sizeof a;
+    return a;
+}
+
+/**
+ * The GPUs the backends of this build can use, backend by backend in the order they are tried. Write up to
+ * `capacity` entries into `out` (each with structSize set, which is also the stride); `*outCount` is always
+ * the TOTAL, so call once with capacity 0 and out NULL to size the array. A backend that cannot list (GLX)
+ * contributes nothing; an empty list is not an error. Needs tesseraInit.
+ */
+TESSERA_API TesseraResult TESSERA_CALL tesseraEnumerateAdapters(TesseraAdapterInfo* out, int32_t capacity,
+                                                                int32_t* outCount);
 
 /* ---------------------------------------------------------------- contexts
  *

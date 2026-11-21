@@ -42,4 +42,25 @@ std::string verifyAdapter(const AdapterInfo& wanted, const std::vector<AdapterIn
 
 bool adapterRequested(const TesseraContextConfig& config) noexcept;
 
+/* ---- the text id of tesseraEnumerateAdapters ("luid:00000000-0000ABCD"): pure, tested without DXGI ---- */
+
+std::string adapterId(uint64_t luid);
+/* True when `id` is a well-formed "luid:" id; `luid` receives it. A different prefix ("uuid:", "cgl:") is
+ * false. */
+bool parseAdapterId(const char* id, uint64_t& luid);
+/* TESSERA_ADAPTER_*: software from DXGI's flag; integrated vs discrete by dedicated video memory (under 1 GiB
+ * = shares the CPU's memory), which is a heuristic and documented as one. */
+uint32_t adapterClassOf(const AdapterInfo& a);
+void toPublic(const AdapterInfo& a, TesseraAdapterInfo& out);
+
+/* The adapter whose driver produced `vendor`/`renderer`: the one hardware adapter of that vendor, or the
+ * software adapter for the Microsoft renderers; null when it cannot be told (two adapters of one vendor, a
+ * vendor Tessera does not know). */
+const AdapterInfo* identifyServing(const std::vector<AdapterInfo>& all, const char* vendor,
+                                   const char* renderer);
+
+/* Hybrid laptops: the OpenGL driver the process got belongs to a lower-power adapter while a stronger one
+ * exists. Returns the one-line advice (what a host can do), or "" when there is nothing to say. Pure. */
+std::string hybridAdvisory(const std::vector<AdapterInfo>& all, const char* vendor, const char* renderer);
+
 } // namespace tessera::win32

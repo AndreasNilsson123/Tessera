@@ -56,6 +56,16 @@ public final class JniNativeApi implements NativeApi {
     }
 
     @Override
+    public int adapterCount() {
+        return nAdapterCount();
+    }
+
+    @Override
+    public int adapter(int index, int[] ints5, String[] strings3) {
+        return nAdapter(index, ints5, strings3);
+    }
+
+    @Override
     public int makeCurrent(long handle) {
         return nMakeCurrent(handle);
     }
@@ -233,6 +243,10 @@ public final class JniNativeApi implements NativeApi {
     private static native int nDestroyContext(long handle);
 
     private static native int nContextInfo(long handle, int[] ints, String[] strings);
+
+    private static native int nAdapterCount();
+
+    private static native int nAdapter(int index, int[] ints5, String[] strings3);
 
     private static native int nMakeCurrent(long handle);
 

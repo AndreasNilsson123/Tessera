@@ -552,8 +552,19 @@ class WglBackend final : public Backend {
         return "wgl";
     }
 
-    bool supportsAdapterSelection() const noexcept override {
-        return true;
+    bool supportsAdapterSelection(const TesseraContextConfig& c) const noexcept override {
+        uint64_t luid = 0;
+        return c.adapter[0] == '\0' ||
+               parseAdapterId(c.adapter, luid); // an id of another backend's kind is not ours
+    }
+
+    void enumerateAdapters(std::vector<TesseraAdapterInfo>& out) override {
+        std::string error;
+        for (const AdapterInfo& a : win32::enumerateAdapters(error)) {
+            TesseraAdapterInfo info;
+            toPublic(a, info);
+            out.push_back(info);
+        }
     }
 
     TesseraResult createContext(const TesseraContextConfig& c,
@@ -712,12 +723,30 @@ class WglBackend final : public Backend {
             if (!resolveAdapter(c, wanted, why))
                 return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, why);
             std::string ignored;
-            const std::string mismatch =
-                verifyAdapter(wanted, enumerateAdapters(ignored), ctx->info.vendor, ctx->info.renderer);
+            const std::string mismatch = verifyAdapter(wanted, win32::enumerateAdapters(ignored),
+                                                       ctx->info.vendor, ctx->info.renderer);
             if (!mismatch.empty()) {
-                if (c.adapterLuid != 0 || c.fallback == TESSERA_FALLBACK_STRICT)
+                if (c.adapterLuid != 0 || c.adapter[0] != '\0' || c.fallback == TESSERA_FALLBACK_STRICT)
                     return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, mismatch);
                 logf(TESSERA_LOG_WARN, "WGL: %s", mismatch.c_str());
+            }
+        }
+
+        // Who served this context: the one adapter whose driver this is, where that can be told; and, once
+        // per process, the advice for a hybrid laptop that got the weaker GPU.
+        {
+            std::string ignored;
+            const std::vector<AdapterInfo> all = win32::enumerateAdapters(ignored);
+            if (const AdapterInfo* serving = identifyServing(all, ctx->info.vendor, ctx->info.renderer)) {
+                std::snprintf(ctx->info.adapter, sizeof ctx->info.adapter, "%s",
+                              adapterId(serving->luid).c_str());
+                ctx->info.adapterClass = adapterClassOf(*serving);
+            }
+            if (!adapterRequested(c)) {
+                static std::once_flag advised;
+                const std::string advice = hybridAdvisory(all, ctx->info.vendor, ctx->info.renderer);
+                if (!advice.empty())
+                    std::call_once(advised, [&advice] { logf(TESSERA_LOG_WARN, "WGL: %s", advice.c_str()); });
             }
         }
 
