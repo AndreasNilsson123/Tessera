@@ -569,8 +569,10 @@ TESSERA_API TesseraResult TESSERA_CALL tesseraSetSwapInterval(TesseraContext con
  *
  *  - TESSERA_WINDOW_WIN32: `window` is an HWND (WGL; flags as for tesseraCreateContextForWindow).
  *  - TESSERA_WINDOW_X11: `window` is an X11 Window id on the server of $DISPLAY (GLX, or EGL when that is the
- * backend in use). `display` may be a Display* only for documentation: Tessera always uses its own connection
- * to the same server.
+ * backend in use). `display` is 0 for $DISPLAY, or the host's own, open Display* when the window lives on
+ * another server: Tessera reads the name it was opened with (XDisplayString, nothing else) and connects to
+ * that server itself. Like a wl_display, the pointer is trusted: it must be a valid open connection (added in
+ * 0.14.0).
  *  - TESSERA_WINDOW_WAYLAND: `window` is a wl_surface*, `display` the wl_display* it belongs to (EGL).
  * `width`/`height` give the size of the surface's buffer. Tessera creates a wl_egl_window for it, which it
  * owns and destroys with the context; the wl_surface and wl_display stay yours, and your event queue must be
@@ -587,9 +589,10 @@ typedef struct TesseraNativeWindow {
     uint32_t structSize; /**< in: sizeof(TesseraNativeWindow) */
     uint32_t kind;       /**< TESSERA_WINDOW_* */
     uint64_t window;     /**< HWND, X11 Window, wl_surface*, NSView*; pointers stored as integers */
-    uint64_t display;    /**< Wayland: wl_display* (required); X11: ignored; others 0 */
-    int32_t width;       /**< Wayland: initial buffer width in pixels (required, > 0); others ignored */
-    int32_t height;      /**< Wayland: initial buffer height in pixels (required, > 0); others ignored */
+    uint64_t
+        display; /**< Wayland: wl_display* (required); X11: the host's Display* or 0 for $DISPLAY; others 0 */
+    int32_t width;  /**< Wayland: initial buffer width in pixels (required, > 0); others ignored */
+    int32_t height; /**< Wayland: initial buffer height in pixels (required, > 0); others ignored */
     uint64_t reserved[4];
 } TesseraNativeWindow;
 

@@ -232,7 +232,7 @@ public final class NativeFuzz {
             }
             case 23: {
                 final long[] out = longs(1);
-                if (api.createContextForNativeWindow(config(), anyHandle(), rnd.nextInt(6), rnd.nextLong(), rnd.nextLong(),
+                if (api.createContextForNativeWindow(config(), anyHandle(), rnd.nextInt(6), rnd.nextLong(), 0L /* a display is a trusted pointer */,
                         anyInt(), anyInt(), anyInt(), out) == 0) {
                     adopt(out);
                 }

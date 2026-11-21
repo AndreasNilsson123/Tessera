@@ -1091,7 +1091,9 @@ static void testAdapterIds() {
         TesseraContextInfo info = tesseraDefaultContextInfo();
         EXPECT(tesseraGetContextInfo(c, &info), TESSERA_SUCCESS);
         CHECK(std::strcmp(info.adapter, hardware->id) == 0);
-        CHECK(info.adapterClass ==
+        // the GPU's own class is reported (a software OpenGL driver on it adds the SOFTWARE bit, as on a
+        // virtual machine)
+        CHECK((info.adapterClass & (TESSERA_ADAPTER_INTEGRATED | TESSERA_ADAPTER_DISCRETE)) ==
               (hardware->flags & (TESSERA_ADAPTER_INTEGRATED | TESSERA_ADAPTER_DISCRETE)));
         EXPECT(tesseraDestroyContext(c), TESSERA_SUCCESS);
         // ... the same GPU through the numeric field is the same context.

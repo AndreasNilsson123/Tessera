@@ -729,6 +729,13 @@ class WglBackend final : public Backend {
                 if (c.adapterLuid != 0 || c.adapter[0] != '\0' || c.fallback == TESSERA_FALLBACK_STRICT)
                     return fail(TESSERA_ERROR_NO_MATCHING_CONFIG, mismatch);
                 logf(TESSERA_LOG_WARN, "WGL: %s", mismatch.c_str());
+            } else {
+                // Verified: this is the requested adapter, even where the driver's identity alone is
+                // ambiguous (several adapters of one vendor, as on a virtual machine).
+                std::snprintf(ctx->info.adapter, sizeof ctx->info.adapter, "%s",
+                              adapterId(wanted.luid).c_str());
+                ctx->info.adapterClass |=
+                    adapterClassOf(wanted); // keeps "software" if the driver itself is a CPU renderer
             }
         }
 
@@ -737,10 +744,13 @@ class WglBackend final : public Backend {
         {
             std::string ignored;
             const std::vector<AdapterInfo> all = win32::enumerateAdapters(ignored);
-            if (const AdapterInfo* serving = identifyServing(all, ctx->info.vendor, ctx->info.renderer)) {
+            if (ctx->info.adapter[0] != '\0') {
+                // already set from a verified request above
+            } else if (const AdapterInfo* serving =
+                           identifyServing(all, ctx->info.vendor, ctx->info.renderer)) {
                 std::snprintf(ctx->info.adapter, sizeof ctx->info.adapter, "%s",
                               adapterId(serving->luid).c_str());
-                ctx->info.adapterClass = adapterClassOf(*serving);
+                ctx->info.adapterClass |= adapterClassOf(*serving);
             }
             if (!adapterRequested(c)) {
                 static std::once_flag advised;

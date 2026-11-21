@@ -37,7 +37,7 @@ class FuzzBackend : public Backend {
     const char* name() const noexcept override {
         return "fuzz";
     }
-    bool supportsAdapterSelection() const noexcept override {
+    bool supportsAdapterSelection(const TesseraContextConfig&) const noexcept override {
         return true;
     }
     TesseraResult createContext(const TesseraContextConfig&, const std::shared_ptr<ContextObject>&,
