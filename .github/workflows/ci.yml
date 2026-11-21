@@ -148,6 +148,9 @@ jobs:
           cmake --build --preset ci --config Debug --parallel
       - name: Run WGL integration test
         run: ctest --test-dir build/ci -C Debug -L gpu --output-on-failure
+      - name: Show the software and ANGLE tests (a skip must say why)
+        if: always()
+        run: ctest --test-dir build/ci -C Debug -R "software|angle" -V
 
   # The GLX and EGL integration tests against a virtual X server with Mesa's software renderer (no GPU needed).
   gl-linux-software:
