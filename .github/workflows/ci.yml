@@ -135,11 +135,11 @@ jobs:
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
-      - name: 'Locate an ANGLE build (Chrome and Edge ship libEGL.dll, libGLESv2.dll and d3dcompiler_47.dll)'
+      - name: 'Locate an ANGLE build (any Chromium-based browser or Electron app ships libEGL.dll, libGLESv2.dll and d3dcompiler_47.dll)'
         id: angle
         shell: pwsh
         run: |
-          $f = Get-ChildItem "C:\Program Files\Google\Chrome\Application","C:\Program Files (x86)\Google\Chrome\Application","C:\Program Files (x86)\Microsoft\Edge\Application","C:\Program Files\Microsoft\Edge\Application" -Recurse -Filter libEGL.dll -ErrorAction SilentlyContinue | Select-Object -First 1
+          $f = Get-ChildItem "C:\Program Files","C:\Program Files (x86)" -Recurse -Filter libEGL.dll -ErrorAction SilentlyContinue | Where-Object { Test-Path (Join-Path $_.DirectoryName "libGLESv2.dll") } | Select-Object -First 1
           if ($f) { "dir=$($f.DirectoryName -replace '\\','/')" >> $env:GITHUB_OUTPUT; Write-Host "ANGLE: $($f.FullName)" } else { Write-Host "no ANGLE found: the EGL-on-Windows tests are not built" }
       - name: Configure and build
         shell: bash
