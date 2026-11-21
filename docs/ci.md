@@ -9,6 +9,7 @@ configure the project identically.
 | `sanitizers` | clang ASan+UBSan and TSan over the same tests | yes |
 | `wgl-integration` | the WGL test, soak and diag against the hosted runner's software OpenGL (GDI Generic, GL 1.1) | yes |
 | (in `build`) ctest `abi_check`, `release_check`, `compat_generator` | `scripts/abi-check.py` (header vs `docs/abi/baseline.json`, library exports vs header), `scripts/release-check.py` (version copies agree), `scripts/compat-from-diag.py` on stored diag output; see `freeze.md` | yes |
+| (in `wgl-integration`) | downloads the ANGLE of a pinned Electron release (SHA-256 checked) and runs `software` and `angle_egl` (EGL on ANGLE, the CPU backend, an `HWND` surface) | yes |
 | `gl-linux-software` | the GLX and EGL tests under Xvfb with Mesa llvmpipe (software GL, no GPU) | yes |
 | `java-linux` | the Java bindings and their tests (JNI on JDK 21, FFM on JDK 25, LWJGL, GLFW, JavaFX software and OpenGL pipelines) on Linux under Xvfb + Mesa | yes |
 | `java-macos` | the Java bindings on the hosted macOS VM (JDK 21 and 25) | no (informational) |

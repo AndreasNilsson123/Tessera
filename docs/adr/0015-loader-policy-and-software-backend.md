@@ -53,7 +53,7 @@ and Electron ship builds, and a project that wants one builds ANGLE from source 
 - No ABI change: backend names are strings (`probe.backend` can now say `software`), the selection is the existing `TESSERA_BACKEND`.
 - Tests: `tests/test_software.cpp` (Linux with Mesa's software device; Windows with `-DTESSERA_ANGLE_DIR=<folder>`: the CPU renderer,
   ANGLE on the real GPU, an `HWND` surface, the desktop-GL refusal), `test_core` (device selector `software`, renderer names), the
-  loader behaviour above, `package-provider.py --self-test`. CI's Windows job looks for an ANGLE on the runner and skips these tests, saying why, when none loads (on the hosted image only Firefox's `libEGL.dll` exists and it does not load standalone, error 126); the Windows ANGLE paths have therefore run on the development machine only. Linux (llvmpipe) runs the software test in CI.
+  loader behaviour above, `package-provider.py --self-test`. CI's Windows job fetches the ANGLE of a pinned Electron release (hash checked; the runner image's only libEGL, Firefox's, does not load standalone: error 126) and runs both tests on the hosted runner, where ANGLE has no GPU and uses WARP; Linux (llvmpipe) runs the software test in CI.
 - Known quirk (observed, not explained): with ANGLE's hardware D3D11 device the process loses buffered stdout when it exits normally
   (the test sets stdout unbuffered); the CPU device does not. The exit status is correct.
 - Not done: Metal-backed ANGLE on macOS; a bundled provider in the official release (decision 1); SwiftShader on Windows was not exercised
