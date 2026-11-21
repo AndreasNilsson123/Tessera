@@ -80,7 +80,7 @@ jobs:
       STRESS_FRAMES: ${{ (github.event.inputs.hours || '4') == '1' && '144000' || (github.event.inputs.hours || '4') == '2' && '288000' || (github.event.inputs.hours || '4') == '3' && '432000' || (github.event.inputs.hours || '4') == '5' && '720000' || '576000' }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '25'
