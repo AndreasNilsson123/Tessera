@@ -94,7 +94,7 @@ jobs:
           lib=$(find build/release -maxdepth 2 -type f \( -name 'tessera.dll' -o -name 'libtessera.so.*.*.*' -o -name 'libtessera.*.*.*.dylib' \) | head -1)
           test -n "$lib" || { echo "no native library found" >&2; exit 1; }
           cp "$lib" "dist/java/${{ matrix.key }}.native"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: native-${{ matrix.name }}
           path: dist/
@@ -146,7 +146,7 @@ jobs:
           (cd build/doxygen/html && zip -qr "$GITHUB_WORKSPACE/release/tessera-${{ needs.version.outputs.version }}-c-api-docs.zip" .)
           (cd release && sha256sum tessera-*-c-api-docs.zip >> SHA256SUMS)
           cd release/maven && zip -qr ../tessera-${{ needs.version.outputs.version }}-maven-bundle.zip .
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release
           path: release/
