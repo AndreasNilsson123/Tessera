@@ -106,8 +106,7 @@ static HWND makeWindow(int w, int h) {
 
 static void logToStdout(int32_t level, const char* message, void*) {
     if (level <= TESSERA_LOG_INFO)
-        std::printf("  [tessera %d] %s
-", level, message);
+        std::printf("  [tessera %d] %s\n", level, message);
 }
 
 int main(int argc, char** argv) {
