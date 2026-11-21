@@ -135,12 +135,26 @@ jobs:
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
-      - name: 'Locate an ANGLE build (any Chromium-based browser or Electron app ships libEGL.dll, libGLESv2.dll and d3dcompiler_47.dll)'
+      # An ANGLE build for the EGL-on-Windows tests (ADR 0015): the one inside a pinned Electron release (BSD-3-Clause), checked
+      # against a hash recorded here before anything in it is loaded. The runner image has no loadable ANGLE of its own.
+      - name: Fetch a pinned ANGLE (Electron 33.2.0)
         id: angle
         shell: pwsh
         run: |
-          $f = Get-ChildItem "C:\Program Files","C:\Program Files (x86)" -Recurse -Filter libEGL.dll -ErrorAction SilentlyContinue | Where-Object { Test-Path (Join-Path $_.DirectoryName "libGLESv2.dll") } | Select-Object -First 1
-          if ($f) { "dir=$($f.DirectoryName -replace '\\','/')" >> $env:GITHUB_OUTPUT; Write-Host "ANGLE: $($f.FullName)" } else { Write-Host "no ANGLE found: the EGL-on-Windows tests are not built" }
+          $url = "https://github.com/electron/electron/releases/download/v33.2.0/electron-v33.2.0-win32-x64.zip"
+          $sha = "9f2cb12d87761a5e0bbd69960507172223132cbbfc32737dc4ed9803ae971288"
+          $root = $env:GITHUB_WORKSPACE.Replace([char]92, '/')
+          Invoke-WebRequest $url -OutFile "$root/electron.zip"
+          $got = (Get-FileHash "$root/electron.zip" -Algorithm SHA256).Hash.ToLower()
+          if ($got -ne $sha) { throw "electron.zip hash $got differs from the pinned $sha" }
+          New-Item -ItemType Directory "$root/angle" | Out-Null
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [IO.Compression.ZipFile]::OpenRead("$root/electron.zip")
+          $want = "libEGL.dll", "libGLESv2.dll", "d3dcompiler_47.dll", "vk_swiftshader.dll", "vulkan-1.dll", "vk_swiftshader_icd.json", "LICENSE", "LICENSES.chromium.html"
+          foreach ($e in $zip.Entries) { if ($want -contains $e.FullName) { [IO.Compression.ZipFileExtensions]::ExtractToFile($e, "$root/angle/$($e.FullName)") } }
+          $zip.Dispose()
+          Remove-Item "$root/electron.zip"
+          "dir=$root/angle" >> $env:GITHUB_OUTPUT
       - name: Configure and build
         shell: bash
         run: |
