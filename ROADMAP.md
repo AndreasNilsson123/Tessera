@@ -213,6 +213,7 @@ once; ES is fixed to 2.0 when unspecified; every failed rung is a real driver ca
 - [x] **"Minimum" means minimum**: the field is a floor (newest first, down to the request) and `TESSERA_FLAG_EXACT_VERSION` asks the driver for exactly it; the owner's decision (10.5) is still to be recorded, this is the recommendation of `docs/decisions-1.0.md`. Pinned by `test_core` (ladder shapes, every row) and `test_versions` (real drivers: floor = newest on WGL, GLX, EGL, software; exact = 3.3 on NVIDIA; Mesa may answer newer).
 - [x] **Remember what worked**: `VersionMemory`, counted on a driver stand-in (5 calls the first time, 1 the second, a changed driver falls back to the full ladder); dropped on the last `tesseraTerminate`. Not shared across processes (on purpose).
 - [x] **Map driver refusal codes in one table**: `create_errors.hpp` for WGL, GLX, EGL, CGL, a test per row.
+  CI (21 Nov 2026, all green): `test_versions` ran on Windows (WGL on the runner's software GL; ANGLE/WARP now reports ES 3.1 where it reported 3.0 before, the ladder at work), Linux llvmpipe (GLX and EGL) and macOS (CGL: 4.1 for "at least 3.3", as the pixel format dictates).
 
 Exit (met, see above): unspecified ES on a 3.x driver returns 3.x; the second identical create makes no failing driver calls (counted on a driver stand-in); the "minimum" semantics are documented and tested; the owner's decision is the one open part.
 
